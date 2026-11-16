@@ -1,2798 +1,594 @@
-# DictProp — Product Summary
+# DictProp: product summary
 
-**An AI-powered vocabulary learning app that helps you truly remember words, not just look them up.**
+DictProp is a vocabulary app for advanced learners of English. You look up a word, phrase or sentence, and an AI writes a card for each meaning. Every meaning you save is scheduled for review with FSRS v6. Saved sentences and the example sentences on cards become listening lessons with a detailed analysis, and two reading tabs offer curated sentences: Real Life conversations and American essays. The app runs at https://dictprop.online as an installable web app for phones and laptops, and it admits one Google account, its owner's.
 
-> **VPS fork note:** The current runtime uses Hono, SQLite, Google OAuth sessions, revision sync, and FSRS v6. Later Firebase setup/deployment sections in this long-form document describe the original app and are retained only as historical product context. Use `README.md` and `CLAUDE.md` for current operations.
+This document describes what the code on branch `w3/docs` does (16 November 2026). Keys and gestures match the in-app Gestures & shortcuts sheet, which is built from `services/shortcutSheet.ts`, the canonical list. README.md covers running the code; CLAUDE.md covers operating it.
 
----
+## 1. Terms
 
-## The Problem
-
-1. **Traditional dictionaries** give you definitions but don't help you *remember* them.
-2. **Flashcard apps** require manual setup and treat every word the same — regardless of difficulty.
-3. **You keep forgetting words** you've looked up before.
-4. **Words have multiple meanings** but most tools only show you one, leaving you confused in context.
-5. **No connection between lookup and learning** — searching and studying are separate activities.
-
-## The Solution
-
-DictProp combines AI-powered deep analysis with science-backed memory techniques to make vocabulary stick permanently. It bridges the gap between "looking up" and "learning" in one seamless experience.
-
----
-
-# Core Experience
-
-## 1. Smart Search — Deep Understanding in Seconds
-
-### The Search Interface
-
-Search is integrated directly into the Notebook tab header — there is no separate search view.
-
-**Search Bar (in Notebook header):**
-- Compact text input with placeholder "Search or look up new word"
-- **AI Search button** (Wand2 icon) — Triggers AI analysis for the query (also triggered by Enter key)
-- **Clear button (X)** — Clears the search query and results
-- **Voice Search button** (Mic icon) — Records audio, transcribes via Whisper, and auto-searches the transcribed text
-- Search doubles as a notebook filter: typing filters saved items via Fuse.js fuzzy search in real-time
-
-**Empty Notebook State:**
-- Shows "Your notebook is empty" message
-- Encourages user to save words and phrases
-- Sign-in button visible
-
-**Loading State:**
-- Spinner replaces the AI search button while processing
-- Notebook items remain visible below
-
----
-
-### Word Mode vs. Sentence Mode
-
-The AI automatically detects whether you entered a **word/phrase** or a **full sentence** and responds differently:
-
-#### Detection Logic:
-- **Word Mode:** Single words, or 2-5 words without sentence punctuation
-- **Sentence Mode:** 6+ words, or ends with `.!?`, or contains auxiliary verbs (is, are, have, will, etc.)
-
----
-
-### Word Mode — Deep Vocabulary Analysis
-
-**When you search a single word like "bank":**
-
-The AI creates **separate vocabulary cards for each distinct meaning**. This is critical — most dictionaries show you one definition, but words have many lives.
-
-**Example output for "bank":**
-
-**Card 1: bank (noun: finance)**
-| Field | Content |
-|-------|---------|
-| Word | bank |
-| Sense Label | noun: finance |
-| Chinese | 银行 |
-| IPA | /bæŋk/ 🔊 *(tap to pronounce)* |
-| Definition | A financial institution that holds deposits, makes loans, and provides other financial services |
-| Word Forms | banks, banking, banked |
-| Synonyms | financial institution, lender, credit union |
-| Antonyms | debtor, borrower |
-| Confusables | bench (similar sound), blank (spelling) |
-| Examples | "I need to go to the bank to deposit this check." / "The bank approved our mortgage application." |
-| Etymology | From Italian "banca" meaning bench, where medieval money changers conducted business |
-| Register | Neutral, everyday usage |
-| Mnemonic | Think of a "piggy BANK" where you store money |
-| Image | AI-generated icon of a bank building |
-
-**Card 2: bank (noun: geography)**
-| Field | Content |
-|-------|---------|
-| Word | bank |
-| Sense Label | noun: geography |
-| Chinese | 河岸，堤岸 |
-| IPA | /bæŋk/ |
-| Definition | The sloping land beside a river, lake, or canal |
-| Word Forms | banks |
-| Synonyms | shore, edge, embankment, riverside |
-| Antonyms | channel, riverbed |
-| Confusables | beach (different water body), shore (more general) |
-| Examples | "We had a picnic on the bank of the river." / "The children played along the grassy bank." |
-| Etymology | From Old Norse "bakki" meaning ridge or hill |
-| Register | Neutral, slightly literary |
-| Mnemonic | Picture a river with steep BANKs on either side |
-| Image | AI-generated icon of a riverbank |
-
-**Card 3: bank (verb: to rely on)**
-| Field | Content |
-|-------|---------|
-| Word | bank |
-| Sense Label | verb: to rely on |
-| Chinese | 指望，依靠 |
-| IPA | /bæŋk/ |
-| Definition | To depend or rely on something happening |
-| Word Forms | banks, banking, banked |
-| Synonyms | count on, rely on, depend on, trust |
-| Antonyms | doubt, distrust, question |
-| Confusables | bet on (more informal), count on (more common) |
-| Examples | "Don't bank on getting a raise this year." / "We're banking on good weather for the wedding." |
-| Etymology | From the gambling term "to bank" meaning to bet on a sure thing |
-| Register | Informal, conversational |
-| Mnemonic | You "bank on" something like you'd trust a bank with your money |
-| Image | AI-generated icon of crossed fingers |
-
-**Card 4: bank (verb: aviation)**
-| Field | Content |
-|-------|---------|
-| Word | bank |
-| Sense Label | verb: aviation |
-| Chinese | 倾斜飞行 |
-| IPA | /bæŋk/ |
-| Definition | To tilt an aircraft to one side when turning |
-| Word Forms | banks, banking, banked |
-| Synonyms | tilt, roll, incline, veer |
-| Antonyms | level out, straighten |
-| Confusables | turn (more general), roll (more extreme) |
-| Examples | "The pilot banked sharply to avoid the storm." / "Watch how the plane banks as it comes in to land." |
-| Etymology | Related to "bench" — the tilting motion resembles a slanted surface |
-| Register | Technical, aviation jargon |
-| Mnemonic | The plane "banks" like a tilted riverBANK |
-| Image | AI-generated icon of a tilted airplane |
-
----
-
-**Visual Presentation:**
-
-- Cards are displayed in a **horizontal carousel** — swipe left/right to browse meanings
-- Number badges (1, 2, 3, 4) appear in corner of each card to indicate which meaning you're viewing
-- Each card is **fully self-contained** — you can save any meaning independently
-- Saved cards from the same word will be grouped in Notebook or Study flow
-
----
-
-### Sentence Mode — Full Analysis
-
-**When you search a sentence like "She couldn't help but bank on his promise, even though the evidence suggested otherwise.":**
-
-**Hero Card Display:**
-- **Featured image** — AI generates a contextual illustration based on a visual keyword (e.g., "trust", "hope")
-- Large translation in Chinese at the top
-- Original sentence with pronunciation guide (full IPA)
-
-**Grammar Breakdown (formatted):**
-```
-**Structure Analysis:**
-- "couldn't help but" — Double negative construction meaning "was unable to avoid"
-- "bank on" — Phrasal verb meaning to rely or depend on
-- "even though" — Concessive conjunction introducing contrast
-
-**Nuance & Tone:**
-- The sentence implies naivety or wishful thinking
-- "couldn't help but" suggests an emotional, not rational, response
-- Slight negative undertone — the speaker seems to disapprove
-
-**Register:**
-- Neutral to slightly formal
-- Suitable for narrative writing or thoughtful conversation
-```
-
-**Key Vocabulary Extracted:**
-- From the sentence, the AI identifies advanced (C1/C2) or interesting vocabulary
-- Each extracted word gets the **full vocabulary card treatment** (same as Word Mode)
-- Cards appear in a carousel below the hero card
-- Example: "bank on" would be extracted and fully analyzed the same way as Word Mode
-
----
-
-### The Search Flow — Step by Step
-
-#### Notebook Search (Local Fuzzy Filtering)
-
-1. **User types in search bar** — Fuse.js fuzzy search filters saved items in real-time
-2. Results appear instantly as matching notebook items
-3. Chinese text input falls back to substring matching (Fuse.js Bitap doesn't handle CJK well)
-4. If fewer than 20 fuzzy matches, "Due for Review" items backfill the screen
-
-#### AI Search (New Word Lookup)
-
-1. **User types a word/phrase and presses Enter** (or taps the Wand2 AI button)
-2. **Loading state appears** — spinner, "Analyzing..."
-3. **AI processes the input** (typically 2-5 seconds via Cloud Function):
-   - Detects word vs. sentence mode
-   - Generates structured JSON response
-   - Includes all meanings for words, or full analysis for sentences
-4. **Results render in a carousel** above the notebook list
-5. **Images generate asynchronously:**
-   - Individual vocab card images load one by one (fire-and-forget)
-   - Results are usable before images finish loading
-6. **Auto-pronounce:** The first word is spoken aloud when results arrive
-7. **User can:**
-   - Browse vocabulary cards (swipe carousel)
-   - Save individual meanings to notebook (star icon)
-   - Tap any synonym/antonym/confusable to search it (dispatches a custom event)
-
-**Refresh Behavior:**
-- From Detail View, tap the Refresh button to re-analyze a saved word with AI
-- From Notebook, long-press a card to reveal the Refresh action
-
----
-
-### Recursive Search — Exploring Connected Words
-
-**Clickable Pills:**
-Every word in synonyms, antonyms, confusables, word forms, and word family is tappable:
-- Tap "rely on" from synonyms → navigates to Notebook and triggers a search
-- If the word isn't in the notebook, an AI search is automatically triggered
-- Enables natural exploration of word relationships
-
-**Back Navigation:**
-- Closing the Detail View returns to the Notebook list
-- No multi-level search history stack is maintained
-
----
-
-### Refresh & Update
-
-**For saved items:**
-- A "Refresh" button appears (circular arrow icon)
-- Tapping re-searches with the latest AI model
-- Updates the saved item with new analysis
-- Preserves all SRS (study) progress
-
-**Bulk Refresh:**
-- Available in Notebook view
-- Re-analyzes ALL saved items with latest AI
-- Shows progress bar: "15/42 words processed"
-- Useful when AI prompts are improved
-
----
-
-## 2. Personal Notebook — Your Learning Library
-
-### Saving Items
-
-**From Search Results:**
-- **Star/Sparkle icon** on each vocabulary card
-- Tap to save → icon fills in, item appears in notebook
-- Tap again to unsave → removed from notebook
-
-**From Sentence Analysis:**
-- **Bookmark icon** on the hero card saves the full phrase
-- Individual vocab cards have their own save buttons
-- You can save the phrase AND individual words separately
-
-**What Gets Saved:**
-- Full vocabulary card data (all fields)
-- AI-generated images (stored locally + remote database, local read first)
-- Initial SRS state (Memory Strength: 0, ready for first review)
-- Timestamp of when saved
-
----
-
-### Multiple Meanings — Grouped Carousel
-
-**The Problem:**
-"Bank" the financial institution and "bank" the riverbed are completely different concepts. If you only save "bank" once, which meaning did you learn?
-
-**DictProp's Solution:**
-Multiple meanings are grouped visually while learning independently:
-- **Sense-specific FSRS progress** — finance and river meanings keep separate schedules
-- **Sibling burying** — only one meaning of the same spelling appears in a study session
-- **Sense-specific content** — each meaning has its own definition, examples, and rating history
-
-**Grouped Display in Notebook:**
-Words with the same spelling but different meanings are **automatically grouped together** in a carousel format:
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                                                         │
-│    ┌─────────────────────────────────────────────┐      │
-│    │ ● bank                                      │      │
-│    │   [/bæŋk/ 🔊]   [noun: finance]        DUE │      │
-│    │    ↑ tap to pronounce                       │      │
-│    │   银行                                       │      │
-│    │   "I need to go to the bank..."            │      │
-│    └─────────────────────────────────────────────┘      │
-│                       ● ○ ○  ← dot indicators           │
-└─────────────────────────────────────────────────────────┘
-```
-
-**Carousel Behavior:**
-| Element | Function |
-|---------|----------|
-| Dot indicators (● ○ ○) | Visual position, tappable to jump |
-| Swipe gesture | Swipe left/right to browse meanings |
-
-**Key Points:**
-- **One card visible at a time** — clean, uncluttered view
-- **Grouped by spelling** — "bank" meanings stay together
-- **Independent SRS progress** — each meaning keeps its own memory strength and review schedule
-- **Individual actions** — long press any meaning to refresh/delete just that one
-
-**Example:**
-You saved 3 meanings of "bank":
-- Navigate carousel: bank (finance) ↔ bank (river) ↔ bank (aviation)
-- Each meaning becomes due according to its own recall history
-- Same-spelling siblings are buried until a later session to reduce interference
-- Delete just "bank (aviation)" without affecting the others
-
-**Consistent Grouping Across App:**
-| View | Grouping Behavior |
-|------|-------------------|
-| **Notebook** | Same-word meanings grouped in carousel |
-| **Study Session** | Same-word siblings buried; each sense scheduled independently |
-| **Detail View** | Navigate between meanings with swipe |
-| **Search Results** | All meanings shown in horizontal carousel |
-
-**Independent SRS Benefit:**
-A strong finance sense no longer hides a weak river sense, and a failed rating changes only the meaning that was actually tested.
-
----
-
-### Notebook Interface
-
-**Header:**
-- Title: "Notebook"
-- Item count: "42 items saved"
-- Filter/Sort controls
-
-**List Display:**
-- Each unique word/phrase appears as **one entry**
-- Words with multiple meanings → **grouped carousel** (see above)
-- Single-meaning words → regular card (no carousel controls)
-- Scrollable list with all saved items
-- **Archived section** at bottom (collapsed by default, tap to expand)
-
-**Filter Options:**
-- **All** — Everything
-- **Vocabulary** — Single words only (Type icon)
-- **Phrases** — Sentences and expressions (Layers icon)
-- Cycle through by tapping the filter icon
-
-**Sort Options:**
-- **By Familiarity** — Smart sorting for learning efficiency:
-  1. **Due Items** (Need review now)
-  2. **Struggling Items** (Weakest strength first)
-  3. **Future Items** (Recently reviewed, pushed to bottom)
-- **Alphabetical** — A-Z sorting by word/phrase
-- Toggle by tapping the sort icon
-
-**Action Buttons:**
-- **Force Sync** — Push/pull from cloud immediately
-- **User Menu** — Sign in/out, account info
-
----
-
-### Notebook Item Cards
-
-**Two Display Modes:**
-
-| Word Type | Display |
-|-----------|---------|
-| Single meaning | Regular card (no carousel) |
-| Multiple meanings | Grouped carousel (see "Multiple Meanings" section above) |
-
----
-
-**Single-Meaning Card Layout:**
-```
-┌─────────────────────────────────────────────┐
-│ ● serendipity                               │
-│   [/ˌserənˈdɪpəti/ 🔊]              DUE    │
-│   意外发现的好事                              │
-│   ────────────────────────────────────────  │
-│   "Finding that book was pure serendipity"  │
-│   Origin: Coined by Horace Walpole...       │
-└─────────────────────────────────────────────┘
-```
-
-**Multi-Meaning Grouped Carousel Layout:**
-```
-┌─────────────────────────────────────────────────────────┐
-│                              [1/3 meanings]             │
-│  ◀ ┌─────────────────────────────────────────────┐ ▶   │
-│    │ ● bank                                      │      │
-│    │   [/bæŋk/ 🔊]   [noun: finance]        DUE │      │
-│    │   银行                                       │      │
-│    │   "I need to go to the bank to deposit..."  │      │
-│    └─────────────────────────────────────────────┘      │
-│                       ● ○ ○                             │
-└─────────────────────────────────────────────────────────┘
-```
-
----
-
-**Color-Coded Status Strip:**
-- **Orange strip** — Due for review
-- **Green strip** — Mastered (21+ day interval)
-- **Gray strip** — Not due yet
-
-**Tap Action:**
-- Opens full **Detail View** with complete vocabulary card
-- Larger format, scrollable, all information visible
-
-**Long Press Action:**
-- Long press (hold) on card reveals action buttons:
-  - **Refresh** (circular arrow) — Re-search this word with AI
-  - **Archive** (box icon) — Move to archive (won't appear in study sessions)
-  - **Delete** (trash icon) — Remove from notebook (only this meaning if grouped)
-
----
-
-### Archived Words
-
-**What is Archive?**
-Archive lets you keep words in your collection without them appearing in study sessions.
-
-**Use Cases:**
-| Scenario | Action |
-|----------|--------|
-| Already know this word perfectly | Archive it |
-| Want to focus on other words first | Archive temporarily |
-| Saved for reference, not learning | Archive it |
-| Word no longer relevant to goals | Archive instead of delete |
-
-**How to Archive:**
-- **From Notebook:** Long press card → tap Archive
-- **From Study:** Long press card → tap Archive
-- **From Detail View:** Tap Archive button
-
-**Where Archived Words Live:**
-Archived words appear in a **separate section** at the bottom of Notebook:
-
-```
-┌─────────────────────────────────────────────┐
-│  NOTEBOOK                                   │
-│  ─────────────────────────────────────────  │
-│                                             │
-│  [Active Words - 42 items]                  │
-│  ┌─────────────────────────────────────┐    │
-│  │ serendipity                         │    │
-│  │ ephemeral                           │    │
-│  │ bank (3 meanings)                   │    │
-│  │ ...                                 │    │
-│  └─────────────────────────────────────┘    │
-│                                             │
-│  ─────────────────────────────────────────  │
-│  📦 ARCHIVED (8 items)              [Show]  │
-│  ─────────────────────────────────────────  │
-│  ┌─────────────────────────────────────┐    │
-│  │ ubiquitous                          │    │
-│  │ paradigm                            │    │
-│  │ ...                                 │    │
-│  └─────────────────────────────────────┘    │
-│                                             │
-└─────────────────────────────────────────────┘
-```
-
-**Archived Section Behavior:**
-- Collapsed by default (tap to expand)
-- Shows count of archived items
-- Same card display as active words
-- Long press to Unarchive or Delete
-
-**Unarchiving:**
-- Long press archived card → tap **Unarchive**
-- Word returns to active list
-- SRS progress preserved (resumes where it left off)
-
----
-
-### Detail View — Full Card Experience
-
-**Triggered by:**
-- Tapping a notebook item
-- Tapping "Expand" on any vocabulary card
-
-**TikTok-Style Vertical Navigation:**
-Browse through vocabulary cards with a familiar, immersive experience:
-
-```
-┌─────────────────────────────────────────────┐
-│                                             │
-│         SERENDIPITY                         │
-│         /ˌserənˈdɪpəti/ 🔊                  │
-│                                             │
-│         [AI Image]                          │
-│                                             │
-│         意外发现的好事                        │
-│         The occurrence of events...         │
-│                                             │
-│         📖 Examples                         │
-│         📜 Etymology                        │
-│         💡 Mnemonic                         │
-│                                             │
-└─────────────────────────────────────────────┘
-         ↕ swipe up/down (hidden gesture)
-```
-
-**Navigation Gestures:**
-| Gesture | Action |
-|---------|--------|
-| Long swipe up (>120px, at bottom) | Next word in list |
-| Long swipe down (>120px, at top) | Previous word in list |
-| Short swipe down (50-120px, at top) | Show/hide header bar |
-| Swipe left (>60px) | Next meaning (loops) |
-| Swipe right (>60px) | Previous meaning (or close view if at first) |
-| Double-click background | Mark as "Remembered" |
-
-**Visual Indicators:**
-- **Dot indicators** (● ○ ○) appear at top for multi-meaning items when header is hidden
-- **Desktop navigation bar** appears at bottom with Prev/Next word and meaning buttons
-- Header bar (hidden by default) shows progress bar, mastery badge, review stats, and action buttons
-- Header revealed by short swipe down or pressing `H` key
-
----
-
-**Card Layout:**
-Each full-screen card contains:
-- Large word at top
-- Sense label badge
-- **Clickable IPA block** (tap to hear pronunciation)
-- AI-generated image (if available, should be from local first, and then database second)
-- Chinese translation
-- English definition
-- Word forms section
-- Example sentences (word highlighted in context)
-- Etymology panel (orange background)
-- Mnemonic panel (green background)
-- Synonyms (tappable pills)
-- Antonyms (tappable pills)
-- Confusables (tappable pills, amber colored)
-- Register note at bottom
-
-**Actions:**
-- **Save/Unsave** — Toggle notebook status
-- **Refresh** — Re-analyze with AI
-- **Search** — Tap any pill to search that word
-- **Audio** — Tap IPA block to hear pronunciation
-- **Close** — Return to previous screen
-- **Remember** — Double-click background or press `R` to mark as "Remembered" (Quality: 4)
-- **Reset** — Use "Reset Memory Strength" in menu or press `Shift+R` to restart progress
-
-**Quick Actions (Desktop/Gestures):**
-- **Double-Click Background**: Instantly mark word as "Remembered" (Success animation appears)
-- **Keyboard Shortcuts**: `R` to Remember, `Shift+R` to Reset
-
-**Multiple Meanings — Grouped Carousel in Detail View:**
-If the word has multiple saved meanings:
-- Swipe left/right to navigate between meanings
-- Dot indicators show current position (● ○ ○)
-- Swipe up/down still navigates to different words
-- Each meaning's full content displayed one at a time
-
----
-
-## 3. Adaptive Study Sessions — Memory That Lasts
-
-### The Science Behind It
-
-DictProp uses a **Fixed-Schedule SRS Algorithm** — a positive-signal-only spaced repetition system.
-
-**Core Concepts:**
-
-#### Memory Strength (0-100)
-A display-only score derived from stability via logarithmic mapping:
-- Formula: `min(100, round(18 × ln(1 + stability)))`
-- **0** — Brand new, never reviewed
-- **10-30** — Struggling
-- **30-50** — Learning
-- **50-70** — Proficient
-- **70-85** — Mastered
-- **85-100** — Grandmaster
-
-You see **Mastery Levels** based on this score:
-| Score Range | Label | Color |
-|-------------|-------|-------|
-| 0-10 | New | Gray |
-| 10-30 | Struggling | Orange |
-| 30-50 | Learning | Amber |
-| 50-70 | Proficient | Blue |
-| 70-85 | Mastered | Emerald |
-| 85-100 | Grandmaster | Purple |
-
-#### Fixed Schedule
-Review intervals follow a predetermined schedule. Each "remember" tap advances one step:
-
-| Step | Interval (days) |
-|------|-----------------|
-| 1 | 1 |
-| 2 | 2 |
-| 3 | 3 |
-| 4 | 5 |
-| 5 | 7 |
-| 6 | 12 |
-| 7 | 20 |
-| 8 | 25 |
-| 9 | 47 |
-| 10 | 84 |
-| 11 | 143 |
-| 12 | 180 |
-
-#### Overdue Penalty
-Items left unreviewed past their due date regress steps:
-- 7+ days overdue: -1 step
-- 30+ days overdue: -2 steps
-- 90+ days overdue: -3 steps
-
-This means the schedule is self-correcting — forgotten words get shorter intervals.
-
----
-
-### How Reviews Work
-
-**Rating Design:**
-- Study sessions use **Again**, **Hard**, **Good**, and **Easy**
-- The quick **Remember** action remains available and maps to `Good`
-- Ratings, task type, response duration, lapses, and session ID are stored in review events
-
-**What happens on a rating:**
-1. The client journals an idempotent review mutation before asynchronous work
-2. The server applies the FSRS v6 transition and review event in one transaction
-3. The authoritative stability, difficulty, lapses, and next review return to the client
-4. `Again` resets the correct streak; other ratings advance it
-
-**Where Reviews Happen:**
-- In Detail View: double-click the card background, or press `R`
-- In Study: reveal the answer, then choose one of four ratings
-- Success animation ("Remembered!") confirms the action
-- Only the reviewed sense/item is updated
-
----
-
-### Study Dashboard
-
-The Study tab combines learning analytics with an adaptive due/new review session.
-
-#### Dashboard Layout
-
-```
-┌─────────────────────────────────────────┐
-│           TODAY'S STUDY                 │
-│                                         │
-│   🔥 15 words due                       │
-│   📊 85% average retention              │
-│                                         │
-├─────────────────────────────────────────┤
-│   WEEKLY STATS                          │
-│   Reviews: 12 | Avg Strength: 64%       │
-│   Streak: 5 days                        │
-├─────────────────────────────────────────┤
-│   MASTERY BREAKDOWN                     │
-│   [stacked progress bar by level]       │
-├─────────────────────────────────────────┤
-│   7-DAY ACTIVITY                        │
-│   [bar chart of items reviewed/day]     │
-├─────────────────────────────────────────┤
-│   ACHIEVEMENTS                          │
-│   Best Streak: 8 | Total Reviews: 142   │
-│   Most Practiced: bank (12x), ...       │
-└─────────────────────────────────────────┘
-```
-
-**Weekly Stats:**
-- Reviews: number of items reviewed in the last 7 days
-- Recalled: percentage of event ratings other than `Again`
-- Day Streak: consecutive days with at least one review
-
-**7-Day Activity Chart:**
-- Bar chart showing items reviewed per day
-- Derived from each item's `lastReviewDate`
-
-**Achievements:**
-- Best Streak: longest consecutive correct answers on any single card
-- Total Reviews: lifetime review count across all items
-- Most Practiced: top 3 items by total review count
-
-**How Reviews Work:**
-- Start a session containing up to 40 due cards and 10 new cards
-- Mature cards rotate through meaning, typed production, cloze, and listening prompts
-- Reveal the answer and rate it with `Again`, `Hard`, `Good`, or `Easy`
-- The last rating can be undone while it remains the latest review for that item
-
----
-
-### Review Scheduling
-
-**When words appear for review:**
-- Based on deterministic FSRS v6 scheduling (90% requested retention)
-- Due items shown in the Notebook (sorted to top when using "familiarity" sort)
-- Due count displayed on the Study dashboard
-- Reviews happen in Study or through the quick `Good` action in Detail View
-
----
-
-### Handling Multiple Meanings in Study
-
-Words with multiple meanings remain grouped in the Notebook, but study sessions test one sense at a time.
-
-```
-┌─────────────────────────────────────────────┐
-│                                             │
-│              BANK                           │
-│              /bæŋk/ 🔊                       │
-│                                             │
-│                ● ○ ○                        │
-│                                             │
-└─────────────────────────────────────────────┘
-```
-
-**How It Works:**
-- The queue chooses the most overdue same-spelling sense
-- Other senses with that spelling are buried for the current session
-- A rating updates only the prompted sense
-- Later sessions surface sibling senses according to their independent FSRS due dates
-
----
-
-## 4. Cross-Device Sync — Learn Anywhere
-
-### How Sync Works
-
-**Data Storage Layers:**
-
-1. **Local (IndexedDB)**
-   - Primary storage, always available
-   - Works completely offline
-   - Stores cards as per-item records plus a compatibility journal; images use a separate blob store
-
-2. **Server (Hono + SQLite)**
-   - Backup and sync layer
-   - User-scoped access through Google OAuth sessions
-   - Enables cross-device access
-
----
-
-### Sign-In Flow
-
-**Options:**
-- Google Sign-In (recommended)
-- Works on all platforms
-
-**First Sign-In:**
-1. User taps "Sign In" in Notebook header
-2. Google OAuth popup/redirect
-3. On success:
-   - Local data uploaded to cloud
-   - Remote data (if any) merged with local
-   - Revision cursor initialized for incremental sync
-
-**Subsequent Sign-Ins:**
-- Automatic on app open (if previously signed in)
-- Silent re-authentication
-- Immediate sync of any changes
-
----
-
-### Incremental Sync
-
-**How It Works:**
-- Dirty items are sent in bounded batches and assigned monotonic server revisions
-- Visible clients poll paginated revision deltas; focus, reconnect, and same-origin tab signals pull immediately
-- Review events use a durable outbox and atomic idempotent endpoint
-
-**Example Scenario:**
-1. Phone: Save "serendipity"
-2. SQLite: Receives update and assigns a revision
-3. Tablet: Revision poll returns the changed item
-4. Tablet: "serendipity" appears in notebook
-
-**What Syncs:**
-- All vocabulary cards (data)
-- SRS states (memory strength, intervals, history)
-- Saved/deleted status
-- Timestamps
-
-**Image Sync:**
-- Images stored both locally AND in remote database
-- Local always read first (faster, works offline)
-- Remote serves as backup for new devices
-- Can regenerate via "Refresh" if needed
-
----
-
-### Smart Merging
-
-**Conflict Resolution:**
-When the same item is edited on two devices:
-- Server revisions reject stale content independently of skewed device clocks
-- Review events advance the latest authoritative SRS state exactly once
-- Deletions propagate as revisioned soft-delete records
-
-**Soft Delete:**
-- Deleted items marked as `isDeleted: true`
-- Kept for 30 days to propagate deletions across devices
-- Then permanently removed during cleanup
-
----
-
-### Offline Support
-
-**Capabilities When Offline:**
-- ✓ Browse saved vocabulary
-- ✓ Study due items
-- ✓ SRS updates recorded locally
-- ✗ New AI searches (requires internet)
-- ✗ Sync to cloud (queued until online)
-
-**Reconnection:**
-- App detects online status
-- Automatically syncs queued changes
-- Merges any remote changes
-- User sees "synced" status
-
-**Offline Banner:**
-- Yellow bar at top when offline
-- "Offline mode — changes will sync when connected"
-- Disappears when online
-
----
-
-### Force Sync
-
-**Manual Sync Button:**
-- Available in Notebook header
-- Spinning icon while syncing
-- Use when:
-  - Doubt if sync happened
-  - Just signed in on new device
-  - Want immediate cloud backup
-
----
-
-## 5. Mobile-First Design
-
-### Progressive Web App (PWA)
-
-**What This Means:**
-- Install from browser to home screen
-- Launches like a native app (no browser chrome)
-- Works offline
-- Receives updates automatically
-
-**Installation:**
-- iOS: Safari → Share → Add to Home Screen
-- Android: Chrome → Menu → Install App
-- Desktop: Chrome → Install icon in URL bar
-
-**PWA Features:**
-- Custom app icon (192x192 and 512x512)
-- Splash screen on launch
-- Full-screen mode
-- Standalone appearance
-
----
-
-### Touch Interactions
-
-**Touch Gestures:**
-- **Vocabulary carousels:** Swipe left/right to browse meanings
-- **Notebook cards:** Long press to reveal Refresh/Delete
-
-**Tap Targets:**
-- All buttons minimum 44x44 pixels
-- Comfortable for thumb use
-- Active states for feedback
-
-**Pull-to-Refresh:**
-- Not implemented (would conflict with scroll)
-- Use explicit Refresh buttons instead
-
----
-
-### Responsive Layout
-
-**Mobile (< 640px):**
-- Single column layout
-- Full-width cards
-- Bottom navigation bar
-- Optimized touch targets
-
-**Tablet (640px - 1024px):**
-- Slightly wider cards
-- More padding
-- Same navigation structure
-
-**Desktop (> 1024px):**
-- Centered content (max-width 768px)
-- Larger typography
-- Hover states on interactive elements
-
----
-
-### Navigation
-
-**Bottom Tab Bar:**
-- Two tabs: Notebook | Study
-- Search is integrated into the Notebook tab header (not a separate tab)
-- Icons with labels
-- Active state: indigo color, thicker icon
-- Hides when scrolling down (more content space)
-- Reappears when scrolling up
-- Desktop: Keyboard shortcuts button (⌨️) appears as a fourth nav item
-
-**Safe Areas:**
-- Respects notch/Dynamic Island on iOS
-- Proper bottom inset for home indicator
-- Content never obscured by system UI
-
----
-
-### Accessibility
-
-**Visual:**
-- High contrast text (slate-900 on white)
-- Focus indicators on interactive elements
-- Color not sole indicator of status (icons + color)
-
-**Text:**
-- Selectable text in vocabulary cards
-- User can copy definitions, examples
-- Long-press to select on mobile
-
----
-
-## 6. User Account & Authentication
-
-### Signed-In Mode
-
-**Benefits:**
-- Cloud backup (never lose data)
-- Cross-device sync
-- Study history preserved
-
-**Account Display:**
-- Profile photo in Notebook header
-- Tap for dropdown menu:
-  - Display name
-  - Email
-  - Sign Out button
-
-### Sign-In Errors
-
-**Unauthorized Domain:**
-- Happens if hosting domain not in Firebase auth list
-- Modal explains the issue
-- Developer-facing (should be configured)
-
-**Safari Privacy Settings:**
-- iOS Safari may block sign-in if "Prevent Cross-Site Tracking" is on
-- Modal explains how to fix
-- Settings → Safari → toggle off
-
----
-
-## 7. AI Content Generation — Behind the Scenes
-
-### The AI Engine
-
-**Model Used:**
-- DeepSeek-V3 (via DeepInfra)
-- Optimized for speed and accuracy
-- Structured JSON output for consistent formatting
-
-### Word Mode Prompting
-
-**What the AI is instructed to do:**
-
-```
-You are PopDict, an expert C1 Advanced ESL coach.
-The user has entered a SINGLE WORD or SHORT PHRASE.
-
-Your task: Create comprehensive vocabulary cards for ALL meanings.
-
-CRITICAL - MULTIPLE MEANINGS:
-You MUST create SEPARATE cards for EACH distinct meaning:
-- Different parts of speech = different cards (noun vs verb)
-- Different contexts = different cards (technical vs casual)
-- Different usages = different cards
-
-Example: "bank" should produce 3+ cards:
-1. bank (noun: finance)
-2. bank (noun: geography)
-3. bank (verb: to rely)
-4. bank (verb: aviation)
-
-Each card MUST have:
-- Same 'word' field
-- UNIQUE 'sense' field (e.g., "noun: finance")
-- Definition, examples, synonyms specific to THAT meaning
-- Different Chinese translations for each sense
-- Confusables: words often confused with this one
-- Forms: all grammatical variations
-```
-
-**Required Fields for Each Card:**
-| Field | Description | Example |
-|-------|-------------|---------|
-| word | The vocabulary word | bank |
-| sense | Brief meaning label | noun: finance |
-| chinese | Chinese translation for this sense | 银行 |
-| ipa | American IPA with stress marks (clickable → plays audio) | /bæŋk/ 🔊 |
-| definition | English definition for this sense | A financial institution... |
-| forms | Grammatical variations | banks, banking, banked |
-| synonyms | Context-appropriate alternatives | financial institution, lender |
-| antonyms | Opposites for this sense | debtor, borrower |
-| confusables | Similar words (spelling/sound) | bench, blank |
-| examples | 2 natural sentences | "I need to go to the bank..." |
-| history | Etymology (1-2 lines) | From Italian "banca"... |
-| register | Formality level | Neutral, everyday |
-| mnemonic | Memory aid | Think of a piggy BANK... |
-| imagePrompt | Illustration prompt | A modern bank building with columns |
-
-### Sentence Mode Prompting
-
-**What the AI is instructed to do:**
-
-```
-You are PopDict, an expert C1 Advanced ESL coach.
-The user has entered a SENTENCE or longer text.
-
-Your task: Provide comprehensive analysis:
-1. translation - Precise Chinese translation
-2. grammar - Markdown explanation of grammar, nuance, tone
-3. visualKeyword - One keyword for image generation
-4. pronunciation - IPA for the full sentence
-5. vocabs - Extract interesting C1+ vocabulary
-
-For grammar, use Markdown formatting (bold, bullets).
-Focus on what makes this sentence interesting for C1 learners.
-
-For vocabs: Only extract C1/C2 level or idiomatic words.
-Create separate cards for each relevant meaning.
-```
-
-**Required Fields for Sentence Analysis:**
-| Field | Description |
-|-------|-------------|
-| translation | Full Chinese translation |
-| grammar | Markdown-formatted explanation |
-| visualKeyword | Single word for image generation |
-| pronunciation | Full sentence IPA |
-| vocabs | Array of vocabulary cards (same structure as Word Mode) |
-
-### Detection Algorithm
-
-**How the app decides Word Mode vs Sentence Mode:**
-
-| Condition | Mode |
-|-----------|------|
-| Single word | Word Mode |
-| 2-5 words without `.!?` | Word Mode |
-| Ends with `.!?` | Sentence Mode |
-| 6+ words | Sentence Mode |
-| Contains "is, are, was, were, have, has, will, would, could, should, can, may, might" | Sentence Mode |
-| Starts with "I, You, He, She, It, We, They, The, A, An, This, That, There, Here" | Sentence Mode |
-
----
-
-## 8. AI Image Generation
-
-> **VPS fork:** the dictprop.online server does not generate images or detailed explanations. A local macOS LaunchAgent renders missing illustrations with Krea-2-Turbo every six hours, has Claude Opus 5.5 review them and write the detailed text, and publishes the results through GitHub Actions. The FLUX Schnell description below applies to the Firebase version.
-
-### How Illustrations Are Created
-
-**Model Used:**
-- FLUX Schnell (via DeepInfra or Replicate as fallback)
-- Generates vector-style icons
-- Minimal, flat design aesthetic
-
-**Prompt Template:**
-```
-(Icon style), minimal vector art, flat design, [user's prompt].
-solid background. No text.
-```
-
-### Cost-Optimized Image Strategy
-
-**Why Simple Images?**
-
-Images are intentionally designed as **simple, low-complexity icons** rather than detailed illustrations:
-
-| Design Choice | Reason |
-|---------------|--------|
-| Vector/icon style | Fewer tokens to generate |
-| Minimal detail | Reduces AI processing cost |
-| Flat design | Simple shapes = lower complexity |
-| Solid backgrounds | No complex gradients or textures |
-| No text in images | Avoids rendering complexity |
-| Small display size | High resolution unnecessary |
-
-**Token Consumption Optimization:**
-- Simple prompts (~20-30 tokens)
-- Icon-style output requires fewer generation steps
-- No need for photorealistic quality
-- Images displayed at small sizes (thumbnails, headers)
-- Visual memory aid doesn't require high fidelity
-
-**Quality vs. Cost Trade-off:**
-
-| Approach | Quality | Cost | DictProp Choice |
-|----------|---------|------|-----------------|
-| Photorealistic | High | $$$ | ✗ |
-| Detailed illustration | Medium-High | $$ | ✗ |
-| Simple vector icon | Medium | $ | ✓ |
-| No image | None | Free | Fallback only |
-
-**The Philosophy:**
-> Images serve as **visual memory anchors**, not art pieces. A simple icon of a bank building triggers the same memory association as a detailed photograph — but costs a fraction of the tokens.
-
-### Aspect Ratios
-
-| Context | Ratio | Use |
-|---------|-------|-----|
-| Hero card (sentence) | 16:9 | Landscape header |
-| Vocabulary card | 4:3 | Square-ish thumbnail |
-| General | 1:1 | Square |
-
-### Image Storage
-
-**Dual Storage Strategy:**
-- Generated as base64 data URI
-- Stored **locally** in IndexedDB (primary)
-- Stored **remotely** in cloud database (backup)
-- Typical size: 50-150KB per image
-
-**Read Priority:**
-| Priority | Source | When Used |
-|----------|--------|-----------|
-| 1st | Local (IndexedDB) | Always checked first — fastest |
-| 2nd | Remote (Database) | Fallback if local missing |
-| 3rd | Regenerate | If neither has image |
-
-**Why Local First?**
-- Instant loading (no network delay)
-- Works offline
-- Reduces bandwidth usage
-- Better user experience
-
-### Fallback Behavior
-
-- If local missing: Check remote database
-- If remote missing: Card displays without image
-- Can regenerate via "Refresh"
-- **Images are optional** — learning works perfectly without them
-
----
-
-## 9. Audio & Pronunciation Features
-
-### Clickable IPA — Tap to Pronounce
-
-**The IPA is interactive!** Every IPA transcription in the app is a clickable element:
-
-```
-┌─────────────────────────────────────┐
-│  bank                               │
-│  ┌─────────────┐                    │
-│  │ /bæŋk/ 🔊  │  ← Tap anywhere    │
-│  └─────────────┘    to hear it!    │
-└─────────────────────────────────────┘
-```
-
-**How It Works:**
-1. User sees IPA transcription (e.g., `/bæŋk/`)
-2. User taps the IPA block
-3. Audio plays immediately via Text-to-Speech
-4. Visual feedback shows playback state
-
-**Design:**
-- IPA displayed in a styled block/pill
-- Speaker icon (🔊) indicates audio available
-- Entire block is tappable (large touch target)
-- Hover state on desktop, active state on mobile
-
-### Text-to-Speech Technology
-
-**Engine:**
-- Browser's native Web Speech API
-- `speechSynthesis` for pronunciation playback
-- Works offline (uses system voices)
-- No external API calls needed
-
-**Voice Selection:**
-- Prioritizes US English voices
-- Falls back to any English voice
-- Uses system default if no English available
-- Consistent pronunciation quality
-
-### Pronunciation Block Component
-
-**Visual Design:**
-```
-┌─────────────────┐
-│ /ˌserənˈdɪpəti/ │  ← Soft background color
-│       🔊        │  ← Speaker icon
-└─────────────────┘
-```
-
-**Interaction States:**
-| State | Appearance |
-|-------|------------|
-| Default | Light indigo background, IPA text |
-| Hover (desktop) | Slightly darker background |
-| Tapped/Active | Scale animation, audio plays |
-| Playing | Icon animates or pulses |
-
-**Accessibility:**
-- Large touch target (minimum 44px height)
-- Works with keyboard (Enter/Space)
-- Screen reader announces "Play pronunciation"
-- Press `P` key to pronounce current word (Study/Detail views)
-
-### Where Clickable IPA Appears
-
-| Location | What Plays | Notes |
-|----------|------------|-------|
-| Search results | Word pronunciation | In vocabulary card header |
-| Sentence analysis | Full phrase | In hero card |
-| Vocabulary cards | Word | Each card has its own IPA |
-| Notebook items | Word | Compact display |
-| Detail view | Word | Larger, more prominent |
-
-### Why IPA + Audio Together?
-
-| Benefit | Description |
-|---------|-------------|
-| **Learn correct pronunciation** | Hear it, not just read it |
-| **Reinforce IPA reading** | Connect symbols to sounds |
-| **Instant feedback** | One tap, immediate audio |
-| **Offline capable** | Works without internet |
-| **Multi-sensory learning** | Visual IPA + auditory playback |
-
----
-
-## 10. Text Analyzer — Vocabulary Extraction from Passages
-
-### Overview
-Users can paste any block of English text (articles, book excerpts, emails) and the AI automatically identifies interesting or challenging vocabulary within it.
-
-### How It Works
-1. User opens the Text Analyzer modal from the Notebook header (ScanText icon)
-2. **Step 1 — Input:** Pastes or types a passage of text (Cmd+Enter to scan, or paste button)
-3. **Step 2 — Select:** AI (`extractVocabulary`) scans the passage and returns a checklist of notable words with level badges (C1, C2, idiom, phrasal verb, etc.), context snippets, and reasons. All words are selected by default; user deselects any they don't want.
-4. **Step 3 — Analyze:** Each selected word is sent through the full `analyzeInput` pipeline sequentially (with 800ms delay between calls to avoid rate-limiting). Progress bar shows current word being analyzed.
-5. **Step 4 — Done:** Results are saved directly to the user's notebook. Fire-and-forget image generation runs for each saved vocab card. Summary shows success/error counts.
-6. User can abort the analysis mid-way ("Stop after current word" button)
-
-### Use Cases
-- Reading an article and wanting to learn all the advanced vocabulary
-- Preparing for an exam by analyzing practice passages
-- Building vocabulary from real-world context rather than word lists
-
----
-
-## 11. Word Comparison — AI-Powered Nuance Analysis
-
-### Overview
-Users can select 2-3 similar words and get a detailed AI-generated comparison showing exactly how they differ in meaning, usage, register, and context.
-
-### How It Works
-
-**Entry Point 1 — Notebook Compare Mode:**
-1. User taps the Compare toggle (Scale icon) in the Notebook header
-2. Cards become selectable with checkboxes
-3. Taps 2-3 words from their saved vocabulary
-4. Taps "Compare N Words" floating action button
-5. AI generates a structured comparison
-
-**Entry Point 2 — Inline Compare from VocabCard:**
-1. User views any vocabulary card (in Detail View or Search Results)
-2. Taps the "Compare" button next to the Synonyms or Confusables section
-3. Selects 1-2 related words from the pill list to compare with the current word
-4. Taps "Go" to trigger comparison
-5. Results display in ComparisonView
-
-### Comparison Dimensions
-| Dimension | What It Shows |
-|-----------|---------------|
-| Meaning | Precise definition differences |
-| Register | Formality level differences |
-| Collocations | What words naturally pair with each |
-| Connotation | Positive, negative, or neutral feel |
-| Grammar | Structural usage differences |
-
-### Output Structure
-- **Summary**: Brief overview of how the words relate
-- **Dimensions**: Detailed per-word breakdown across multiple axes
-- **Contextual Examples**: Sentences showing each word in the same scenario
-- **Common Mistakes**: Typical errors learners make with these words
-- **Verdict**: Concise guidance on when to use each word
-
----
-
-## 12. Error Handling & Edge Cases
-
-### Search Errors
-
-**Empty Search:**
-- Submit button disabled when input is empty
-- No network request made
-- Input validation prevents accidental submissions
-
-**API Quota Exceeded:**
-- DeepInfra has usage limits based on your plan
-- When exceeded: "Daily AI limit reached. Please check your plan or try again later."
-- Red error card with retry button
-- User can still browse saved items
-
-**Network Failure:**
-- "Search failed. Please try again."
-- Retry button available
-- Offline banner appears if detected
-
-**Invalid Response:**
-- Malformed AI response handled gracefully
-- Missing fields filled with defaults
-- Vocab cards without required data filtered out
-
-### Sync Errors
-
-**Sign-In Failures:**
-| Error | User Message |
-|-------|--------------|
-| Unauthorized domain | Modal explaining domain must be added to Firebase |
-| Safari privacy block | Modal with instructions to disable tracking prevention |
-| Popup closed | Silent (user intentionally cancelled) |
-| Network error | "Sign-in failed. Please try again." |
-
-**Sync Failures:**
-- Changes saved locally regardless
-- Will sync on next successful connection
-- Error icon in header (if persistent)
-- "Sync error" status shown
-
-### Study Dashboard Edge Cases
-
-**No Items:**
-- Dashboard shows empty state: "Your Study Space"
-- Encourages user to add vocabulary to begin
-
-**No Due Items:**
-- Dashboard shows "0 due now"
-- All other stats (mastery breakdown, activity chart) still display
-
-**Same Word, Multiple Meanings:**
-- All meanings share the same SRS schedule
-- Reviewing one meaning via Detail View updates all meanings together
-- Dashboard counts each item group once
-
----
-
-## 14. Confirmation Dialogs & Modals
-
-### Delete Confirmation
-
-**When Triggered:**
-- Long-press delete (optional)
-- Bulk delete operations
-
-**Dialog Content:**
-```
-┌─────────────────────────────────────┐
-│         Delete this word?           │
-│                                     │
-│   This will remove "bank" from      │
-│   your notebook and erase all       │
-│   learning progress.                │
-│                                     │
-│   [ Cancel ]         [ Delete ]     │
-└─────────────────────────────────────┘
-```
-
-### Bulk Refresh Confirmation
-
-**When Triggered:**
-- Tapping "Refresh All" in Notebook
-
-**Dialog Content:**
-```
-┌─────────────────────────────────────┐
-│       Refresh All Items?            │
-│                                     │
-│   This will re-search all 42        │
-│   items with the latest AI          │
-│   analysis.                         │
-│                                     │
-│   This may take a while and use     │
-│   API quota.                        │
-│                                     │
-│   [ Cancel ]     [ Refresh All ]    │
-└─────────────────────────────────────┘
-```
-
-### Bulk Refresh Progress
-
-**During Operation:**
-```
-┌─────────────────────────────────────┐
-│      Refreshing all items...        │
-│                                     │
-│   15 / 42 words processed           │
-│   ████████░░░░░░░░░░░░░  36%       │
-│                                     │
-└─────────────────────────────────────┘
-```
-
-### Completion Dialogs
-
-**Refresh Complete:**
-```
-┌─────────────────────────────────────┐
-│         Refresh Complete            │
-│                                     │
-│   Processed: 42 unique words        │
-│   Errors: 2                         │
-│                                     │
-│              [ OK ]                 │
-└─────────────────────────────────────┘
-```
-
----
-
-## 15. Animations & Transitions
-
-### Loading Animations
-
-**Search Loading:**
-- Spinner with pulsing glow effect
-- "Analyzing nuances..." text
-- Smooth fade-in of results
-
-**Sync Loading:**
-- Small spinner in header
-- Replaces sync icon
-- Subtle, non-blocking
-
-**Image Loading:**
-- Placeholder with visual keyword
-- Smooth fade-in when loaded
-- Scale animation on appear
-
-### Card Animations
-
-**Save Action:**
-- Star icon fills with color
-- Subtle scale bounce (1.0 → 1.1 → 1.0)
-- Satisfying feedback
-
-**Long Press Actions:**
-- Hold triggers after ~500ms
-- Action buttons appear as overlay/modal
-- Haptic feedback (if supported)
-
-**Carousel Navigation:**
-- Smooth scroll with momentum
-- Snap-to-card behavior
-- Dot indicators update instantly
-
-### Navigation Transitions
-
-**Tab Switching:**
-- Instant content swap (no animation)
-- Active tab indicator updates
-- Maintains scroll position per tab
-
-**Modal Open/Close:**
-- Slide up from bottom
-- Background dims
-- Smooth easing
-
-**Background Sync:**
-- Force sync triggered after 30+ seconds in background (iOS PWA)
-- Preserves current UI state (no jarring reload)
-- Merges remote changes transparently
-
----
-
-## 16. Data Persistence & Storage
-
-### Local Storage (IndexedDB)
-
-**Database Structure:**
-- Database name: `PopDictDB`
-- Object store: `library`
-- Key: per-user storage key (`items_{userId}` or `items_guest`)
-
-**What's Stored Locally:**
-| Data | Size (typical) | Notes |
-|------|----------------|-------|
-| Vocabulary card data | ~2KB per card | All fields |
-| SRS state | ~500B per item | Memory strength, intervals, review counts |
-| Images | ~50-200KB each | Base64 encoded |
-| User preferences | ~100B | View state, last query |
-
-**Storage Limits:**
-- IndexedDB: ~50MB-1GB (browser dependent)
-- Typical user with 500 words + images: ~100MB
-- No practical limit for vocabulary data
-
-### Cloud Storage (Firebase Firestore)
-
-**Document Structure:**
-```
-users/{userId}/items/{itemId}
-├── data (vocabulary card content)
-├── type ("vocab" or "phrase")
-├── srs (learning state)
-├── savedAt (timestamp)
-├── updatedAt (timestamp)
-├── isDeleted (soft delete flag)
-└── isArchived (archive flag)
-```
-
-**What's NOT Synced:**
-- Temporary UI state
-- Search history
-
-**Image Sync Strategy:**
-- Images synced to remote database
-- Local storage read first (faster)
-- Remote used as backup for new devices
-
-**Sync Debouncing:**
-- Changes batched for 5 seconds
-- Prevents excessive writes
-- Reduces Firebase costs
-
-### Data Migration
-
-**From Old SRS Format:**
-- Automatically detected on load
-- Converts interval → stability
-- Estimates memory strength from history
-- Preserves all learning progress
-
-**From LocalStorage (Legacy):**
-- One-time migration to IndexedDB
-- Happens silently on first load
-- Old data cleaned up after migration
-
----
-
-## 17. Performance Considerations
-
-### Initial Load
-
-**First Paint:**
-- Static HTML shell renders immediately
-- React hydrates within 1-2 seconds
-- Functional within 2-3 seconds
-
-**Data Loading:**
-- IndexedDB read: ~50-200ms for 500 items
-- Firebase sync: 1-3 seconds (depends on connection)
-- Progressive loading: UI usable before sync completes
-
-### Search Performance
-
-**Typical Latency:**
-| Stage | Time |
-|-------|------|
-| Input → API call | <50ms |
-| AI processing | 2-5 seconds |
-| Response parsing | <100ms |
-| UI render | <100ms |
-| Image generation | 3-8 seconds (async) |
-
-**Optimizations:**
-- Previous results cached during session
-- Already-saved items shown instantly (no API call)
-- Images load asynchronously
-- Results usable before images finish
-
-### Study Dashboard Performance
-
-**Stats Computation:**
-- Memoized via `useMemo` — only recalculates when items change
-- Single pass over items for mastery categories
-- 7-day chart derived from `lastReviewDate` per item
-- Typically <10ms for 1700+ items
-
-### Memory Usage
-
-**Typical Footprint:**
-- Base app: ~20MB
-- Per vocabulary card: ~5KB (without images)
-- Per image: ~100KB
-- 500 words + images: ~100MB total
-
-**Cleanup:**
-- Soft-deleted items purged after 30 days
-- Images garbage collected with deleted items
-
----
-
-## 18. Platform-Specific Behaviors
-
-### iOS Safari
-
-**PWA Installation:**
-1. Open in Safari (required)
-2. Tap Share button
-3. Scroll down, tap "Add to Home Screen"
-4. Confirm name, tap "Add"
-
-**Known Issues:**
-- OAuth requires redirect on iPhone/iPod (not popup); iPad uses popup
-- "Prevent Cross-Site Tracking" can block sign-in
-- App triggers background force sync (not reload) when returning from background >30s
-
-**Workarounds:**
-- App triggers a background force sync when returning from background >30s (preserves UI state, no jarring reload)
-- Sign-in uses redirect flow on iPhone/iPod (iPad uses popup like desktop)
-- Modal explains privacy settings if sign-in fails
-
-### Android Chrome
-
-**PWA Installation:**
-1. Open in Chrome
-2. Tap menu (three dots)
-3. Tap "Install App" or "Add to Home Screen"
-4. Confirm installation
-
-**Behavior:**
-- Works like native app
-- Notifications (future feature)
-- Background sync (future feature)
-
-### Desktop Browsers
-
-**Supported:**
-- Chrome (full support)
-- Firefox (full support)
-- Safari (limited PWA support)
-- Edge (full support)
-
-**Installation:**
-- Chrome: Click install icon in URL bar
-- Other browsers: Bookmark-based
-
-**Keyboard Shortcuts:**
-
-| Shortcut | Action |
-|----------|--------|
-| `1` | Go to Notebook tab |
-| `2` | Go to Study tab |
-| `⌘F` / `Ctrl+F` | Focus search input |
-| `Esc` | Close modal / Go back |
-| `?` | Show keyboard shortcuts help |
-| `←` `→` | Navigate between cards/meanings |
-| `↑` `↓` | Navigate between words (Detail View) |
-| `Enter` | Submit search / Open selected card |
-| `P` | Pronounce current word |
-| `R` | Mark as Remembered (Detail View) |
-| `Shift + R` | Reset Memory Strength (Detail View) |
-
-**Trackpad Gestures (Chrome macOS):**
-
-| Gesture | Action |
-|---------|--------|
-| Two-finger horizontal swipe | Navigate between cards in carousels |
-| Two-finger vertical swipe | Navigate between words (Detail View) |
-
-**Keyboard Shortcuts Help:**
-- Press `?` anywhere in the app to see available shortcuts
-- A keyboard icon appears in the navigation bar (desktop only)
-- Click it to view the shortcuts reference
-
----
-
-## 19. Accessibility Features
-
-### Visual Accessibility
-
-**Color Contrast:**
-- Text: slate-900 on white (21:1 ratio)
-- Links: indigo-600 (4.5:1 ratio)
-- All text meets WCAG AA
-
-**Color Independence:**
-- Status never indicated by color alone
-- Icons accompany color indicators
-- Due status: Orange color + "DUE" badge
-
-**Text Sizing:**
-- Respects system font size preferences
-- Minimum 14px for body text
-- Headers scale proportionally
-
-### Motor Accessibility
-
-**Touch Targets:**
-- Minimum 44x44 pixels
-- Adequate spacing between targets
-- Swipe gestures have button alternatives
-
-**Keyboard Navigation (Desktop/Chrome macOS):**
-- Tab order follows visual order
-- Focus indicators visible
-- Enter activates focused elements
-- Full keyboard control for all features:
-  - Number keys (`1`, `2`) switch tabs (Notebook, Study)
-  - Arrow keys navigate carousels and cards
-  - `R` marks current item as remembered (Detail View)
-  - `P` pronounces current word
-  - `Esc` closes modals/views
-  - `?` shows keyboard shortcuts help
-- Trackpad gestures for carousel navigation
-
-### Screen Reader Compatibility
-
-**Semantic HTML:**
-- Proper heading hierarchy (h1 → h2 → h3)
-- Button elements for actions
-- Lists for repeated items
-
-**Labels:**
-- Buttons have descriptive text or aria-labels
-- Images have alt text
-- Form inputs have labels
-
-### Reduced Motion
-
-**Respects System Preference:**
-- Detects `prefers-reduced-motion`
-- Reduces transition effects
-
----
-
-## 20. Security & Privacy
-
-### Data Privacy
-
-**What's Collected:**
-- Vocabulary you save
-- Study progress
-- Basic account info (email, name, photo from Google)
-
-**What's NOT Collected:**
-- Search queries (processed, not stored)
-- Usage analytics (not implemented)
-- Location data
-- Device identifiers
-
-### Data Storage
-
-**Local:**
-- All data stored in browser's IndexedDB
-- Encrypted by browser (if device encrypted)
-- Cleared if browser data cleared
-
-**Cloud:**
-- Firebase Firestore (Google Cloud)
-- User data isolated by userId
-- Firestore security rules enforce access
-
-### Authentication
-
-**Method:**
-- Google OAuth 2.0
-- No passwords stored
-- Token-based session
-
-**Session:**
-- Persists until sign-out
-- Automatic re-authentication
-- Secure token refresh
-
----
-
-## 21. Limitations & Known Issues
-
-### Current Limitations
-
-| Limitation | Reason | Workaround |
-|------------|--------|------------|
-| English only | AI prompt designed for English | N/A |
-| Chinese translations only | Target audience | N/A |
-| No import/export | Not implemented | Manual re-search |
-| No social features | Privacy focus | N/A |
-| Offline search unavailable | Requires AI | Study offline works |
-
-### Known Issues
-
-| Issue | Status | Notes |
-|-------|--------|-------|
-| iOS Safari sign-in can fail | Workaround documented | Disable tracking prevention |
-| Images occasionally fail | Graceful fallback | Card works without image |
-| Slow on very large notebooks (1000+) | Performance acceptable | May add pagination |
-| Rare duplicate items | Can occur with sync conflicts | Manual deletion |
-
-### Browser Requirements
-
-**Minimum:**
-- Chrome 80+
-- Firefox 75+
-- Safari 14+
-- Edge 80+
-
-**Required Features:**
-- IndexedDB
-- Web Speech API
-- ES2020+ JavaScript
-- CSS Grid/Flexbox
-
----
-
-## 22. Future Considerations
-
-### Potential Enhancements
-
-**Content:**
-- Support for additional languages
-- Support for other translation languages
-- Custom vocabulary lists import
-- Shared word lists
-
-**Learning:**
-- AI-generated practice sentences
-- Pronunciation scoring (speech recognition)
-- Contextual hints during recall
-- Spaced repetition customization
-
-**Social:**
-- Friend leaderboards
-- Shared progress
-- Vocabulary challenges
-
-**Analytics:**
-- Learning statistics dashboard
-- Time spent per word
-- Retention predictions
-- Weak area identification
-
-**Platform:**
-- Native mobile apps
-- Browser extension for inline lookup
-- Desktop app (Electron)
-
----
-
-# User Journeys
-
-## Journey 1: First-Time User (Detailed)
-
-**Context:** Sarah downloads DictProp after seeing it recommended for vocabulary learning.
-
-### Step 1: First Launch
-- Opens app → Sees Notebook view
-- Large search box at top
-- "What would you like to learn?" message
-- Four suggested words with icons
-- Clean, inviting interface
-
-### Step 2: First Search
-- Taps "serendipity" suggestion
-- Search triggers immediately
-- Sees loading spinner: "Analyzing nuances..."
-- After 3 seconds, results appear
-
-### Step 3: Discovering Rich Content
-- Single vocabulary card (one meaning)
-- Sees: word, IPA, Chinese translation
-- Scrolls: definition, examples, etymology
-- Notices: mnemonic, synonyms, confusables
-- Image loads: abstract illustration
-- Thinks: "This is way more than a dictionary!"
-
-### Step 4: Saving First Word
-- Taps star icon on card
-- Star fills with color (satisfying animation)
-- Word is now in notebook
-
-### Step 5: Exploring Notebook
-- Taps "Notebook" tab at bottom
-- Sees one item: "serendipity"
-- Card shows pronunciation, Chinese, example
-- Orange status strip: "Due for review"
-
-### Step 6: Checking the Study Dashboard
-- Taps "Study" tab
-- Dashboard shows: "1 word due"
-- Sees mastery breakdown (1 new item)
-
-### Step 7: First Review
-- Goes back to Notebook
-- Taps "serendipity" to open Detail View
-- Reviews the card content
-- Taps "Remember" button (or presses `R`)
-- Memory strength increases
-- Dashboard stats update automatically
-
-### Step 8: Signing In
-- Goes to Notebook
-- Taps user icon (top right)
-- Taps "Sign in with Google"
-- Completes OAuth flow
-- Sees profile photo appear
-- Data backed up to cloud
-
-### Step 9: Next Day
-- Opens app
-- "serendipity" is due again (spaced repetition)
-- Opens Detail View and taps Remember (or presses `R`)
-- Memory reinforced with each review
-
-### Step 10: Building Habit
-- Searches new words daily
-- Studies due items each morning
-- Watches mastery levels increase
-- Serendipity: New → Learning → Proficient
-
----
-
-## Journey 2: Power User (Detailed)
-
-**Context:** Marcus is an avid reader who encounters new words constantly.
-
-### Scenario A: Quick Lookup While Reading
-
-**Reading an article on laptop, phone nearby:**
-
-1. Encounters: "The policy had an ephemeral effect..."
-2. Picks up phone, opens DictProp
-3. Article still on laptop, copies "ephemeral"
-4. In DictProp: Taps paste button (clipboard icon)
-5. Word auto-pastes and search triggers
-6. 3 seconds later: Full analysis appears
-7. Sees 2 meanings:
-   - ephemeral (adj: short-lived)
-   - ephemeral (noun: short-lived organism)
-8. Saves both meanings (2 separate items)
-9. Returns to reading article
-
-**Time spent:** ~15 seconds
-
-### Scenario B: Deep Exploration
-
-**Exploring word relationships:**
-
-1. Viewing "ephemeral" results
-2. Sees synonyms: transient, fleeting, momentary
-3. Curious about "transient"
-4. Taps "transient" pill
-5. New search triggers, results appear
-6. Back arrow now visible (history)
-7. Sees 3 meanings of "transient":
-   - transient (adj: temporary)
-   - transient (noun: homeless person)
-   - transient (noun: electrical spike)
-8. Saves the adjective meaning
-9. Taps "fleeting" from synonyms
-10. Continues exploration...
-11. Eventually taps back arrow multiple times
-12. Returns to original "ephemeral" result
-
-### Scenario C: Multi-Device Usage
-
-**Morning:** Studies on phone during commute
-- Reviews 15 due words
-- 87% accuracy
-- 2 words marked as "needs work"
-
-**Afternoon:** Adds words on work computer
-- Searches "paradigm shift"
-- Saves the phrase
-
-**Evening:** Reviews on tablet at home
-- "paradigm shift" appears (synced from work)
-- Studies remaining due items
-- Progress synced across all devices
-
-### Scenario D: Maintaining Large Collection
-
-**After 6 months: 400+ saved items**
-
-1. Opens Notebook
-2. Filters: "Vocabulary only" (hides phrases)
-3. Sorts: "By familiarity" (struggling words first)
-4. Sees weakest words at top
-5. Searches each to refresh memory
-6. Uses "Refresh All" to update AI analysis
-7. Progress bar: "Processing 127/400..."
-8. New mnemonics and examples appear
-
----
-
-## Journey 3: Professional English Improvement
-
-**Context:** Wei is a software engineer at a US company, wanting to sound more natural in meetings.
-
-### The Need
-
-**Situation:**
-- Speaks English fluently
-- Sometimes uses awkward phrasing
-- Wants to sound more native/professional
-
-### Using DictProp
-
-**Approach: Phrase-Focused Learning**
-
-1. **Hearing unfamiliar phrases in meetings:**
-   - "Let's circle back on this"
-   - "We need to move the needle"
-   - "That's a heavy lift"
-
-2. **After meeting:**
-   - Opens DictProp
-   - Searches each phrase
-   - Gets full analysis (Sentence Mode)
-
-3. **Learning:**
-   - Translation: "让我们稍后再讨论这个"
-   - Register: "Business jargon, informal"
-   - Grammar: Phrasal verb structure explained
-   - Examples: Professional contexts shown
-
-4. **Studying:**
-   - Reviews phrases in Recall mode
-   - Practices using them mentally
-   - Eventually uses in meetings naturally
-
-### Specific Example: "move the needle"
-
-**Search Results:**
-```
-Translation: 产生明显效果/有所改变
-
-Grammar:
-- Idiomatic expression from analog gauges
-- "The needle" refers to a measurement indicator
-- "Move" means to cause change
-- Used when discussing impact on metrics/goals
-
-Register: Business jargon, informal professional
-
-Examples:
-- "Will this campaign actually move the needle on sales?"
-- "We need initiatives that move the needle, not incremental changes."
-
-Mnemonic: Picture a speedometer needle moving from 0 to 100
-```
-
-**Outcome:**
-- Wei uses phrase in next meeting
-- Sounds natural and confident
-- Continues building business English vocabulary
-
----
-
-## Journey 5: Casual Learner / Curious Reader
-
-**Context:** Alex reads novels and wants to understand every word.
-
-### The Scenario
-
-**Reading "The Great Gatsby," encounters:**
-> "In my younger and more vulnerable years my father gave me some advice that I've been turning over in my mind ever since."
-
-### Looking Up "vulnerable"
-
-1. Opens DictProp, searches "vulnerable"
-2. Sees 2 meanings:
-   - vulnerable (adj: susceptible to harm)
-   - vulnerable (adj: emotionally open)
-
-3. Fitzgerald's usage: emotionally open
-4. Saves this specific meaning
-5. Returns to reading with deeper understanding
-
-### Looking Up "turning over"
-
-1. Searches "turning over in my mind"
-2. Sentence Mode activates
-3. Grammar breakdown:
-   - Phrasal verb "turn over"
-   - Metaphor: thoughts as objects being examined
-   - Continuous nature of deliberation
-
-4. Key vocab extracted: "turn over" (phrasal verb)
-5. Saves for later study
-
-### Reading Habit Formed
-
-**Weekly Pattern:**
-- Reads 2-3 chapters
-- Looks up 5-10 words/phrases
-- Saves interesting ones
-- Studies during weekend
-- Reading comprehension deepens over time
-
----
-
-## Journey 6: Parent Helping Child
-
-**Context:** Mom helping 12-year-old with English homework.
-
-### The Scenario
-
-**Child's homework:** Use "ubiquitous" in a sentence.
-
-1. Mom opens DictProp
-2. Searches "ubiquitous"
-3. Shows result to child:
-   - Definition: "present everywhere"
-   - Chinese: 无处不在的
-   - Examples: "Smartphones have become ubiquitous in modern life."
-   - Mnemonic: "UBI-quitous = Ubi is Latin for 'where' - it's everywhere!"
-
-4. Child writes own sentence:
-   > "WiFi has become ubiquitous in cities."
-
-5. Mom saves word to her account
-6. Reviews with child later
-
-### Benefit
-
-- Quick, reliable lookup
-- Child-friendly examples
-- Memory aids included
-- Mom learns too
-
----
-
-## Journey 7: Teacher Creating Vocabulary Lessons
-
-**Context:** ESL teacher building vocabulary curriculum.
-
-### The Approach
-
-1. **Preparation:**
-   - Searches unit vocabulary (20 words)
-   - Reviews AI-generated content
-   - Saves all words with multiple meanings
-
-2. **In Class:**
-   - Shows vocabulary cards on projector
-   - Uses etymology for context
-   - Reads example sentences aloud
-   - Uses mnemonics as teaching tool
-
-3. **Homework:**
-   - Students install DictProp
-   - Teacher shares word list
-   - Students save and study independently
-
-4. **Assessment:**
-   - Teacher checks student mastery levels
-   - (Hypothetical: shared progress view)
-   - Identifies class-wide weak areas
-
----
-
-## Edge Case Scenarios
-
-### Scenario: Offline Usage
-
-1. User is on airplane (no WiFi)
-2. Opens DictProp
-3. Sees offline banner: "Offline mode — changes will sync when connected"
-4. Can browse all saved words
-5. Studies due items normally
-6. Progress saved locally
-7. On landing: connects to WiFi
-8. Changes sync automatically
-
-### Scenario: Rare Word with Single Meaning
-
-1. Searches "defenestration"
-2. Only 1 meaning exists
-3. Single vocabulary card appears
-4. No carousel navigation (unnecessary)
-5. Full detail available
-
-### Scenario: Very Long Sentence
-
-1. User pastes entire paragraph
-2. AI processes (may take 5-7 seconds)
-3. Sentence Mode analysis
-4. Multiple vocabulary words extracted
-5. Scrollable hero card
-6. Vocabulary carousel below
-
-### Scenario: Already Saved Word
-
-1. Searches "ephemeral" (already saved)
-2. App detects match in notebook
-3. Shows saved version instantly (no API call)
-4. Refresh button available for new analysis
-5. SRS progress preserved
-
-### Scenario: Multiple Devices, Same Time
-
-1. User A saves "paradigm" on phone
-2. User A (same account) saves "shift" on tablet
-3. Both sync to cloud
-4. Both devices receive each other's updates
-5. Notebook shows both words on both devices
-6. No conflicts (different items)
-
----
-
-# Glossary of Terms
-
-## Product Terms
-
-| Term | Definition |
-|------|------------|
-| **Vocabulary Card** | A comprehensive card containing word, definition, translation, examples, etymology, and more |
-| **Phrase** | A sentence or expression saved for learning (vs. single word) |
-| **Sense** | A specific meaning of a word (e.g., "bank" has multiple senses) |
-| **Notebook** | User's personal collection of saved vocabulary |
-| **Archive** | Storage for words you want to keep but not study; excluded from study sessions |
-| **Detail View** | Full-screen view of a vocabulary card with all information |
-
-## Learning Terms
-
-| Term | Definition |
-|------|------------|
-| **SRS** | Spaced Repetition System — algorithm that schedules reviews optimally |
-| **Memory Strength** | 0-100 score representing how well you know a word |
-| **Stability** | How long a memory lasts before significant decay |
-| **Mastery Level** | User-friendly label (New → Grandmaster) based on memory strength |
-| **Due Item** | Word scheduled for review (memory has decayed to target level) |
-| **Rating** | Again, Hard, Good, or Easy feedback used by FSRS v6 |
-| **Task Type** | Meaning recall, typed production, cloze, listening, or quick review |
-| **Interval** | Time until next scheduled review |
-
-## Technical Terms (Simplified)
-
-| Term | Definition |
-|------|------------|
-| **IndexedDB** | Browser database that stores your data locally |
-| **SQLite** | Server database for user-scoped cards, revisions, review events, and images |
-| **PWA** | Progressive Web App — website that works like a native app |
-| **OAuth** | Secure sign-in method (used for Google Sign-In) |
-| **TTS** | Text-to-Speech — converts text to audio pronunciation |
-| **IPA** | International Phonetic Alphabet — pronunciation notation (clickable → plays audio) |
-
-## UI Terms
-
-| Term | Definition |
-|------|------------|
-| **Carousel** | Grouped view showing one card at a time with navigation arrows; used for multiple meanings of same word |
-| **Pill** | Small clickable tag (for synonyms, antonyms, etc.) |
-| **Hero Card** | Large featured card at top of search results |
-| **Status Strip** | Colored bar indicating review status (due, mastered, etc.) |
-| **Toast** | Brief notification message |
-| **Modal** | Overlay dialog that requires interaction |
-
----
-
-# Summary
-
-## What DictProp Does
-
-1. **Search** — AI analyzes any word or sentence instantly
-2. **Understand** — Get every meaning with examples, etymology, and mnemonics
-3. **Save** — Build a personal vocabulary library with multiple meanings
-4. **Study** — Review with spaced repetition and track progress on the dashboard
-5. **Master** — Track progress from New → Grandmaster
-
-## The Learning Cycle
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                                                                 │
-│   ENCOUNTER → UNDERSTAND → SAVE → STUDY → RETAIN → MASTER      │
-│       │                                              │          │
-│       └──────────── (revisit weak words) ←───────────┘          │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-| Stage | What Happens |
-|-------|--------------|
-| Encounter | See unfamiliar word while reading |
-| Understand | Search in DictProp, get deep AI analysis |
-| Save | Tap star to add to notebook |
-| Study | Review in Detail View with adaptive spaced repetition |
-| Retain | Memory strength builds over time |
-| Master | Word becomes permanent vocabulary |
-
-## Key Differentiators (Summary)
-
-| Feature | DictProp | Most Alternatives |
-|---------|----------|-------------------|
-| Content Creation | AI-generated, zero effort | Manual entry required |
-| Multiple Meanings | Separate cards per sense | Single definition |
-| Visual Learning | AI illustrations | Text only |
-| Pronunciation | IPA + audio | Often missing |
-| Memory Science | Strength + stability + decay | Basic intervals |
-| Study Mode | SRS review via Detail View + dashboard analytics | Same for all words |
-| Input Flexibility | Words, phrases, sentences | Limited |
-| Setup Required | None | Significant |
-
-## Core Value Proposition
-
-### For Users
-
-> **"I looked up a word and actually remembered it."**
-
-DictProp solves the universal frustration of forgetting words you've already looked up. By combining instant AI analysis with proven memory science, it transforms passive lookup into active learning.
-
-### For the Market
-
-> **"The dictionary that teaches you."**
-
-DictProp occupies a unique position: more depth than translation apps, less work than flashcard apps, more modern than traditional dictionaries.
-
-## The Promise
-
-**Stop forgetting. Start remembering.**
-
-DictProp transforms vocabulary learning from passive lookup to active mastery. It's the dictionary that teaches you, the spaced repetition system that adapts to you, and the study partner that knows exactly what you need to review — all in one beautiful, free app.
-
----
-
-# Appendix
-
-## Quick Reference Card
-
-### Navigation
-| Tab | Purpose |
-|-----|---------|
-| Notebook | Look up, save, and manage vocabulary (includes integrated search bar with AI search, voice search, and fuzzy filtering) |
-| Study | View learning analytics dashboard (reviews happen in Detail View) |
-
-### Actions
-| Action | How |
-|--------|-----|
-| Save word | Tap ⭐ on card |
-| Play audio | Tap IPA block (e.g., `/bæŋk/ 🔊`) or press `P` |
-| Archive item | Long press → 📦 or press `2` (Study mode) |
-| Unarchive item | Long press archived card → 📤 |
-| Delete item | Long press → 🗑️ |
-| Refresh item | Long press → 🔄 |
-| Search related | Tap any pill (synonym, etc.) |
-| View full card | Tap notebook item or press `Enter` |
-| Sign in | Tap user icon in Notebook |
-| Force sync | Tap sync icon in Notebook |
-| Show shortcuts | Press `?` or click ⌨️ in nav bar |
-
-### Keyboard Shortcuts (Desktop)
-| Shortcut | Action |
-|----------|--------|
-| `1` / `2` | Switch tabs (Notebook/Study) |
-| `⌘F` | Focus search |
-| `←` `→` | Navigate cards |
-| `↑` `↓` | Navigate words |
-| `R` | Remember (Detail View) |
-| `P` | Pronounce word |
-| `Esc` | Close/Go back |
-| `?` | Show shortcuts help |
-
-### Mastery Levels
-| Level | Strength | Color | Meaning |
-|-------|----------|-------|---------|
-| New | 0-10 | Gray | Just added |
-| Struggling | 10-30 | Orange | Needs work |
-| Learning | 30-50 | Amber | Making progress |
-| Proficient | 50-70 | Blue | Getting comfortable |
-| Mastered | 70-85 | Green | Strong retention |
-| Grandmaster | 85-100 | Purple | Near-permanent |
-
-### Study Mode
-| Mode | Description |
-|------|-------------|
-| Dashboard | View learning analytics (due count, mastery breakdown, 7-day activity, achievements) |
-| Detail View Review | Open any item and press `R` or double-click to mark as "Remembered" |
-
----
-
-# Technical Implementation Guide
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| Frontend | React 19 + TypeScript |
-| Build Tool | Vite |
-| Styling | Tailwind CSS |
-| Icons | Lucide React |
-| Backend | Firebase (Auth, Firestore, Functions) |
-| AI | DeepSeek-V3 via DeepInfra (text), FLUX Schnell (images), Whisper Large V3 Turbo (transcription) |
-| Search | Fuse.js (fuzzy local search) |
-| Hosting | Firebase Hosting |
-| PWA | vite-plugin-pwa |
-
-## Project Structure
-
-```
-/
-├── index.html              # Entry HTML
-├── index.tsx               # React entry point
-├── App.tsx                 # Main app component
-├── types.ts                # TypeScript interfaces
-├── vite.config.ts          # Vite + PWA config
-├── firebase.json           # Firebase project config
-├── firestore.rules         # Database security rules
-├── components/
-│   ├── VocabCard.tsx       # Vocabulary card display
-│   ├── PronunciationBlock.tsx  # Clickable IPA component
-│   ├── OfflineImage.tsx    # Image with offline/error fallback
-│   ├── TextAnalyzer.tsx    # Paste text → extract vocabulary modal
-│   ├── Button.tsx          # Reusable button
-│   ├── ConfirmModal.tsx    # Confirmation dialogs
-│   ├── ErrorModal.tsx      # Error display
-│   ├── AuthDomainErrorModal.tsx  # Firebase auth domain fix instructions
-│   └── UserMenu.tsx        # Account dropdown
-├── views/
-│   ├── Notebook.tsx        # Notebook view (includes integrated search)
-│   ├── StudyEnhanced.tsx   # Study analytics dashboard
-│   ├── DetailView.tsx      # Full card view with 2D navigation
-│   └── ComparisonView.tsx  # Side-by-side word comparison view
-├── hooks/
-│   ├── index.ts            # Hook re-exports
-│   └── useKeyboardNavigation.ts  # Keyboard, global nav, wheel hooks
-├── services/
-│   ├── firebase.ts         # Firebase initialization & auth
-│   ├── aiService.ts        # AI API calls (via Firebase Functions)
-│   ├── storage.ts          # IndexedDB operations
-│   ├── sync.ts             # Cloud sync logic
-│   ├── srsAlgorithm.ts     # Spaced repetition algorithm
-│   ├── speech.ts           # Text-to-speech
-│   └── logger.ts           # Development/production logging utility
-└── functions/
-    └── src/
-        └── index.ts        # Firebase Cloud Functions (AI endpoints)
-```
-
----
-
-## Firebase Setup
-
-### 1. Create Firebase Project
-
-1. Go to [Firebase Console](https://console.firebase.google.com)
-2. Create new project (e.g., "dictprop")
-3. Enable these services:
-   - **Authentication** → Google Sign-In
-   - **Firestore Database** → Start in production mode
-   - **Functions** → Blaze plan required
-   - **Hosting** → For deployment
-
-### 2. Firebase Configuration
-
-Get your config from Firebase Console → Project Settings → Your Apps → Web App:
-
-```javascript
-// services/firebase.ts
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
-};
-```
-
-### 3. Firestore Security Rules
-
-Deploy these rules (`firestore.rules`):
-
-```javascript
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-
-      match /items/{itemId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
-      }
-
-    }
-  }
-}
-```
-
-### 4. Authentication Domain
-
-Add your hosting domain to Firebase Console → Authentication → Settings → Authorized domains.
-
----
-
-## AI API Setup
-
-### 1. Get API Keys
-
-1. Go to [DeepInfra](https://deepinfra.com) for DeepSeek-V3 (text) and FLUX Schnell (images)
-2. Optionally get [Replicate](https://replicate.com) API key as fallback for images
-3. Store securely (never commit to git)
-
-### 2. Set Firebase Secrets
-
-```bash
-# Set the API keys as Firebase secrets
-firebase functions:secrets:set DEEPINFRA_API_KEY
-firebase functions:secrets:set REPLICATE_API_TOKEN  # Optional fallback
-# Paste your API keys when prompted
-```
-
-### 3. Cloud Functions
-
-The app uses three Cloud Functions:
-
-**analyzeInput** — Vocabulary/sentence analysis
-- Detects word vs. sentence mode
-- Uses DeepSeek-V3 with structured JSON output
-- Returns vocabulary cards with all fields
-
-**generateIllustration** — Image generation
-- Uses FLUX Schnell (DeepInfra primary, Replicate fallback)
-- Generates minimal vector icons
-- Returns base64 data URI
-
-**transcribeAudio** — Voice-to-text
-- Uses Whisper Large V3 Turbo via DeepInfra
-- Transcribes voice recordings for voice search
-
-**detectVocabulary** — Text analysis for vocabulary extraction
-- Accepts a passage of text
-- Returns a list of interesting/challenging words found in the text
-- Used by the Text Analyzer feature
-
-**compareWords** — Side-by-side word comparison
-- Accepts 2-3 words
-- Uses DeepSeek-V3 to generate structured comparison
-- Returns dimensions, examples, common mistakes, and verdict
-
-Deploy functions:
-```bash
-cd functions
-npm install
-npm run deploy
-```
-
----
-
-## Local Development
-
-### 1. Install Dependencies
-
-```bash
-# Root project
-npm install
-
-# Functions
-cd functions && npm install && cd ..
-```
-
-### 2. Run Development Server
-
-```bash
-npm run dev
-# Opens at http://localhost:3000
-```
-
-### 3. Build for Production
-
-```bash
-npm run build
-# Output in /dist
-```
-
-### 4. Deploy
-
-```bash
-# Deploy everything
-firebase deploy
-
-# Deploy only hosting
-firebase deploy --only hosting
-
-# Deploy only functions
-firebase deploy --only functions
-```
-
----
-
-## Environment Configuration
-
-### Package.json Dependencies
-
-**Frontend (`package.json`):**
-```json
-{
-  "dependencies": {
-    "firebase": "^12.6.0",
-    "fuse.js": "^7.1.0",
-    "lucide-react": "^0.554.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "react-markdown": "^10.1.0"
-  },
-  "devDependencies": {
-    "@playwright/test": "^1.58.1",
-    "@tailwindcss/postcss": "^4.1.17",
-    "@types/node": "^22.14.0",
-    "@vitejs/plugin-react": "^5.0.0",
-    "tailwindcss": "^4.1.17",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0",
-    "vite-plugin-pwa": "^1.2.0"
-  }
-}
-```
-
-**Functions (`functions/package.json`):**
-```json
-{
-  "engines": { "node": "22" },
-  "dependencies": {
-    "firebase-admin": "^12.0.0",
-    "firebase-functions": "^5.0.0",
-    "@google/genai": "^1.30.0"
-  }
-}
-```
-
----
-
-## Data Models
-
-### VocabCard
-```typescript
-interface VocabCard {
-  id: string;
-  word: string;
-  sense?: string;      // e.g., "noun: finance"
-  chinese: string;
-  ipa: string;
-  definition: string;
-  forms?: string[];    // e.g., ["runs", "running", "ran"]
-  wordFamily?: WordFamilyEntry[]; // Related words of different parts of speech
-  synonyms: string[];
-  antonyms: string[];
-  confusables: string[];
-  examples: string[];
-  history: string;     // Etymology
-  register: string;    // Formality level
-  mnemonic: string;
-  imagePrompt?: string;
-  imageUrl?: string;   // Base64 data URI
-}
-
-interface WordFamilyEntry {
-  word: string;
-  pos: string;    // Part of speech: noun, verb, adj, adv
-  chinese: string;
-}
-```
-
-### StoredItem (Database)
-```typescript
-interface StoredItem {
-  data: VocabCard | SearchResult;
-  type: 'vocab' | 'phrase';
-  srs: SRSData;
-  savedAt: number;
-  updatedAt?: number;
-  isDeleted?: boolean;  // Soft delete for sync
-  isArchived?: boolean; // Archive flag — excludes from study
-}
-```
-
-### SRSData
-```typescript
-interface SRSData {
-  id: string;
-  type: 'vocab' | 'phrase';
-  nextReview: number;      // Timestamp
-  interval: number;        // Minutes
-  memoryStrength: number;  // 0-100, derived from stability via log mapping
-  lastReviewDate: number;  // Timestamp of last review
-  totalReviews: number;    // Count of successful "remember" taps (= schedule step)
-  correctStreak: number;   // Consecutive remembers without overdue penalty
-  stability: number;       // Current interval in days (= SCHEDULE[step])
-}
-```
-
----
-
-## API Endpoints
-
-### analyzeInput
-
-**Request:**
-```json
-{
-  "text": "serendipity"
-}
-```
-
-**Response (Word Mode):**
-```json
-{
-  "translation": "",
-  "grammar": "",
-  "visualKeyword": "serendipity",
-  "pronunciation": "/ˌserənˈdɪpəti/",
-  "vocabs": [
-    {
-      "word": "serendipity",
-      "sense": "noun: happy accident",
-      "chinese": "意外发现的好事",
-      "ipa": "/ˌserənˈdɪpəti/",
-      "definition": "The occurrence of events by chance...",
-      "forms": ["serendipities", "serendipitous", "serendipitously"],
-      "synonyms": ["luck", "fortune", "chance"],
-      "antonyms": ["misfortune", "bad luck"],
-      "confusables": ["synchronicity", "coincidence"],
-      "examples": ["Finding that book was pure serendipity."],
-      "history": "Coined by Horace Walpole in 1754...",
-      "register": "Slightly formal, literary",
-      "mnemonic": "SERENE + DIP + IT = dip into serene luck",
-      "imagePrompt": "A person finding treasure by accident"
-    }
-  ]
-}
-```
-
-### generateIllustration
-
-**Request:**
-```json
-{
-  "prompt": "A modern bank building with columns",
-  "aspectRatio": "4:3"
-}
-```
-
-**Response:**
-```json
-{
-  "imageData": "data:image/png;base64,iVBORw0KGgo..."
-}
-```
-
----
-
-## Key Implementation Details
-
-### IndexedDB Storage
-- Database: `PopDictDB`
-- Store: `library`
-- Primary key: per-user storage key (`items_{userId}`)
-- Used for offline-first storage
-
-### Sync Strategy
-1. Local changes saved to IndexedDB immediately
-2. Changes synced to Firestore with 5-second debounce
-3. Real-time listener receives cloud updates
-4. Soft deletes (isDeleted: true) for sync propagation
-5. Most recent timestamp wins on conflicts
-
-### Text-to-Speech
-- Uses browser's native `speechSynthesis` API
-- Prioritizes US English voices
-- Works offline with system voices
-
-### PWA Configuration
-- Service worker via vite-plugin-pwa
-- Caches all static assets
-- Runtime caching for fonts
-- Standalone display mode
-
----
-
-## Deployment Checklist
-
-- [ ] Firebase project created
-- [ ] Google Sign-In enabled in Firebase Auth
-- [ ] Hosting domain added to authorized domains
-- [ ] Firestore rules deployed
-- [ ] DeepInfra API key set as Firebase secret (DEEPINFRA_API_KEY)
-- [ ] Replicate API key set as Firebase secret (optional, REPLICATE_API_TOKEN)
-- [ ] Cloud Functions deployed
-- [ ] PWA icons in `/public` (192x192, 512x512)
-- [ ] Build passes (`npm run build`)
-- [ ] Deploy (`firebase deploy`)
-
----
-
-*Document Version: 4.0*
-*Last Updated: February 2026*
-*Total Sections: 22 + Appendix + Technical Guide*
-*Estimated Reading Time: 55-70 minutes*
+| Term | Meaning |
+|---|---|
+| Card | One meaning (sense) of a word or expression, saved and scheduled on its own. A word with three saved meanings is three cards that share a spelling, and lists group them under it. |
+| Saved sentence | A sentence saved from the search box, from a card's examples or from an example's lesson. It has its own schedule and is reviewed as a sentence lesson. |
+| Real Life line, essay sentence | A sentence from a built-in collection. Its review record is created the first time you review it, and it is separate from any saved copy of the same text. |
+| Got it | The one-tap review outside a study session. It records a Good rating. |
+| Due | Reviewed before, and its next review time has come. The Study dashboard and the card header's clock count only these. |
+| To review | Never reviewed, or due. The Notebook header, the sentence lesson's pill, the card's position line and the Sentences tab count these. |
+| Memorized | Reviewed and not due yet: a filter on the sentence lists. |
+| Memory strength | A 0-100 display score computed from FSRS stability: 18 × ln(1 + stability in days), rounded, at most 100. A stability of one day reads 12, a week 37, 47 days 70, 180 days 94. Scheduling never uses it. |
+| New | A card never reviewed. Its badge reads "New", with no percentage. |
+| Struggling, Learning, Proficient, Mastered, Grandmaster | A reviewed card under 30% memory strength, then from 30%, 50%, 70% and 85%. A badge reads, for example, "Learning 45%". |
+| Archived | Kept in the library but left out of Study and out of the Notebook's main list. You archive a card yourself, or the offline usage audit archives a sense it rates British only, rare or dated, or specialized (section 14). |
+
+## 2. Layout
+
+- **Tabs.** Notebook, Sentences, Real Life, Essays and Study. On screens 768 px wide or more, a sixth button, "?", opens the Gestures & shortcuts sheet. Keys 1, 2 and 3 open Notebook, Sentences and Study; Real Life and Essays have no key.
+- **Kept between visits.** The app reopens on the tab it was on, and each tab keeps its scroll position, search, filters and any open collection, essay or study session while you use the others.
+- **The tab bar** hides while a list scrolls down past 100 px and returns on any scroll up. Tapping the tab you're on, or pressing its number, scrolls it to the top and brings the bar back; on Notebook and Sentences a second tap at the top puts the cursor in the tab's search box. A second tap within half a second is ignored.
+- **The Sentences badge**, the only badge, is a violet count of saved sentences to review ("99+" above 99). Screen readers hear "Sentences, N to review".
+- **The search button** floats at the bottom right, above the tab bar and above Study's grade buttons; over a card it sits higher, clear of the card's bottom row.
+- **Notices** (undo, progress, sync trouble, offline, updates) stack in one column at the bottom centre, above the tab bar, and stop short of the search button's column (section 10).
+- **Overlays.** The card view (full screen, for words and sentence lessons), the review popup (a bottom sheet on phones, a centred dialog on wider screens), the search box and results sheet, and dialogs open over the tabs. While one is open, the page and the tab bar are inert, and focus returns where it was when it closes. Lists behind an open card or popup don't re-sort as you review; they catch up a second after the changes stop.
+
+## 3. Search
+
+The search button opens a box from anywhere in the app. ⌘F (Ctrl+F elsewhere) opens or focuses it from anywhere, even from inside a text field; the browser's own Find never opens.
+
+### 3.1 The box
+
+- The placeholder reads "Look up a word, phrase or sentence…". Enter or Send looks up what you typed, in English or Chinese. After a lookup goes out, the box clears and closes; offline it stays open with its text.
+- When the text reads as a sentence, a bookmark, "Save this sentence", saves it to the Sentences list ("Sentence saved", or "Sentence already saved"). The text stays in the box and the bookmark becomes a disabled check, so Send can still scan it.
+- Up to six matching saved sentences appear under the box, headed "Saved sentences": exact matches with every keystroke, typo-tolerant ones 200 ms after typing pauses. ↑ and ↓ choose one, and Enter or a click opens it as a sentence lesson.
+- Esc clears and closes the box; × closes it and keeps the text. Enter in an empty box opens the results.
+- The same search runs lookups started elsewhere: the empty Notebook's box, Enter in the Sentences search box, a tap on any term chip or green word, the look-up gesture in a sentence lesson, Refresh with AI and Compare. The Notebook's own box, once the notebook has cards, runs its lookup inside the Notebook instead (4.4).
+
+### 3.2 Word or sentence
+
+One rule, shared by the client and the server (`server/src/shared/query-mode.ts`), decides how a query is treated:
+
+| Input | Treated as |
+|---|---|
+| Chinese with fewer than 8 Han characters and no comma or full stop followed by more text | word or phrase |
+| 1 or 2 words | word or phrase |
+| 7 or more words | sentence |
+| 4 to 6 words ending in `.`, `!`, `?` or `…` | sentence |
+| 3 to 6 words that start with a subject pronoun ("I", "they're"), with there/here/this/that or a wh-word plus an auxiliary, with an auxiliary question ("did you…"), or with a determiner, a subject and a verb ("the kids ran home", "the newly elected mayor resigned", "The well collapsed.") | sentence |
+| anything else ("might as well", "the elephant in the room", "a much needed break") | word or phrase |
+
+- **A word or phrase** is analyzed as one dictionary entry: one card per meaning, at most 8, ordered by usage label (most useful American usage first).
+- **A typed sentence** is scanned first. The server picks out its advanced expressions (at most 12, in base form; Chinese is translated first), and each is looked up on its own in the background, carrying the sentence as its context. When nothing qualifies, the status line says "No advanced expressions in this sentence".
+- **A saved word**, including an inflected form ("ran" finds "run") or an archived card, is answered from the library without a network call, and its result opens at once.
+- An expression picked on screen that reads like a sentence is analyzed as one entry, not scanned.
+
+### 3.3 The queue, the search button and the status line
+
+- Lookups, comparisons and scans run in the background with no limit on how many run at once. Asking again for a result that's ready opens it and says its word, even offline; asking again for one still running shows "Still looking up “word”…" and sends nothing.
+- A result opens by itself only when the library answered it or it is a refresh. A fresh AI result waits behind the search button and the status line.
+- **The search button** spins while anything runs. It shows a red count of unseen results, an indigo count of running lookups while busy, and a faded grey count of ready results when idle. It drops the red count while the status line shows a new result.
+- **The status line** is a dark pill in the notice stack, hidden while the box or the results sheet is open and while a decision dialog is open. It says "Looking up “gamut”…" (2 s), "Still looking up “gamut”…" (2 s), "Scanning…" while a scan runs, then for 3.5 s "Found 4 expressions — analyzing…" or "No advanced expressions in this sentence". A ready result then shows as its word ("gamut", or "gamut +2") with a View button until you've seen it.
+- **Reloads.** Lookups still running and results not yet seen survive a reload: up to 20, asked within the last hour, run again afterwards and never open by themselves. A lookup refused because the session expired resumes after you sign in again, as what it was; only the latest such lookup is kept.
+
+### 3.4 The results sheet
+
+- A bottom sheet up to 85% of the screen's height. It opens at the first unseen result, or the newest, and says its word. Closing it keeps the results.
+- **Header:** the query; "i/n" meanings; ‹ › with "i/N" results when there are several; a spinner with the number of lookups and comparisons still running; a save button ("Save", "Save all N" or "All saved") for every meaning of the open result; and × "Dismiss this result", which drops the open result and shows the next.
+- **Strip** (two or more results): a chip per result, with a red dot while unseen; **Save all**, every meaning of every result; and **Clear all**, which drops every finished result, closes the sheet and offers "Cleared 3 results" with Undo for 6 seconds.
+- Each meaning is a full word card (5.2) with a Save button that never unsaves, Refresh and Compare. Dots, swipes and, on wider screens, chevrons move between meanings. Moving to another result or meaning stops only audio the sheet started, and says the word.
+- An expression found in a pasted sentence or looked up from a sentence lesson shows "From your sentence: “…ran the gamut of emotions…”" above its meanings: about 40 characters each side, cut at word boundaries. The context stays on the device and isn't kept across a reload.
+- A tap or click in the top quarter of the card area reads example 1, in the second quarter example 2; a second one pauses or resumes.
+- A comparison opens in the same sheet. A lookup that returns no card says "No vocabulary card was returned."
+
+**Keys (laptop):** ← → meanings; ↑ ↓ results; S saves the meaning (or says it's already saved); Shift+S saves every meaning of the open result; P says the word; E reads the first two examples (again: pause or resume); Space plays or pauses (the first example when nothing plays); ⌘1-4 read example 1-4; Esc closes. Held keys other than the arrows act once, and a dialog above the sheet keeps the keys.
+
+### 3.5 Errors and offline
+
+- Failures collect in a red toast above the search button: the newest failure, "+N more", one action and ×. The action is **Retry** (or **Retry all**, which reruns every failure a retry could fix), or **Edit** for a word with no dictionary entry, which puts the text back in the box, selected. × clears them all. A failure that neither could fix leaves after 6 seconds.
+- Messages quote at most 40 characters of the query: "Couldn’t reach DictProp for “gamut”.", "The model did not finish “gamut” before the timeout.", "No dictionary entry found for “gamut”. Check the spelling and try again.", "Your session expired. Sign in again to retry “gamut”.", "The AI provider is temporarily unavailable for “gamut”.", "The AI provider rate-limited this request. Try again shortly."
+- Offline, saved words and saved comparisons still open. Any other lookup, and any scan, says "You're offline, so only saved words can be looked up."; an unsaved comparison says "You're offline, so only saved comparisons can be opened."
+- The server gives a lookup 300 s, a scan 240 s and a comparison 600 s, and takes at most 5,000 characters.
+
+### 3.6 Refresh with AI
+
+Refresh, from a card, the review popup, a Notebook row or the results sheet, runs the AI again even for a saved word. In the sheet it refreshes in place ("Refreshing…"), and a failure keeps the old result; elsewhere the fresh result opens when it's ready. When the word is saved, a meaning with the same sense label updates its card in place (keeping its schedule, save time and picture), a new meaning becomes a new card, and meanings the new answer leaves out stay. The undo pill offers "Refreshed “word”" for 6 seconds: Undo puts back the replaced cards exactly and removes the added ones, while a card reviewed meanwhile keeps its new schedule.
+
+### 3.7 Comparisons
+
+- A card's Synonyms or Confusables have a Compare button: pick up to 7 more words (8 in all) and press Go. The Notebook's compare mode picks 2 or 3 words.
+- A saved comparison opens at once in the results sheet; a new one is generated in the background and lands there. It has a Key Difference summary, three dimensions (core meaning, register, collocation), two contextual examples, two or three common mistakes and a verdict.
+- Comparisons are saved for the account on the server and cached on the device, and each word's card lists the ones that include it.
+
+### 3.8 Text Analyzer
+
+The Notebook's ⋯ menu opens "Analyze text", a full-screen dialog.
+
+1. Paste a passage (English or Chinese) and press Scan Text (⌘Enter).
+2. Choose from the words found. Each shows a level, its context and why it was picked. Words already in the notebook, in any form, are tagged "In notebook" and start unticked; the list is headed, for example, "8 found · 3 already saved".
+3. Analyze & Save looks the words up one at a time and saves each new meaning; "Stop after current word" stops the run. A summary reports how many cards were saved.
+
+Offline, scanning and Analyze & Save are disabled ("Offline. Text analysis requires an internet connection."). A passage with nothing advanced says "No advanced vocabulary found in this text". Escape closes the dialog, goes back to the text while you choose, and does nothing mid-analysis.
+
+## 4. The Notebook
+
+The Notebook lists your saved words and phrases; sentences live on the Sentences tab.
+
+### 4.1 The list
+
+- Cards are grouped by spelling. Within a group, meanings are ordered by usage label: Modern American, Current general English (and cards with no label), Specialized, British only, Rare or dated. A group with several meanings is a carousel: a sideways swipe or a two-finger trackpad swipe steps through them and loops; the dots jump; on wider screens ‹ › buttons step and stop at the ends.
+- A row shows the spelling, the IPA (a tap says the word in the system voice and doesn't open the card), the sense label when the group has several meanings, the Chinese, the first example and the etymology ("Origin").
+- **Badges.** An orange "Due" badge marks a card to review; this badge keeps the word "Due" and includes cards never reviewed. A grey "Archived" badge marks archived cards. The left strip is orange for a card to review, emerald for one resting more than 21 days, grey otherwise. Rows show no memory label.
+- Tapping a row opens the card view on the cards of the section it's in: the main list, the due block or the archived section (section 5).
+- **The list stays put while you read.** Its clock is re-read only when you search, change the sort or filter, open a card, tap the Notebook tab, or come back to the tab or the app. A sync or an enrichment refreshes rows in place; only a card whose own schedule changed moves.
+
+### 4.2 Header, sort and filter
+
+- **Header:** "Notebook" over a line such as "1532 words · 12 reviewed today · 340 to review": the spellings under the filter, the meanings reviewed since local midnight, and the spellings with a card to review. During a search it still counts the whole notebook. The header slides away as you scroll down.
+- **Buttons:** ⋯ (tools), Compare, Filter, Sort, and the user menu (avatar, refused reviews, Sign out).
+- **Sort:** Review Priority, the default (cards to review first, weakest memory strength first, then the longest overdue; then the rest by next review), or A-Z. Archived cards always sort A-Z.
+- **Filter** cycles All items, Words and Phrases. Words, the default, are word cards, which include multi-word expressions; Phrases are the phrase items older versions of the app saved (5.7). The sort and filter are kept on the device.
+
+### 4.3 Searching the notebook
+
+- The box ("Search or look up new word") filters as you type. A card matches when its spelling, Chinese or translation contains the text, or when the text is an inflected form of it ("ran" lists "run"). With no such match, typo-tolerant matches arrive 300 ms after typing pauses.
+- **Order:** the exact spelling; a saved base word; spellings that start with the text; spellings with a word that starts with it ("bank" in "break the bank"); spellings that contain it; Chinese or translation matches; typo-tolerant guesses. Within each tier, the sort applies.
+- **After the results** come "Archived matches · N", each row badged Archived, then a "Due for Review" block ("N words to revisit") with the cards to review the results leave out. Without a search, the list ends with a collapsed "Archived" section.
+- The list jumps to the top when results arrive, the sort or filter changes, or an AI lookup starts; clearing the search returns to the row you were browsing.
+- Esc clears the search, from the box or anywhere on the tab; with nothing to clear, Esc in the box leaves it, and elsewhere leaves compare mode. A swipe right across the search bar also clears it. On a phone, dragging the list puts the keyboard away.
+
+### 4.4 The AI lookup in the Notebook box
+
+- **Enter in the box runs the AI lookup**, by the owner's choice. So do the wand ("Search with AI (Enter)"), "Look it up with AI" under an empty result, and a voice transcript.
+- It always asks the AI, even for a saved word, and sends the text as typed: a sentence gets one whole-sentence analysis whose expressions show as cards, not a scan as in the search box (3.2).
+- **Results** show above the list as "Search Results", a carousel of full word cards with Save. → and a swipe left loop; ← stops at the first card; each step says the word. Editing the text removes the result, its error and any lookup in flight (a change of case or spacing keeps them).
+- **Offline**, Enter says "You’re offline — showing saved matches only.", with Retry once you're back online. Other failures use the search's wording (3.5), with Retry only when it can help.
+- **Voice search.** The mic shows while the box is empty (disabled offline) and records until tapped again; the speech is transcribed (Whisper large-v3-turbo) and looked up. Errors: "Voice search isn't available in this browser.", "Microphone access denied. Please enable microphone permissions.", "Couldn't start the microphone. Check that one is connected and not in use by another app.", "Voice transcription failed. Please try again."
+
+### 4.5 Row actions and compare mode
+
+- **Row actions.** A long press (half a second), a right-click or the row's ⋯ opens Refresh with AI, Archive (or Unarchive) and Delete. Only one row's actions are open at a time; scrolling, Esc or a tap elsewhere closes them, and that tap doesn't also open the card under it. Delete, Archive and Unarchive act at once on the meaning shown and offer Undo for 6 seconds.
+- **Compare mode** (the scales button, disabled offline): tick 2 or 3 words in the main list, then press "Compare N Words" (3.7). Esc, × or the button leaves it.
+
+### 4.6 The tools menu
+
+| Row | What it does | Offline |
+|---|---|---|
+| Speech playback | Clear/Casual and voice speed (section 9) | works |
+| Analyze text | The Text Analyzer (3.8) | needs a connection |
+| Batch import | 4.8 | needs a connection |
+| Import JSON | 4.8 | needs a connection |
+| Download image pack | 4.9 | needs a connection |
+| Sync now | Sends pending reviews, takes a full copy of the server's library and pushes: "Syncing…", then "Up to date", or "Couldn’t sync" with Retry | needs a connection |
+| Generate speech cache | 9.5 | needs a connection |
+| Restore server images | 4.9 | needs a connection |
+| Merge duplicates | 4.7 | works |
+| Gestures & shortcuts | The sheet (section 13) | works |
+
+Rows that need a connection grey out with "Needs a connection" once the connection has been gone for 3 seconds.
+
+### 4.7 Merge duplicates
+
+- **The scan** finds groups of cards saved under different forms of one word (run, ran, running), archived cards included. With none, a pill says "No duplicates found" for 3 seconds.
+- **The dialog** suggests a headword for each group, the base the other forms belong to ("run" for "ran"). A group starts ticked only when the evidence says it is one word; pairs that may be different words (find/found, lie/lay, saw/see, left/leave) start unticked under "Possibly different words", with each word's short definition. The button says what it will do, for example "Merge 5" over "relabels 7 cards, removes 2".
+- **Merging** relabels the cards to the headword and joins their forms. For each sense label it keeps the more reviewed card (then the richer one) and removes the others; a card with no sense label is never merged away. It pushes at once, with no undo. The dialog says review progress is merged, but the merge keeps one card's schedule and drops the others'.
+
+### 4.8 Batch import and Import JSON
+
+**Batch import.** Paste a list and press "Import N words" (⌘Enter). Each line is a word or phrase; commas split a one-line paste or a line whose parts are all single words, and semicolons always split. The run goes on in the background, five words at a time: each word is analyzed as one entry, saved words are skipped, and every new meaning is saved. Afterwards the server's speech backfill runs quietly (9.5). A pill reads "Adding words · 12/40", with × to stop, then "Added 18 words · 2 already saved", "All 5 words are already saved", "Stopped · added 3 words", or a red "Couldn’t add 3 words" with Retry, which imports the failed words again.
+
+**Import JSON.** Paste one object or an array, either simple cards (`word`, `chinese`, `ipa`, `definition` … `imageUrl`) or full saved items, and press "Import N cards" (⌘Enter).
+- The server takes 5,000 items, 25 MB, five imports an hour and one at a time. It downloads the first 100 image URLs, within 8 minutes in all.
+- While it runs, the box is read-only. It ends with "N cards imported · M images fetched · K skipped", and Sync now runs.
+- Imported cards start unreviewed. A card without an id gets a new one, so importing the same cards twice duplicates them.
+- After 12 minutes the app stops waiting: "The server took too long to answer. The import may still finish, so check your notebook before importing again."
+
+### 4.9 Pictures on the device
+
+- A picture loads from the device, then from the server, and is kept on the device once loaded; one that can't be found shows "No Image".
+- After a sync, the app quietly stores the pictures of up to 60 cards due within 24 hours and of the 20 most recently saved, except with Save-Data on, on a 2G connection, or when storage is more than 85% full.
+- **Download image pack** fetches every missing picture of unarchived cards, 20 at a time, soonest due first: "Offline images · 120/340" with ×, then "Saved 340 images for offline use", "Saved 300 of 340 images · 40 couldn’t download", "All images are already offline" or "No images to download".
+- **Restore server images** uploads the pictures this device has that the server lacks: "Restored 12 images to the server", "Restored 10 of 12 images; 2 failed", "All images already on the server" or "Couldn’t restore images. Try again later." Pictures that failed to upload are also sent again by themselves after the next sync that gets through.
+
+### 4.10 An empty notebook
+
+It shows its header (the counts, the ⋯ menu and the user menu, without Compare, Filter or Sort) over "Your notebook is empty", "Search for a word or phrase to get started." and a box. That box sends its lookups to the search (section 3), so a sentence typed there is scanned.
+
+## 5. The card view: words
+
+### 5.1 Opening and moving
+
+- The card view covers the screen. It opens from a Notebook row (paging through that section's cards), from Study's "Open card" (the card among the other meanings of its spelling) and from the study summary's missed words. The review popup doesn't open it.
+- Moving to another word opens it at its top, on its first meaning; moving between meanings keeps the scroll position. A card that a delete or archive slides into the same place opens at its top. Each card says its word (system voice) as it shows, except during example auto-play.
+- The card follows the library live: an edit from a sync or another device shows at once, and a card deleted elsewhere leaves the view (the next one takes its place; the view closes after the last).
+
+### 5.2 What a word card shows
+
+From top to bottom:
+
+- the headword and its sense label ("noun: emotion"); a usage badge when the card has one (Modern American, Current general English, British only, Rare or dated, Specialized current usage), which a tap explains; the IPA (a tap says the word, a second tap stops it) and a YouGlish link;
+- the picture, beside the text on wide screens;
+- the Chinese and an English definition of up to 25 words;
+- links to Vocabulary.com, YouTube, TikTok, PlayPhrase, Wiktionary, Google Ngram and ChatGPT (opened with a prompt that asks for an illustrated explanation);
+- Word Forms and Word Family (with part of speech and Chinese); a tap on any chip looks the term up;
+- Usage, the examples (a new card gets two). The studied word is indigo, and up to two uncommon terms per example are green with a dotted underline; a tap looks one up. Each example has a speaker, a save button ("Sentence saved" once saved) and, in the card view, "Open sentence review";
+- Origins (the etymology), Mnemonic and Register (how common the sense is and where it's used);
+- Synonyms, Antonyms and Confusables, which look up on tap; Synonyms and Confusables also have Compare (3.7);
+- Comparisons: saved comparisons that include the word.
+
+### 5.3 The header and the position line
+
+- **The header** starts hidden. A short pull down at the top of the card, or H, shows it; scrolling down hides it. While it's hidden, a round × stays at the top right, with dots for the meanings when there are several.
+- **Top row:** Close, "i/N" meanings and Refresh with AI. A saved card adds Delete (the trash), a green Got it (Unarchive instead on an archived card) and ⋮ (Archive or Unarchive, Reset Memory Strength, Delete); an unsaved card shows Save.
+- **Second row:** an "Archived" chip on archived cards; the memory badge ("New", or "Learning 45%"), a bar, the review count and the streak; the next review ("3d", "5h", or "due" once the time has passed; unlike the term in section 1, a never-reviewed card shows "due" too); and two library counts: the cards at 70% strength or more, and a clock with the number of due spellings, titled "{n} due (reviewed cards)".
+- **The position line** ends the card when the view holds two or more words: "Word 12 of 230 · 5 to review after this", or "Word 12 of 230 · archived" on an archived card.
+
+### 5.4 Actions
+
+- **Got it** (the header button, R, or a double-click or double tap on blank space) records Good. A "Remembered!" card shows "Next review tomorrow", "in 4 days" or "in ~2 months" for 1.5 seconds while that card is on screen. The same card counts once in 1.5 seconds; another card's Got it always counts.
+- **Save** (the header's Save, S, ⌘S) only saves; pressing S on a saved card changes nothing.
+- **Delete** (the trash, D, the menu) and **Archive** (A, the menu) take the card out of the view at once, and the next card takes its place; **Unarchive** keeps it in view. Each offers Undo for 6 seconds ("Deleted “word”", "Archived “word”", "Unarchived “word”"), which puts the card back where it was.
+- **Reset** (Shift+R, the menu) makes a reviewed card new again, with Undo ("Reset “word”"); on a card never reviewed it does nothing. A second press of Delete, Archive or Reset within 0.7 seconds is ignored.
+- **Refresh with AI** works as in 3.6.
+
+### 5.5 Reading by touch, the slideshow and example auto-play
+
+- **Reading by touch.** On a touch screen, a tap in the top quarter of the screen reads example 1, in the second quarter example 2; marks on both edges show the bands. A second tap pauses or resumes, and past 85% starts again. A double tap leaves playback as it was before the first tap, and a tap that stops a scroll only stops it.
+- **The playback cluster** at the bottom right holds Clear | Casual, voice speed, Duration (5 to 25 minutes, default 20), the slideshow and example auto-play.
+- **The slideshow** shows each card for 1, 1.5, 2 (default), 3 or 5 seconds (+ or = changes it), meaning by meaning, then word by word, saying each word. Any manual move stops it.
+- **Example auto-play** reads each card's first two examples (on a phrase card, the phrase) ×1 to ×5 (default ×3), with a gap of 2, 3, 5 or 10 seconds (default 2) between reads and 600 ms between cards. It ends after the last card or when Duration runs out, letting the read under way finish. Anything else that speaks stops it; E pauses or resumes it, and Space stops it.
+- While either runs, the screen stays awake (a pause keeps it awake for 2 minutes only) and the lock screen shows the word. Duration, repeats, gap and slide time reset each time the card view opens; Clear/Casual and speed are kept.
+
+### 5.6 Gestures and keys
+
+**Touch:** swipe left for the next meaning (wrapping from the last to the first; on a one-meaning card it says the word); swipe right for the previous meaning, or out of the view from the first. Swipe up from the bottom of the card (or anywhere on a card that fits) for the next word, down from the top for the previous one; a short pull at the top shows the header. A double tap on blank space is Got it; buttons, links and green words don't count. **Trackpad:** a two-finger sideways swipe pages the meanings.
+
+| Key | Action |
+|---|---|
+| ← → | Previous or next meaning (→ wraps; ← stops at the first) |
+| ↑ ↓ | Previous or next word |
+| R | Got it |
+| Shift+R | Reset memory strength |
+| S, ⌘S | Save the card |
+| D | Delete the card |
+| A | Archive or unarchive |
+| P | Say the word |
+| E | Read the first two examples. Again: pause or resume, or past 85% start again. During example auto-play: pause or resume it |
+| ⌘1-4 | Read example 1-4 |
+| Space | During example auto-play, stop it. Otherwise pause or resume a playing sentence, or start or stop the slideshow |
+| + = | Change the slideshow's time per slide |
+| H | Show or hide the header |
+| Esc | Close the ⋮ menu, then the card |
+
+Held letters act once and held arrows repeat. With ⌘, Ctrl or Alt held, letter keys go to the browser (⌘R reloads). A sheet or dialog on top of the card takes the keys.
+
+### 5.7 Phrase cards
+
+Older versions of the app saved some lookups as phrase items; today every lookup saves each meaning as a word card, multi-word expressions included. A phrase card shows its picture, its translation as the title, the phrase and its pronunciation, PlayPhrase and ChatGPT links, grammar notes, and "Key Vocabulary": a full word card for each word. A Key Vocabulary card's save button toggles (on a saved word it deletes that word's card, with Undo), and its × removes the word from the phrase, with no undo.
+
+## 6. Sentence lessons
+
+A sentence lesson is the card view for sentences: saved sentences, Real Life lines, essay sentences and the examples on word cards.
+
+### 6.1 Opening
+
+- **Where it opens:** a row on the Sentences tab, a line in a Real Life collection or a sentence in an essay (the lesson walks that list in its on-screen order, from the tapped sentence); a collection's or essay's Study button; the search box's saved-sentence suggestions; and "Open sentence review" on a word card (over the card) or under a study answer.
+- Each sentence is paired with its source card, the word it came from; P and ⌘1-4 act on that card.
+- An unsaved example opened from a word card is a preview: it has no review pill, Reset, Delete or picture button, and its right-hand button is "Save sentence".
+
+### 6.2 The sentence page
+
+- **Header:** Back ("Sentences", "Real Life", "Essays" or "Word"); the analysis button, a spinner while the analysis loads; "i / N"; and a pill. Amber "K to review" counts the run's sentences never reviewed or due; it reads the same on every sentence, counts down as you mark them, and turns into a green "All reviewed" at zero.
+- **The sentence:** the studied expression in indigo on a light background; saved words and saved phrases of up to six words in indigo with a dotted underline; unsaved uncommon terms in green with a dotted underline; every other word plain.
+- **The connected-speech line.** Under the sentence, the analysis's natural American IPA in connected speech, shown even when it matches the dictionary form; screen readers call it "Natural American IPA (connected speech)". It isn't a word target, and a sentence without one shows no line.
+- **Under it:** a speaker; Copy ("Copy sentence (to paste into Meta AI)"); and on a Mac a ⌘ chip that lights while ⌘ is held, when hovered words show a ring.
+- **The picture**, when there is one, sits left of the sentence on wide screens and above it on phones. The front page has no translation; the analysis page does.
+- **Bottom row:** once the sentence has a review, its memory (badge, review count, streak, "N memorized in this list", next review) and Reset; Delete, for saved sentences only; and at the right end Got it, always the same size so nothing moves (a preview shows "Save sentence"). Clear | Casual and the auto-play button float at the bottom right, and the attach-picture button sits above the search button.
+
+### 6.3 Words in the sentence
+
+The owner's design:
+
+| | Phone | Laptop |
+|---|---|---|
+| Play from a word | Tap it with one finger | Click it |
+| Look up a word | Two-finger tap: hold one finger anywhere and tap the word | ⌘-click (Ctrl-click) |
+| Look up a phrase | Not yet | Select up to six words, then ⌘-click inside the selection |
+
+- A look-up of a saved word or phrase opens its review popup (8.7); anything else goes to the search, which shows "From your sentence: …" above the meanings. A word whose first or last letter is accented ("touché!") is looked up whole.
+- Every tap or click shows on the word at once: a light indigo pulse when it plays from the word, a stronger flash with a ring when it looks the word up.
+- Playing from a word uses the sentence's own clip and voice, starting at that word (9.3); during auto-play it moves auto-play's clip to the word. Enter plays from the word the caret or selection is in.
+
+### 6.4 Blank space, Got it and moving
+
+- **A tap or click on blank space** (anything but a word or a control; the picture and the IPA line count as blank) plays or pauses the sentence, starts it again past 85%, and during auto-play pauses or resumes auto-play. It waits 320 ms to rule out a double tap.
+- **Got it:** a double tap on blank space or on the words, a double-click on blank space, R, or the button. It records Good and shows "Remembered!" with the next review; the sentence stays on screen. On a Real Life or essay line, the first Got it creates the line's record. The same sentence counts once in 1.5 seconds.
+- **Reset** (Shift+R) works as on word cards. **Delete** (D, or the trash) applies to saved sentences only; it acts at once and offers Undo. Real Life and essay lines can't be deleted.
+- **Moving:** swipe up from the bottom of the page, or press ↓, for the next sentence; swipe down from the top, or press ↑, for the previous one. The new sentence opens at its top and is read aloud in its remembered voice; at the first or last sentence, the current one is read again. On a long sentence with a picture, the page scrolls to its end before a swipe moves on.
+- **Pages:** a swipe left, →, or a two-finger trackpad swipe opens the analysis page; a swipe right or ← returns to the sentence, and a swipe right on the sentence page closes the lesson.
+- **Esc** closes, in turn, the picture panel, the auto-play panel and the analysis page, then the lesson.
+- Closing a lesson opened by tapping an essay sentence returns the essay to the last sentence the lesson showed, tinted for 1.5 seconds and, on a laptop, focused, so Enter reopens it.
+- A saved sentence deleted on another device leaves the run, and the lesson closes if it was the last.
+
+### 6.5 The analysis page
+
+- **Header:** "← Sentence", "Sentence analysis" with "i / N", and a compact Got it. Then the sentence, its "American IPA" (careful) and its "Natural American IPA (connected speech)" when the two differ.
+- **Sections:**
+  1. Chinese Translation.
+  2. Is It American English and Why? Collapsible, with a badge ("Distinctly American", "Natural shared English" or "Not natural American English") and the evidence.
+  3. Uncommon Words and Phrases. Each term has its IPA, Chinese, a search button, original meaning, synonyms, antonyms, usage examples and historical evolution.
+  4. Daily English Pronunciation: spoken slowly, spoken quickly, careful speaker, fast-speech features, intonation and chunking, key difference.
+  5. Grammar Analysis.
+- Analyses and pictures come from a shared pool on the server, written by the Mac's enrichment cycle (section 14); the VPS never writes one. The lesson fetches the current sentence's and the next five's. While one loads: "Loading analysis…". On a failure: "Couldn’t load the analysis. It will retry automatically." (after 15 seconds, on reconnecting, or when the lesson moves). With none yet: "Not analyzed yet".
+- Looking up a term keeps the analysis open under the search sheet.
+
+### 6.6 Listening and auto-play
+
+- Each saved sentence remembers its last Clear or Casual voice, and showing it switches to that voice; choosing a voice, or hearing the sentence to its end, records it. The speaker and E play, pause, resume, and restart past 85%.
+- **Auto-play.** The round button starts it and opens its panel, "Auto-play": speed; Duration, 5 to 25 minutes (default 20); Repeats, ×1 to ×5 (default ×3); Interval, 2, 3, 5 or 10 seconds (default 2); and Stop auto-play. Each sentence is read Repeats times with the interval between reads, then the next. It ends after the last sentence or when Duration runs out; the read under way finishes, and paused time doesn't count.
+- **The lock.** While auto-play runs, Back reads "Auto-play" with a lock, and Esc, Back or a swipe right open the panel; Stop is the way out. A tap on the button toggles the panel, and a long press (half a second) opens it.
+- **Pausing.** Anything else that speaks (a lookup, a popup, a word, a voice change) pauses auto-play: the button shows Play and the countdown stops, and one tap resumes by reading the interrupted sentence again. A blank-space tap, the speaker, E and Space pause or resume it at any moment, and a pause from the phone (a call, AirPods taken out) shows as paused too.
+- It preloads the clips and pictures it can reach in the time left ("Preloading k/N"). The screen stays awake, and a pause lets it sleep after 2 minutes. The lock screen and AirPods play and pause it, and next and previous move between sentences.
+
+### 6.7 Attaching a picture
+
+Saved sentences and Real Life or essay lines can take a picture: tap the picture button for "Choose photo" or "Paste image", drag a picture in, double-tap the button to paste, or press ⌘V anywhere in the lesson. The picture is stored on the device and uploaded. Errors read "That doesn’t look like an image.", "Couldn’t attach that image. Try again." and "The clipboard does not contain an image."
+
+### 6.8 Keys
+
+| Key | Action |
+|---|---|
+| ↑ ↓ | Previous or next sentence, read aloud |
+| ← → | Sentence or analysis page |
+| Enter | Play from the selected word |
+| E | Read the sentence. Again: pause or resume, or past 85% start again. During auto-play: pause or resume it |
+| Space | Pause or resume; with nothing playing, start auto-play; during auto-play, pause or resume it |
+| P | Say its word |
+| ⌘1-4 | Read example 1-4 of its word |
+| R | Got it (the sentence stays on screen) |
+| Shift+R | Reset memory strength |
+| D | Delete a saved sentence |
+| Esc | Close a panel or the analysis page, then the sentence |
+
+## 7. The reading tabs
+
+### 7.1 What the three tabs share
+
+- Every sentence is unreviewed, due, or memorized (reviewed and not due yet). Study never takes sentences; you review them on these tabs and in their lessons.
+- Saved sentences, Real Life lines and essay sentences keep separate records: reviewing a Real Life line never changes a saved copy of the same text.
+- **A sentence keeps its place in a list until it is memorized**, by the owner's design. On the Sentences tab the order follows memory strength, which only a review (Got it or Reviewed) changes, so listening never moves a sentence. Real Life and essays keep their catalog order. Lists also don't shift as time passes or as syncs land: their clock is re-read only when you open a collection, an essay or a sentence, change the Sentences tab's filter or search, or come back to the tab or the app. An open lesson keeps the order it opened with.
+- Reviewed buttons record Good. A double click records one review, and a second Reviewed press within half a second in the same list is ignored.
+
+### 7.2 Sentences
+
+- Your saved sentences, under "Sentences", "{N} saved" and an orange "{K} to review". Order: weakest memory strength first, ties to the newest saved. Filter chips: All, Unreviewed, Due, Memorized.
+- **Search** ("Search saved sentences…") covers the sentence and its source word, ignoring case, accents, curly quotes and dashes. Literal matches update as you type (sentences in which the typed words start words come first), typo-tolerant ones 200 ms after typing pauses, and a search overrides the chips. With no match: "No sentences match “…”" and "Press Enter to look it up with AI instead". Enter sends the text to the search (section 3): a sentence is scanned, a word looked up. Esc clears the box.
+- **Rows:** a strip on the left (grey for a sentence never reviewed, red under 40%, amber from 40%, emerald from 70%); the sentence (tapping the studied phrase opens the row, a saved word opens its review popup, a green word looks it up); the source word (or "Saved sentence") and its sense; and, for a sentence not to review, when it comes due ("tomorrow", "in 3d"). A sentence to review is orange, with a green "Reviewed" button. The trash asks "Delete" or "Cancel" in place, then offers Undo.
+- A tap on a row, or Space or Enter on a focused row, opens its lesson.
+
+### 7.3 Real Life
+
+Five collections ship with the app, 1,120 lines in all:
+
+| Collection | Level | Themes | Lines |
+|---|---|---|---|
+| Career Conversations | C1 | 13 | 234 |
+| Daily Shopping | B2–C1 | 14 | 252 |
+| Executive Communication | C1–C2 | 13 | 234 |
+| Restaurant Conversations | B2–C1 | 10 | 200 |
+| Travel Conversations | B2–C1 | 10 | 200 |
+
+- **Landing page:** a tile per collection with its level, themes, "N reviewed", "N% mastery", line count, and "N due · M new" (the due count in an orange pill) or "all reviewed".
+- **A collection** shows its title and "18% mastery · 46/234 reviewed"; wider screens add a stats strip with the due count over "due · M new". Below are a search box, the review chips (All, Unreviewed, Due, Memorized) and theme chips.
+- **Study** takes the theme and search in view, due lines first, then new ones: "Study 12"; "Practice" when nothing in view is due or new (it then goes through every line in view); a disabled "Study" when nothing is in view.
+- **Rows** come in catalog order. Each shows the line, its theme, "Saved" if it is also a saved sentence, a state pill (a check and its strength when memorized, an orange "Due", or a grey "Unreviewed"), Reviewed unless it is memorized, and a speaker; a line started from the speaker keeps playing when the row scrolls away or a filter hides it.
+- The first Esc clears the search and the next returns to the collections; Back returns to the landing page where you left it.
+
+### 7.4 Essays
+
+Five public-domain classics ship with the app:
+
+| Essay | Author | Sentences |
+|---|---|---|
+| Self-Reliance | Ralph Waldo Emerson, 1841 | 504 |
+| Corn-Pone Opinions | Mark Twain, 1923 | 97 |
+| Of Our Spiritual Strivings | W. E. B. Du Bois, 1903 | 102 |
+| Why I Wrote “The Yellow Wallpaper” | Charlotte Perkins Gilman, 1913 | 17 |
+| How It Feels to Be Colored Me | Zora Neale Hurston, 1928 | 105 |
+
+- **Private modern essays,** the owner's catalog, load from the server for the signed-in account. If they fail to load, the page says "The private modern collection is temporarily unavailable; the historical collection remains fully usable." with Try again, and retries by itself when the connection returns or the app comes back to the front.
+- **Landing page:** two sections, "Historical classics" and "Modern American voices" (grouped by publication), with tiles like Real Life's. A "Continue reading" card shows the last essay you left unfinished, with "Sentence p of n".
+- **The reader** shows the title, author, level, reading time and word count; a progress card (mastery, reviewed of total, and the due count over "due · M new"); and every body sentence as a button, underlined orange when due and emerald when memorized. A tap opens a lesson over the whole essay from that sentence. Study goes through the essay's due sentences, then its new ones ("Study N", or "Practice").
+- An essay reopens at the sentence where you left it; the place is kept per account on this device, for up to eight essays, and a finished essay opens at its title. At the end of a modern essay from a publication with several, "Next: <title>" opens the next one. Esc or Back returns to the Essays page at its scroll position.
+
+## 8. Study
+
+### 8.1 Scheduling
+
+- **FSRS v6** through ts-fsrs with its default weights: 90% desired retention, a 10-year maximum interval, 10-minute learning and relearning steps, short-term scheduling on, and no fuzz, so the same history always gives the same schedule.
+- **Grades:** Again, Hard, Good, Easy. Got it outside a session records Good.
+- The device shows the new schedule at once. The server applies the same review to its stored schedule in one transaction, and its result is what every device keeps (11.3).
+- Cards from the old fixed schedule become FSRS cards at their next review. Memory strength (section 1) shows on badges and picks the prompt type; it doesn't schedule anything.
+
+### 8.2 What Study takes
+
+Saved words and phrases that aren't archived, each meaning on its own schedule; sentences are never in Study. A session takes up to 40 due cards, most overdue first, then up to 10 new cards, oldest saved first, with one meaning per spelling.
+
+### 8.3 The dashboard
+
+- **"Today's Study"** shows Ready (the session's size), Due (due spellings) and Avg strength.
+- **The Start button** reads "Review 50" over a line such as "40 due · 10 new · 70 more after this". When nothing is ready it is a disabled "All caught up", with "Next card due in 2h 10m · 34 by tomorrow" (by the coming midnight). Enter presses it on a laptop. A session takes the cards due when you press Start, and the counts stay current while the dashboard is open.
+- **Weekly Stats (last 7 days):** Reviews, every review today and on the six days before; Recall (study), the share of study-session grades other than Again (Got it doesn't count; "—" when there are none); Day Streak, consecutive days with a review, counting back from today, or from yesterday when today has none yet.
+- **7-Day Activity:** a bar chart over the same days, with "Total: N reviews" and "Avg: N/day". **Mastery Breakdown:** the cards by memory label.
+- **Achievements:** Best card streak (the longest current run of non-Again grades on one card), Total Reviews, and Most Practiced (up to three reviewed cards with the most reviews).
+- The review-history numbers read "—" until the history loads, and after an offline start they fill in once you're back online. With nothing saved, the tab shows "Your Study Space".
+
+### 8.4 A session
+
+- **The header** shows "i / n" (n grows when a card comes back), the prompt's instruction and × to end.
+- **The prompt** depends on the card's memory strength:
+
+| Strength | Prompt |
+|---|---|
+| Under 30, which includes every new card | "Recall the meaning": the word with its pronunciation. A spelling with several study cards adds a hint such as "noun · one of 3 meanings" |
+| 30 to 54 | Alternates "Type the English word" (the Chinese and the English definition, with the word and its forms blanked) and "Recall the meaning" |
+| 55 and up | Alternates "Fill in the blank" (an example with the word blanked) and "Listen to the sentence"; with no usable example, "Type the English word" |
+
+- Fill-in-the-blank and listening prompts take turns through the card's examples.
+- **Listening:** the sentence plays as the card appears (the first one inside the Start press). The 64 px dark button pauses, resumes or replays it, and it plays again on Resume or when you come back to the tab. The next three listening clips download ahead.
+- **Typing:** the box doesn't capitalize or autocorrect. Enter reveals; in an empty box, Space reveals and ⌘Z undoes the last rating. After the reveal a verdict shows, which never grades: "✓ walk", "≈ wlak — one letter off" (no slip allowed under 4 letters, one for 4-7 letters, two for 8 or more), "↔ stroll is a synonym — this card is walk", or "✗ run".
+- **Show answer** (Space or Enter) reveals the word, its pronunciation (tap to hear), the sense label, the Chinese and the definition; the example, with its own speaker and "Open sentence review"; and "Open card", which opens the full card over the session (a Got it there counts, and the session moves past that card). Revealing says the word unless audio is already playing.
+
+### 8.5 Grades, the receipt and undo
+
+- **The grades** are four buttons in one row (Again, Hard, Good, Easy; keys 1-4), each showing its next interval, in the slot where Show answer was. A tap within 350 ms of the reveal or of a grade is ignored.
+- A grade whose interval is under a day brings the card back at the end of the session: Again (10 minutes), and Hard on a new or relearning card (15 minutes). A card reviewed elsewhere since the session began (in the popup, the card view or on another device), deleted or archived is skipped. Time away from a prompt counts at most two minutes toward the review.
+- **The receipt line** above the grades names the last grade, for example "↶ walk · Good · next in 2d". It says "again later this session" when the card will come back, shows "Undoing…" during an undo, and adds "· saved on this device" while the grade waits to reach the server.
+- **Undo** (U, or the line's button) goes back one grade only, to the card, revealed. It needs the grade to have reached the server first ("This review is still syncing. Try undo again." online, "Reconnect to undo this review." offline), and a failed undo shows in the line for 4 seconds. A grade, ending the session or an undo stops only audio the session started.
+
+### 8.6 Ending, the summary and reloads
+
+- × or Esc after at least one grade shows "Ended early · 23 of 50 reviewed" with Resume (R); before any grade it returns straight to the dashboard.
+- **The summary:** "Session complete · 50 cards"; the count of each grade and "Recalled X of Y prompts."; "Missed (N)", the words graded Again or Hard, each of which opens its card, with "Review missed words" to go through them in the card view; "Undo last rating"; and "Done" (Enter), back to the dashboard.
+- A running session survives a reload, an update or iOS closing the app: for six hours after its last grade or move, it comes back at the card you were on, unrevealed, skipping cards reviewed elsewhere meanwhile. A session that ended early also comes back at its card.
+
+| Key | Action |
+|---|---|
+| Enter | Start on the dashboard; Done on the summary |
+| Space, Enter | Show the answer |
+| 1-4 | Again, Hard, Good, Easy |
+| U | Undo the last rating |
+| P | Say the word, once the answer shows |
+| E | Replay a listening prompt; once the answer shows, play or pause the example |
+| Space, ⌘Z | In an empty answer box: show the answer, undo the last rating |
+| Esc | Leave the answer box; then end the session early, or close the summary |
+| R | Resume a session that ended early |
+
+### 8.7 The review popup
+
+- **It opens** from a saved word in a sentence: a dotted word on a Sentences or Real Life row, or the look-up gesture on a saved word or a selected saved phrase in a lesson.
+- **It shows** every saved meaning of the spelling, archived ones included, opening on the one you tapped; after them, the word's other meanings from a fresh lookup (once per word per session), each marked "Not in your library yet" with "Save this meaning". The header holds the word, its sense, "‹ i/N ›", Clear/Casual, speed and close. A sideways swipe changes the meaning, and each change says the word.
+- **A saved meaning's row** shows its memory (badge, review count, streak, next review), Reset, Delete (a first press turns it into "Sure?" for 2.5 seconds) and Got it. Confirmations show in a pill under the header for 1.6 seconds: "Next review in 32d", "Memory reset", "Saved to your library".
+- **Reading by touch:** on a phone, the card's outer edges read (the top quarter example 1, the second quarter example 2); on wider touch screens the gutters beside the card do. Selecting text and letting go over the dimmed area doesn't close the popup, and it closes by itself once every meaning it showed is deleted, here or on another device.
+- **Keys:** ← → change the meaning; Space plays or pauses (the first example when nothing plays); P says the word; E reads the first two examples; ⌘1-4 read example 1-4; R is Got it, or saves an unsaved meaning; Shift+R resets; D deletes (press again to confirm); Enter saves an unsaved meaning; Esc closes. Other ⌘ and Ctrl shortcuts stay the browser's (⌘R reloads, ⌘P prints), and held keys act once.
+
+## 9. Audio
+
+### 9.1 Voices
+
+- **Sentences** (examples, saved sentences, Real Life lines and essay sentences) play the server's neural clips from MiMo-V2.5 TTS on DeepInfra, in one of two styles. **Clear** is a stock voice, "Mia": crisp and fully articulated. **Casual** is fast, reduced everyday speech: DeepSeek first respells the sentence with contractions and reductions ("gonna", "'em", "'cause"), keeping every content word, and a designed casual American voice reads the respelling. Until a sentence's casual clip exists, its Clear clip plays.
+- **On a miss**, when the server has no clip yet, the app asks the server to make one for next time and meanwhile reads the sentence with **Kokoro**, an in-browser neural voice of about 330 MB, downloaded once and then usable offline. A laptop downloads it without asking; an Android phone asks first: "Download the natural voice? About 330 MB, one-time. After that it works offline with no further data." On iPhone and iPad, and wherever Kokoro is declined or can't run, the **system voice** reads instead.
+- **Words** (the IPA chip, P, the word said when a card shows) always use the system voice, at once; Clear/Casual doesn't apply to them.
+- **Settings:** speed for sentences is 1×, 1.1×, 1.3×, 1.5×, 1.75× or 2×. Style and speed are kept on the device and apply everywhere; set them in the Notebook's tools menu, on a card, in a lesson (speed sits in the auto-play panel) or in the review popup. Changing the style while a sentence plays or loads replays it from the start in the new voice; from the tools menu it only stops it.
+- One player serves the whole app, so starting any sentence or word stops what was playing. The search sheet, the popup and a study session stop only audio they started.
+
+### 9.2 Caching and warming
+
+- The server caches each clip once, keyed by voice and text and shared by every user, along with its word timings. The device keeps clips too (up to 512 MB, never past 80% of its storage quota), so each downloads once and kept clips play offline.
+- A fresh lookup, a Notebook AI result, a batch import and the Text Analyzer ask the server to make their examples' clips. A word card fetches the clips of its word and the words beside it, and a lesson prepares the current sentence and the next five.
+
+### 9.3 Play from a word
+
+The server times every word of every clip with whisper.cpp (its tiny English model). A tap on a word plays the sentence's clip from that word when its timings arrive within 400 ms; otherwise the system voice, or a loaded Kokoro, reads the rest of the sentence from that word. Playing from a word never starts the Kokoro download, and the server never makes a clip of the fragment.
+
+### 9.4 Auto-play
+
+Sentence lessons have auto-play (6.6); word cards have example auto-play and the slideshow (5.5).
+
+### 9.5 Generate speech cache
+
+The Notebook's "Generate speech cache" starts, or joins, the server's backfill, which makes clips and timings in both styles for the Real Life and essay catalogs, every example on every card and every saved sentence. A pill reads "Sentence audio · 1,200/7,000"; its × hides the pill while the server carries on. It ends with "Sentence audio ready · 120 new" or "Couldn’t start sentence audio" (with Retry), or says "Sentence audio continues on the server" when progress checks keep failing. The same backfill also runs every six hours from a GitHub workflow, and quietly after each batch import.
+
+## 10. Notices, pills and undo
+
+Notices are pills in one column at the bottom centre: above the tab bar on the tabs, higher over a card. They stack by how long they stay, top to bottom, so one coming or going doesn't move the others. Long text is cut off, or wraps where the pill allows it.
+
+| Notice | What it says | When, and for how long |
+|---|---|---|
+| Undo | "Deleted “word”" with Undo | 6 seconds after a change that can be undone (below) |
+| Search status | Section 3.3 | While the search reports |
+| Preload | "Preloading k/N" | While auto-play preloads |
+| Image pack, image restore | Section 4.9 | While they run; the result stays 3 seconds, or 6 on a failure |
+| Sentence audio | Section 9.5 | While the backfill runs, then its result |
+| Batch import | Section 4.8 | While it runs, then its result |
+| Sync now | "Syncing…", then "Up to date" (2.5 seconds), or "Couldn’t sync" with Retry (6 seconds) | After Sync now |
+| Merge duplicates | "No duplicates found" | 3 seconds |
+| Can't save | Rose: "Couldn’t save on this device. Your changes still sync." Offline: "Couldn’t save on this device. Keep this tab open until you’re back online." | When saving to the device fails, until a save works; also over cards |
+| Stuck sync | Amber: "3 changes not synced", with Retry | Online and visible, after two failed pushes in a row and a minute since the first |
+| Offline | Amber: "Offline" | After 3 seconds without a connection, until it returns; on the tabs only |
+| Refused reviews | Amber: "1 review wasn’t accepted", with View | Until viewed or dismissed (11.3) |
+| Update | "Update ready" with Reload, or "Reload needed" | A new version waits until no card or popup is open; "Reload needed" (part of the app failed to load) shows at once |
+
+- A background job shows one result pill at a time, each with ×; a new result replaces the one showing. Reload reads "Saving…" while it sends pending changes (for up to 10 seconds), then reloads.
+- **What can be undone:** deleting, archiving and unarchiving a card; resetting a reviewed card (resetting a card never reviewed does nothing and offers nothing); Refresh with AI; and Clear all in the search results. Merging duplicates and removing a word from a phrase can't be undone.
+- **How undo works:** one offer shows at a time, and a new one closes the old, whose change then goes through. Undo, or ⌘Z (Ctrl+Z elsewhere) while the pill shows, takes the change back; ⌘Z doesn't act in a text field, whose own undo wins, or while a decision dialog is open. An offered change is saved on the device at once but kept from the server until the pill closes, then pushed at once. Signing out or reloading closes the offer first.
+
+## 11. Sync and offline
+
+### 11.1 Where the library lives
+
+- Each account's library lives on the server, in SQLite, and on each device, in IndexedDB, with one record per item; each web origin has its own device storage. The device saves changes 300 ms after they settle, and at once when the page is hidden or closed. Without IndexedDB (iOS private browsing) the library lives in memory and relies on the server's copy. The app asks the browser to keep its storage.
+- Pictures travel separately: item data carries a marker, and each picture loads from its own server endpoint and is kept on the device (4.9).
+- Fields only the server writes (the usage label, the enrichment markers, a saved sentence's analysis) survive a save made from an older copy, and the saving device shows them as soon as the save returns.
+
+### 11.2 Launch, pulls and pushes
+
+- **Launch:** the app reads the device's copy, then sends queued reviews, pulls changes and pushes local edits. A first visit takes a full copy, 500 items a page. If the device's copy can't be read: "Couldn’t open your library", with Try again, Reload app and Use the server copy (which may lose changes not yet synced).
+- **Pulls:** while the app is visible and online, it pulls the server's changes since its last revision, 500 at a time, every 8 seconds, when the window gets focus or the page becomes visible, when the connection returns, and when another tab of the app has sent something.
+- **Pushes:** 5 seconds after edits pause, and no later than 30 seconds into a steady stream of edits such as a study session, in batches of 200; deletes, archives and resets go at once, after their undo window. A failed push is retried after 8 seconds, then after longer waits up to 5 minutes, and at once when the connection returns. Two failures in a row and a minute without success bring up the stuck-sync pill.
+- **Merging:** the server's revision numbers decide which copy is newer, and unsynced edits on the device survive a pull. A deletion wins unless the other copy is newer. A delete or archive made on the device applies on top of a server copy that changed meanwhile (an enrichment, for example). For schedules, the newer review wins. A copy stripped of its content never replaces a full one.
+
+### 11.3 Reviews
+
+- Each review is written first to an outbox on the device (localStorage, one entry per review), then sent to the server, which applies it in one transaction. The review's id makes retries safe: a review sent twice counts once. Its time is kept between the card's last review and five minutes past the server's clock.
+- When the server refuses a review for good (for example, the card isn't on the server), the device drops it from the outbox, keeps the card's new schedule, which travels with the card, and shows the refused-reviews pill. View opens "Reviews the server refused": each word, when, and why ("The card isn’t on the server", "It clashed with a newer change"…), with Clear all. The user menu shows the count while any remain. A deleted Real Life or essay record comes back with its review instead of being refused.
+- Undoing a review works only while it is still the card's latest change.
+
+### 11.4 Offline
+
+- The installed app opens without a connection, from its cache, with the saved session and the device's library. Reviews queue and edits are stored, and both go out once back online. Saved words and saved comparisons open in the search.
+- New lookups and scans, the Text Analyzer, imports, the picture tools, Sync now, the speech cache and Sign out need a connection; they say so, or grey out with "Needs a connection".
+- A service worker precaches the app. It looks for a new version when the app returns to the foreground (at most every 10 minutes), and a new version brings the update pill (section 10).
+
+## 12. Accounts
+
+- **One owner.** DictProp signs in with Google only and admits one person. With `OWNER_GOOGLE_EMAIL` set, only that address can sign in; its first sign-in on an empty database creates the admin account, and later sign-ins need that account. Anyone else gets "This DictProp instance is private.", sent as plain JSON rather than a page.
+- **The sign-in screen** reads "DictProp", "AI-powered vocabulary learning" and "Sign in with Google". Offline, the button reads "Connect to sign in" and stays disabled until the connection returns.
+- **Sessions:** an httpOnly cookie, whose token the server stores only as a hash. A session lasts 30 days, and using the app renews it once it has less than 23 days left, up to 180 days after you signed in. In practice you sign in again after three to four weeks away from the app, or every 180 days.
+- **Expiry while the app is open:** the app keeps the library and any unsynced changes on the device and shows the sign-in screen with "Your sign-in expired. Your library and any changes not yet synced are kept on this device. Sign in to pick up where you left off." A lookup the expiry interrupted runs again after you sign in.
+- **Signing out** (the user menu in the Notebook header) asks "Sign out?" ("You'll need to be online to sign back in."), sends unsent changes first (for up to 10 seconds), then signs out and reloads. Offline it is greyed out; if the server can't be reached it says "Couldn't sign out", and you stay signed in.
+- The library, the outbox, the refused-review log and the reading places are kept per account on each device. www.dictprop.online redirects to dictprop.online, so the sign-in cookie lives on one address.
+
+## 13. The Gestures & shortcuts sheet
+
+The sheet lists what each tap, swipe and key does. Its rows live in `services/shortcutSheet.ts`, where a change to a handler edits its row in the same commit, and a test pins the list.
+
+- **Opening:** ? (except while typing); the tab bar's "?" button on screens 768 px wide or more; and the last row of the Notebook's ⋯ menu, "Gestures & shortcuts", on any screen, which is the only way in on a phone. Got it or Esc closes it.
+- **Sections:** Touch, Navigation, Card view, Sentences, Study session, Word card popup, Search and Trackpad. Touch comes first on a touch screen and is left out elsewhere; keys show ⌘ on a Mac and Ctrl elsewhere.
+- **The Navigation keys:**
+
+| Key | Action |
+|---|---|
+| 1 2 3 | Notebook, Sentences, Study. Pressed again on their own tab: to the top, then (Notebook and Sentences) to the search box |
+| ⌘F | Look up a word |
+| ? | Show the sheet |
+| Esc | Close what's on top, or go back; in the Notebook, clear the search; in an essay or a Real Life collection, back to its list (the first Esc clears the Real Life search) |
+| ⌘Z | Undo, while the Undo pill shows |
+
+The other sections' keys are in this document's tables: the card view (5.6), sentence lessons (6.8), Study (8.6), the review popup (8.7) and search (3.4).
+
+## 14. Offline enrichment
+
+**The split.** The VPS answers what a lookup needs at once: DeepSeek-V4-Flash on DeepInfra writes the cards, and MiMo-V2.5 voices the clips. It never draws pictures or writes detailed sentence analyses. Those, and a deeper rewrite of each new card, come from a cycle on the owner's Mac.
+
+**The cycle** starts every six hours (a LaunchAgent) and runs only the code deployed from `main`. It reaches production only through GitHub, because the Mac can't connect to the VPS, and everything that crosses is encrypted (AES-256-GCM, each bundle bound to its operation), since the repository is public.
+
+| Stage | What the user sees afterwards |
+|---|---|
+| Vocabulary | Up to 100 unarchived words and phrases per cycle: first cards saved in the past week that lack a field or the advanced rewrite, then older cards, only when they lack a field other than their examples. Each gets its missing fields filled and, once, an advanced rewrite of its learning content, recorded by a marker tied to a hash of the rewritten text. The rewrite includes the sense's usage label. On import, a sense labelled British only, Rare or dated, or Specialized (with medium or high confidence) is archived; an archive an earlier label caused is lifted when a later label rates the sense current, and archives you made stay. |
+| Saved sentences | Every saved sentence without one gets its detailed analysis: the analysis page (6.5). |
+| Pictures | Saved words, phrases and sentences get a picture when they have none, or when a card's rewrite has no matching picture yet. Krea-2-Turbo renders each candidate on the Mac at 1024×576, and the model judges it; a rejected candidate gets a refined prompt. After 8 rejected candidates the picture waits for a later cycle, which renders from new seeds. |
+| Example sentences | The examples on cards get an analysis and a picture where production lacks them; this is what an example's lesson shows. |
+| Off-site backup | About once a week, an encrypted copy of production's database and web-server configuration is kept on the Mac (ops/RESTORE.md). |
+
+- **The model:** the text stages and the picture judge use Claude Opus 5.5 (`claude-opus-5-5` at `xhigh` effort) through Claude Code by default, or Codex when configured.
+- **Getting into production:** production's library comes to the Mac as an encrypted workflow artifact. The results go back in waves, each an encrypted GitHub release asset that `sentence-backfill.yml` decrypts on a runner and streams to the VPS for import. An import skips any entry whose item changed after the export, so a later edit always wins, and a publisher waits while a deploy is queued or running.
+- **The audit:** on the VPS side, `incremental-enrichment.yml` audits content coverage every six hours without generating anything, and fails, emailing the owner, when work the cycle should already have done is overdue.
+- **Manual content:** the Real Life collections and the essay catalogs are made by hand with the manual tools in `scripts/offline/`, not by the cycle. Those tools can also render Real Life recordings with Qwen3-TTS, but the app doesn't play those voices. `scripts/offline/README.md` documents every stage and tool, and CLAUDE.md how to operate the bridge.
