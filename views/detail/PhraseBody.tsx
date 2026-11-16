@@ -1,12 +1,12 @@
-import { ExternalLink, Search as SearchIcon, X } from 'lucide-react';
+import { Search as SearchIcon, X } from 'lucide-react';
 import type { SearchResult, SentenceData, VocabCard } from '../../types';
-import { buildChatGPTUrl } from '../../components/VocabCard';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
+import { ExternalLinkChip, chipClassName } from '../../components/ExternalLinkChip';
 import { PronunciationBlock } from '../../components/PronunciationBlock';
 import { OfflineImage } from '../../components/OfflineImage';
 import { GrammarNotes } from './GrammarNotes';
 import { PhraseVocabCard } from './PhraseVocabCard';
-import { noteExternalNavigation } from '../../services/externalNavigation';
+import { chatGptUrl, playphraseUrl } from '../../services/externalLinks';
 import { PLATFORM } from '../../services/platform';
 
 interface PhraseBodyProps {
@@ -58,33 +58,20 @@ export function PhraseBody({
               className="text-base bg-slate-100 px-2 py-1 rounded-lg w-full"
             />
             <div className="mt-3 flex flex-wrap gap-2">
-              <a
-                href={`https://www.playphrase.me/#/search?q=${encodeURIComponent(phrase.query)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  noteExternalNavigation();
-                }}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 hover:bg-purple-100 hover:border-purple-300 transition-all active:scale-95 shadow-sm"
+              <ExternalLinkChip
+                href={playphraseUrl(phrase.query)}
+                label="PlayPhrase"
                 title="Hear in movie & TV clips on PlayPhrase.me"
-              >
-                <ExternalLink size={12} />
-                PlayPhrase
-              </a>
-              <a
-                href={buildChatGPTUrl(phrase.query)}
-                {...(!PLATFORM.isMobile && { target: '_blank', rel: 'noopener noreferrer' })}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  noteExternalNavigation();
-                }}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-teal-700 bg-teal-50 border border-teal-200 hover:bg-teal-100 hover:border-teal-300 transition-all active:scale-95 shadow-sm"
+                opening="new-tab"
+                className={chipClassName('purple')}
+              />
+              <ExternalLinkChip
+                href={chatGptUrl(phrase.query)}
+                label="ChatGPT"
                 title="Ask ChatGPT (translator mode)"
-              >
-                <ExternalLink size={12} />
-                ChatGPT
-              </a>
+                opening={PLATFORM.isMobile ? 'same-tab' : 'new-tab'}
+                className={chipClassName('teal')}
+              />
             </div>
           </div>
 

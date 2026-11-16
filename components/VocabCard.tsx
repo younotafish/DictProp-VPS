@@ -10,9 +10,6 @@ import { MAX_COMPARE_WORDS } from '../services/queryMode';
 import { wordCardLinks, youglishUrl } from '../services/externalLinks';
 import { PLATFORM } from '../services/platform';
 
-// DetailView's phrase links still import the ChatGPT link from here.
-export { chatGptUrl as buildChatGPTUrl } from '../services/externalLinks';
-
 // YouGlish sits in the pronunciation row, styled to match it rather than the other links.
 const YOUGLISH_CLASS =
   'inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-500 bg-slate-50 border border-slate-200 hover:bg-slate-100 hover:border-slate-300 transition-all active:scale-95 shadow-sm cursor-pointer';
