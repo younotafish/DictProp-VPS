@@ -12,7 +12,8 @@ export function useSpeechBackfill({ showJobNotice }: Pick<JobNotices, 'showJobNo
   const watchRef = useRef<{ stopped: boolean } | null>(null);
 
   // ── "Generate speech cache" — server-side background backfill ───────────
-  // The server generates MiMo audio + whisper word-timings for EVERY saved sentence, entirely on the box
+  // The server makes the Clear and Casual clips, each with word timings, of every sentence in the library (saved
+  // sentences and the examples on word and phrase cards) and of both catalogs, entirely on the box
   // (services/speechSweep, which loads with the notebook tools App preloads once the first screen is up).
   // A foreground run watches its progress in the pill; a silent one (after a batch import) only starts it.
   // Either way the result is a job notice (services/jobNotices).

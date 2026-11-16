@@ -1,10 +1,10 @@
 import { getTtsBackfillStatus, startTtsBackfill, type TtsBackfillStatus } from './api/tts';
 
 /**
- * The speech sweep: the server generates the clip and word timings of every saved sentence on the box (idempotent
- * and resumable, so the app needn't stay open), and the app can watch its progress. It loads with import(), through
- * services/libraryTools, so its polling, its texts and the speech-server client stay out of the first chunk; the
- * hook that runs it (hooks/useSpeechBackfill) imports only its types.
+ * The speech sweep: the server makes the Clear and Casual clips, each with word timings, of every sentence in the
+ * library (saved sentences and the examples on word and phrase cards) and of both catalogs, on the box (idempotent and
+ * resumable, so the app needn't stay open), and the app can watch its progress. It loads with import(), through
+ * services/libraryTools, so its polling, its texts and the speech-server client stay out of the first chunk.
  */
 
 /** How far the watched sweep has got, as the progress pill shows it. */

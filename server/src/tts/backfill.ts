@@ -1,5 +1,6 @@
-// The background backfill: audio and word timings for every saved sentence and both catalogs, generated on the
-// server so no client has to stay open.
+// The background backfill: the Clear and Casual clips, each with word timings, of every sentence in the library (saved
+// sentences and the examples on word and phrase cards) and of both catalogs, made on the server so no client has to
+// stay open.
 import { readFile } from 'fs/promises';
 import { resolve } from 'path';
 import { env } from '../env.js';
@@ -22,9 +23,9 @@ const HEARTBEAT_MS = 30_000;
 const LOCK_STALE_AFTER_MS = 5 * 60_000;
 const STATUS_STALE_AFTER_MS = 120_000;
 
-// Generates audio + word timings for EVERY saved sentence, server-side, detached from any request —
-// so the client never has to stay open. Idempotent (generateAndVerify skips clips that already have
-// both files) and resumable (a restart just re-scans and skips what's done). Low concurrency since the
+// Generates both styles' audio + word timings for every library sentence and both catalogs, server-side, detached
+// from any request — so the client never has to stay open. Idempotent (generateAndVerify skips clips that already
+// have both files) and resumable (a restart just re-scans and skips what's done). Low concurrency since the
 // work is I/O-bound (DeepInfra + tiny file writes), so it doesn't starve normal request serving.
 // A clip is keyed by a sentence's speakable text, exactly as the client derives it (stripSentenceMarkers, trimmed).
 const speakableText = (text: string): string => stripSentenceMarkers(text).trim();
