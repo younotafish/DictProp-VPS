@@ -3,13 +3,10 @@
 import { useEffect, useRef } from 'react';
 import type { ItemGroup, SentenceData, StoredItem } from '../../types';
 
-/** What tells whether an id is live in the library: a Set of ids, or a Map keyed by them. */
-export interface LiveIds {
-  has(id: string): boolean;
-}
-
 /** The ids in `viewIds` that the library held (`wasLive`) and no longer does (`liveNow`). */
-export function goneFromLibrary(viewIds: Iterable<string>, wasLive: ReadonlySet<string>, liveNow: LiveIds): string[] {
+export function goneFromLibrary(
+  viewIds: Iterable<string>, wasLive: ReadonlySet<string>, liveNow: ReadonlySet<string>,
+): string[] {
   const gone: string[] = [];
   for (const id of viewIds) if (wasLive.has(id) && !liveNow.has(id)) gone.push(id);
   return gone;
@@ -38,11 +35,12 @@ export const ownSentenceIds = (sentenceItems: readonly StoredItem[]): string[] =
  * Takes each item of the open view that the library held and no longer does, as when another device deleted it, out
  * of the view (onRemoveFromView), once. An item the view never saw live, such as an unsaved card or an example
  * preview, is never gone; nor is one deleted here, which the delete already took out of the view, so an undo still
- * puts it back. `viewIds` and `liveNow` should keep their identity between library changes.
+ * puts it back. `liveNow` is the ids among `viewIds` that the library holds (liveIdsAmong); both should keep their
+ * identity between library changes.
  */
 export function useLeaveGoneItems(
   viewIds: readonly string[],
-  liveNow: LiveIds,
+  liveNow: ReadonlySet<string>,
   onRemoveFromView: (id: string) => void,
 ): void {
   const wasLiveRef = useRef(new Set<string>());

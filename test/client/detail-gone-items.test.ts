@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client';
 import type { ItemGroup, StoredItem, VocabCard } from '../../types.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import {
-  automaticWrite, cardIds, goneFromLibrary, liveIdsAmong, ownSentenceIds, useLeaveGoneItems, type LiveIds,
+  automaticWrite, cardIds, goneFromLibrary, liveIdsAmong, ownSentenceIds, useLeaveGoneItems,
 } from '../../views/detail/goneItems.ts';
 
 // An item deleted on another device, as the open card view meets it (views/detail/goneItems.ts): it leaves the view,
@@ -23,9 +23,6 @@ test('an item is gone when the library held it and no longer does; one it never 
   const liveNow = new Set(['kept', 'saved just now']);
   assert.deepEqual(goneFromLibrary(['kept', 'deleted elsewhere', 'unsaved card', 'saved just now'], wasLive, liveNow), ['deleted elsewhere']);
   assert.deepEqual(goneFromLibrary([], wasLive, liveNow), []);
-  // The sentence view checks against its index of saved sentences, a Map by id.
-  const byId = new Map([['kept', {}]]);
-  assert.deepEqual(goneFromLibrary(['kept', 'deleted elsewhere'], wasLive, byId), ['deleted elsewhere']);
 });
 
 const word = (id: string, spelling = id): StoredItem => ({
@@ -64,7 +61,7 @@ test('a run\'s own saved sentences can leave it; a Real Life or essay line stays
 
 interface Props {
   viewIds: readonly string[];
-  liveNow: LiveIds;
+  liveNow: ReadonlySet<string>;
   onRemoveFromView: (id: string) => void;
 }
 
