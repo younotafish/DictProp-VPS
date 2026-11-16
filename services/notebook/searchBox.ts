@@ -1,4 +1,6 @@
+import { looksLikeSentence } from '../../server/src/shared/query-mode';
 import { describeSearchError, isRetryableSearchError } from '../searchRecovery';
+import { requestLookup } from '../searchRequests';
 
 /** Why the notebook's AI lookup failed, as its banner shows it. */
 export interface NotebookSearchError {
@@ -19,6 +21,18 @@ export const searchFailure = (query: string, error: unknown): NotebookSearchErro
 
 /** The banner's error for a lookup asked for while offline. */
 export const offlineSearchError = (): NotebookSearchError => ({ message: OFFLINE_SEARCH_MESSAGE, retryable: false, offline: true });
+
+/**
+ * Sends an AI lookup asked for in the notebook's box where it belongs. A sentence goes to the search as typed text,
+ * which scans it for its expressions, as it does a sentence typed in any other box; a word or phrase goes to
+ * `lookUpInline`, whose card shows above the list. An empty query goes nowhere.
+ */
+export function sendNotebookLookup(query: string, lookUpInline: (query: string) => void): void {
+  const text = query.trim();
+  if (!text) return;
+  if (looksLikeSentence(text)) requestLookup({ query: text, source: 'text' });
+  else lookUpInline(query);
+}
 
 const comparable = (query: string): string => query.trim().replace(/\s+/g, ' ').toLowerCase();
 

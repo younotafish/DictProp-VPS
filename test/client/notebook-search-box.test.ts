@@ -4,8 +4,10 @@ import { createElement, createRef, isValidElement, type ReactElement, type React
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HttpError, TimeoutError } from '../../services/http.ts';
 import {
-  OFFLINE_SEARCH_MESSAGE, aiCardStillValid, offlineSearchError, retryOffered, searchFailure, shouldBlurOnDrag,
+  OFFLINE_SEARCH_MESSAGE, aiCardStillValid, offlineSearchError, retryOffered, searchFailure, sendNotebookLookup,
+  shouldBlurOnDrag,
 } from '../../services/notebook/searchBox.ts';
+import { subscribeSearchRequests, type LookupRequest } from '../../services/searchRequests.ts';
 import { NotebookSearchBar } from '../../views/notebook/NotebookSearchBar.tsx';
 import { EmptyNotebook } from '../../views/notebook/EmptyNotebook.tsx';
 
@@ -20,6 +22,28 @@ test('an AI card belongs to the query it was asked for, up to case and spacing',
   assert.equal(aiCardStillValid('ubiquitous', 'ubiquitou'), false, 'an edited word');
   assert.equal(aiCardStillValid('ubiquitous', 'ubiquitously'), false);
   assert.equal(aiCardStillValid('ubiquitous', ''), false, 'cleared');
+});
+
+test('a sentence asked for in the notebook goes to the search as typed text, to be scanned; a word or phrase gets its card inline', () => {
+  const asked: LookupRequest[] = [];
+  const stop = subscribeSearchRequests({ lookup: request => asked.push(request), compare: () => {} });
+  const inline: string[] = [];
+  const lookUp = (query: string) => sendNotebookLookup(query, inlineQuery => inline.push(inlineQuery));
+  try {
+    lookUp('  I wish I had known about this place earlier.  ');
+    lookUp('the kids ran home');
+    lookUp('serendipity');
+    lookUp('break the ice ');
+    lookUp('   ');
+  } finally {
+    stop();
+  }
+  assert.deepEqual(asked, [
+    { query: 'I wish I had known about this place earlier.', source: 'text' },
+    { query: 'the kids ran home', source: 'text' },
+  ]);
+  // The inline lookup gets the query as typed, as it did before.
+  assert.deepEqual(inline, ['serendipity', 'break the ice ']);
 });
 
 test('a mostly vertical drag of the list past 10 px drops the keyboard, unless it started in the header', () => {

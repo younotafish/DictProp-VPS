@@ -12,7 +12,7 @@ import {
   type NotebookFilter, type NotebookRow, type NotebookSection, type NotebookSort,
 } from '../services/notebookList';
 import { readNotebookListView, writeNotebookListView } from '../services/notebook/listView';
-import { aiCardStillValid, retryOffered, shouldBlurOnDrag } from '../services/notebook/searchBox';
+import { aiCardStillValid, retryOffered, sendNotebookLookup, shouldBlurOnDrag } from '../services/notebook/searchBox';
 import { firstVisibleRowIndex, nextScrollAction, type ListScrollInputs } from '../services/notebook/listScroll';
 import { PLATFORM } from '../services/platform';
 import { onTabReselect } from '../services/navReselect';
@@ -140,13 +140,15 @@ export const NotebookView: React.FC<NotebookProps> = ({
     if (!query.trim() || !aiCardStillValid(submittedQueryRef.current, query)) clearAISearch();
   }, [clearAISearch, submittedQueryRef]);
 
-  // Every AI lookup starts here (Enter, the wand, a voice transcript, 'Look it up with AI', Retry), and the list
-  // jumps to the top as it starts, where its card or its banner will show.
+  // Every AI lookup starts here (Enter, the wand, a voice transcript, 'Look it up with AI', Retry). A sentence goes
+  // to the search, which scans it for its expressions; a word or phrase gets its card above the list, which jumps to
+  // the top as the lookup starts, where its card or its banner will show.
   const [aiSubmitKey, setAiSubmitKey] = useState(0);
   const startAISearch = useCallback((query: string) => {
-    if (!query.trim()) return;
-    setAiSubmitKey(n => n + 1);
-    performAISearch(query);
+    sendNotebookLookup(query, inlineQuery => {
+      setAiSubmitKey(n => n + 1);
+      performAISearch(inlineQuery);
+    });
   }, [performAISearch]);
 
   // Text Analyzer modal state
