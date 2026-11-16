@@ -71,7 +71,7 @@ for (let start = 0; start < bundle.entries.length; start += CHUNK_SIZE) {
     .map((entry, offset) => prepare(entry, imagePaths[start + offset]));
   for (const imported of applyChunk.immediate(records)) {
     result[imported.status]++;
-    if (imported.imageStored) result.imageBlobsAdded++;
+    if (imported.blobAdded) result.imageBlobsAdded++;
   }
 }
 

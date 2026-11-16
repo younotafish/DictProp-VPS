@@ -71,7 +71,8 @@ export interface SentenceEnrichmentImportRecord {
 
 export interface SentenceEnrichmentImportResult {
   status: 'inserted' | 'updated' | 'unchanged' | 'stale';
-  imageStored: boolean;
+  /** Whether the import added its image's blob: false without an image, or when the same bytes were already stored. */
+  blobAdded: boolean;
 }
 
 export function getSentenceEnrichmentCount(): number {
@@ -136,12 +137,12 @@ function writeSentenceEnrichment(record: SentenceEnrichmentImportRecord): Senten
     (existing.generated_at > entry.generatedAt || preserveExistingAnalysis);
   if (existing && (existing.generated_at > entry.generatedAt || preserveExistingAnalysis) &&
       !attachImageWithoutAnalysis) {
-    return { status: 'stale', imageStored: false };
+    return { status: 'stale', blobAdded: false };
   }
 
   let imageContentHash: string | null = existing?.image_content_hash ?? null;
   let imageMimeType: string | null = existing?.image_mime_type ?? null;
-  let imageStored = false;
+  let blobAdded = false;
   if (image && mimeType) {
     if (!isValidImage(image, mimeType)) throw new Error(`Sentence enrichment ${entry.id} has an invalid image`);
     imageContentHash = createHash('sha256').update(image).digest('hex');
@@ -152,7 +153,7 @@ function writeSentenceEnrichment(record: SentenceEnrichmentImportRecord): Senten
       byte_length: image.length,
       created_at: entry.generatedAt,
     });
-    imageStored = inserted.changes > 0;
+    blobAdded = inserted.changes > 0;
   }
 
   // Media and analysis can finish in separate resumable waves. A verified late image may repair a
@@ -167,7 +168,7 @@ function writeSentenceEnrichment(record: SentenceEnrichmentImportRecord): Senten
     if (existing.image_content_hash && existing.image_content_hash !== imageContentHash) {
       deleteUnreferencedBlobs([existing.image_content_hash]);
     }
-    return { status: 'updated', imageStored };
+    return { status: 'updated', blobAdded };
   }
 
   const analysis = JSON.stringify(entry.analysis);
@@ -175,7 +176,7 @@ function writeSentenceEnrichment(record: SentenceEnrichmentImportRecord): Senten
     existing.source_text === entry.text && existing.analysis === analysis &&
     existing.generated_at === entry.generatedAt && existing.image_content_hash === imageContentHash &&
     existing.image_mime_type === imageMimeType;
-  if (unchanged) return { status: 'unchanged', imageStored };
+  if (unchanged) return { status: 'unchanged', blobAdded };
 
   sentenceEnrichmentStmts.upsert.run({
     lookup_hash: entry.lookupHash,
@@ -191,7 +192,7 @@ function writeSentenceEnrichment(record: SentenceEnrichmentImportRecord): Senten
   if (existing?.image_content_hash && existing.image_content_hash !== imageContentHash) {
     deleteUnreferencedBlobs([existing.image_content_hash]);
   }
-  return { status: existing ? 'updated' : 'inserted', imageStored };
+  return { status: existing ? 'updated' : 'inserted', blobAdded };
 }
 
 export const upsertSentenceEnrichment = writeTransaction(writeSentenceEnrichment);

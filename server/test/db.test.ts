@@ -167,7 +167,7 @@ test('saving a prepared example sentence attaches its analysis and deduplicated 
     },
     image,
     mimeType: 'image/png',
-  }), { status: 'inserted', imageStored: true });
+  }), { status: 'inserted', blobAdded: true });
   assert.equal(getSentenceEnrichmentCount(), enrichmentsBefore + 1);
 
   const sentence = {
@@ -238,12 +238,12 @@ test('a late image repairs media without replacing a complete sentence analysis'
 
   assert.deepEqual(upsertSentenceEnrichment({
     entry: { ...identity, analysis: newerAnalysis, generatedAt: 20_000 },
-  }), { status: 'inserted', imageStored: false });
+  }), { status: 'inserted', blobAdded: false });
   assert.deepEqual(upsertSentenceEnrichment({
     entry: { ...identity, analysis: staleAnalysis, generatedAt: 20_000 },
     image,
     mimeType: 'image/png',
-  }), { status: 'updated', imageStored: true });
+  }), { status: 'updated', blobAdded: true });
 
   const stored = getSentenceEnrichmentForText(text);
   assert.deepEqual(stored?.analysis, newerAnalysis);
