@@ -1,22 +1,5 @@
 import type { SentenceData, StoredItem } from '../../types';
 
-// Helper to format relative time for next review
-export const formatRelativeTime = (timestamp: number): string => {
-  const now = Date.now();
-  const diff = timestamp - now;
-
-  if (diff <= 0) return 'now';
-
-  const minutes = Math.floor(diff / (1000 * 60));
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-  if (days > 0) return `${days}d`;
-  if (hours > 0) return `${hours}h`;
-  if (minutes > 0) return `${minutes}m`;
-  return 'now';
-};
-
 // Format interval days for the "Remembered!" overlay
 export const formatNextReview = (days: number): string => {
   if (days <= 1) return 'tomorrow';

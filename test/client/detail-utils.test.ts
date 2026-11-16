@@ -1,25 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatNextReview, formatRelativeTime, mergePreparedSentence } from '../../views/detail/detailUtils.ts';
+import { formatNextReview, mergePreparedSentence } from '../../views/detail/detailUtils.ts';
 import type { SentenceAnalysis, SentenceData, StoredItem } from '../../types.ts';
 import { detailedAnalysis } from '../support/detail-view-fixtures.ts';
-
-const NOW = 1_700_000_000_000;
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
-
-test('the next review reads in whole days, hours or minutes, and as now once it is due', t => {
-  t.mock.method(Date, 'now', () => NOW);
-  assert.equal(formatRelativeTime(NOW - 1), 'now');
-  assert.equal(formatRelativeTime(NOW), 'now');
-  assert.equal(formatRelativeTime(NOW + MINUTE - 1), 'now');
-  assert.equal(formatRelativeTime(NOW + MINUTE), '1m');
-  assert.equal(formatRelativeTime(NOW + HOUR - 1), '59m');
-  assert.equal(formatRelativeTime(NOW + HOUR), '1h');
-  assert.equal(formatRelativeTime(NOW + DAY - 1), '23h');
-  assert.equal(formatRelativeTime(NOW + 3 * DAY + 5 * HOUR), '3d');
-});
 
 test('the Remembered toast says tomorrow, then days, then months to the half', () => {
   assert.equal(formatNextReview(0), 'tomorrow');

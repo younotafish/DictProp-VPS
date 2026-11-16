@@ -2,7 +2,7 @@ import React from 'react';
 import { Flame } from 'lucide-react';
 import type { SRSData } from '../../types';
 import type { MasteryClasses } from '../../components/mastery';
-import { formatRelativeTime } from './detailUtils';
+import { formatTimeUntil } from '../../services/studySession';
 
 interface SrsStatsProps {
   srs: SRSData | undefined;
@@ -31,7 +31,7 @@ export function SrsStats({ srs, mastery, colors, compact = false, children }: Sr
       )}
       {children}
       <span className={`text-slate-500${compact ? ' whitespace-nowrap' : ''}`}>
-        {(srs?.nextReview ?? 0) <= Date.now() ? 'due' : formatRelativeTime(srs?.nextReview ?? 0)}
+        {(srs?.nextReview ?? 0) <= Date.now() ? 'due' : formatTimeUntil(srs?.nextReview ?? 0, Date.now())}
       </span>
     </>
   );
