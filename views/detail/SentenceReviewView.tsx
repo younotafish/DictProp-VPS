@@ -17,6 +17,7 @@ import { styleChangeReplay } from '../../services/audio/playbackToggle';
 import { getTtsStyle, setTtsStyle, type TtsStyle } from '../../services/ttsSettings';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
+import { endLesson, noteLessonSentence } from '../../services/lessonTrail';
 import { preloadCards } from './cardReading';
 import { useAutoplayPreloadPlan } from './useAutoplayPreloadPlan';
 import { resolveSentenceUnderReview } from './sentenceUnderReview';
@@ -124,6 +125,16 @@ export function SentenceReviewView({
   // even when the local index is briefly stale relative to the latest sentenceItems.
   const sentenceIndex = Math.min(currentGroupIndex, sentenceItems.length - 1);
   const currentSentenceSnapshot = sentenceItems[sentenceIndex] ?? null;
+
+  // An essay lesson follows the sentences this view shows, and ends when it closes. The view's own token keeps a view
+  // nested in it (an example sentence opened over a word card) from binding or ending the essay's lesson.
+  const viewToken = useRef({}).current;
+  useEffect(() => {
+    if (currentSentenceSnapshot) noteLessonSentence(viewToken, currentSentenceSnapshot);
+    // A new copy of the same sentence (a listen, a review) is still the same place in the lesson.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSentenceSnapshot?.data.id]);
+  useEffect(() => () => endLesson(viewToken), [viewToken]);
   const { preparedSentenceById, preparingSentenceId, failedSentenceIds, sentencePreloadWindow } = useSentenceEnrichment({
     sentenceItems, sentenceIndex, savedSentenceItemsRef, onSaveRef, onPatchItemRef,
   });
