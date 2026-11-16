@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { ArrowRight, Compass, Sparkles } from 'lucide-react';
 import { REAL_LIFE_COLLECTIONS, type RealLifeCollection } from '../../services/realLifeCatalog';
 import { summarizeCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress';
+import { dueNewLine } from '../../services/catalogQueue';
 import type { ReviewSummary } from '../../services/sentenceReviewState';
 import { collectionStyle } from './realLifeStyle';
 
@@ -12,6 +13,7 @@ const CollectionTile: React.FC<{
 }> = ({ collection, progress, onOpen }) => {
   const style = collectionStyle[collection.accent];
   const Icon = style.icon;
+  const reviewLine = dueNewLine(progress);
   return (
     <button
       type="button"
@@ -71,7 +73,9 @@ const CollectionTile: React.FC<{
           <div>
             <p className="text-2xl font-bold tabular-nums sm:text-3xl">{collection.sentences.length}</p>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-white/70 sm:text-xs">
-              {progress.toReview > 0 ? `${progress.toReview} to review` : 'review complete'}
+              {/* A pill, because orange text can't be read on the amber, rose and sky tiles. */}
+              {reviewLine.due && <span className="rounded-full bg-orange-500/90 px-1.5 py-0.5 text-white">{reviewLine.due}</span>}
+              {reviewLine.rest}
             </p>
           </div>
           <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-800 transition-transform group-hover:translate-x-1">

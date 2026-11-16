@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { REAL_LIFE_COLLECTIONS } from '../../services/realLifeCatalog.ts';
 import { summarizeCatalogProgress } from '../../services/catalogProgress.ts';
 import {
@@ -9,7 +11,9 @@ import {
 } from '../../services/realLifeProgress.ts';
 import { isRealLifeProgressItem, realLifeProgressItemId } from '../../services/realLifeProgressIdentity.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
+import type { SentenceReviewState } from '../../services/sentenceReviewState.ts';
 import type { SentenceData } from '../../types.ts';
+import { RealLifeSentenceRow } from '../../views/reading/RealLifeCollectionScreen.tsx';
 
 const NOW = 2_000_000;
 
@@ -73,4 +77,27 @@ test('study items overlay only their exact stored catalog progress', () => {
   assert.equal(queue[2].srs.totalReviews, 0);
   assert.equal(queue[0].savedAt, 500);
   assert.ok(queue.every(item => (item.data as SentenceData).catalogCollectionId === career.id));
+});
+
+test('a row\'s pill says where its line stands, Due in orange when it is due, at one width for every state', () => {
+  const sentence = REAL_LIFE_COLLECTIONS[0].sentences[0];
+  const row = (state: SentenceReviewState) => renderToStaticMarkup(createElement(RealLifeSentenceRow, {
+    sentence, softClass: 'bg-indigo-50 text-indigo-700', saved: false, state, masteryPercent: 64, onOpen: () => {}, onMarkReviewed: () => {},
+  }));
+  const pill = 'flex min-w-[4.5rem] shrink-0 items-center justify-center rounded-full px-2 py-0.5 text-[10px]';
+  const reviewed = '<button type="button" class="flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 transition-colors hover:bg-emerald-100" title="Mark as reviewed">';
+
+  const memorized = row('memorized');
+  assert.ok(memorized.includes(`<span class="${pill} gap-1 bg-emerald-50 font-bold text-emerald-700"><svg`));
+  assert.match(memorized, /lucide-circle-check[^>]*>.*?<\/svg> 64%<\/span>/);
+  assert.ok(!memorized.includes(reviewed), 'a memorized line has nothing to review');
+
+  const due = row('due');
+  assert.ok(due.includes(`<span class="${pill} bg-orange-50 font-bold text-orange-600">Due</span>`));
+  assert.ok(due.includes(reviewed));
+  assert.ok(!due.includes('64%'), 'a due line no longer looks finished');
+
+  const unreviewed = row('unreviewed');
+  assert.ok(unreviewed.includes(`<span class="${pill} bg-slate-100 font-semibold text-slate-500">Unreviewed</span>`));
+  assert.ok(unreviewed.includes(reviewed));
 });

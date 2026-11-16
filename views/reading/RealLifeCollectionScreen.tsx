@@ -22,21 +22,23 @@ import { realLifeProgressItemId } from '../../services/realLifeProgressIdentity'
 import { summarizeCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress';
 import { buildCatalogQueue, studyButtonLabel } from '../../services/catalogQueue';
 import type { SentenceReviewFilter } from '../../services/sentenceOrdering';
-import { sentenceReviewState } from '../../services/sentenceReviewState';
+import { sentenceReviewState, type SentenceReviewState } from '../../services/sentenceReviewState';
 import { useLatest } from '../../hooks/useStableValue';
 import { collectionStyle } from './realLifeStyle';
 import { filterRealLifeSentences } from './realLifeFilter';
 
 const sentenceKey = (_index: number, sentence: RealLifeSentence) => sentence.id;
 const listComponents = { Footer: () => <div className="h-[calc(6rem+env(safe-area-inset-bottom))]" /> };
+/** Every state's pill has one width, so a row's pill doesn't change size when its state changes. */
+const STATE_PILL = 'flex min-w-[4.5rem] shrink-0 items-center justify-center rounded-full px-2 py-0.5 text-[10px]';
 
 interface RealLifeSentenceRowProps {
   sentence: RealLifeSentence;
   /** The collection's accent, for the position badge. */
   softClass: string;
   saved: boolean;
-  reviewed: boolean;
-  actionable: boolean;
+  /** Where the line stands in review, at the list's clock: its pill, and Reviewed until it's memorized. */
+  state: SentenceReviewState;
   masteryPercent: number;
   onOpen: (sentence: RealLifeSentence) => void;
   onMarkReviewed: (sentence: RealLifeSentence) => void;
@@ -46,12 +48,11 @@ interface RealLifeSentenceRowProps {
 
 /** A line of a collection. Rows re-render only when their own sentence or progress changes, not for every
  *  keystroke in the search box or every change elsewhere in the library. */
-const RealLifeSentenceRow = React.memo(function RealLifeSentenceRow({
+export const RealLifeSentenceRow = React.memo(function RealLifeSentenceRow({
   sentence,
   softClass,
   saved,
-  reviewed,
-  actionable,
+  state,
   masteryPercent,
   onOpen,
   onMarkReviewed,
@@ -95,15 +96,17 @@ const RealLifeSentenceRow = React.memo(function RealLifeSentenceRow({
                   <BookmarkCheck size={11} /> Saved
                 </span>
               )}
-              {reviewed ? (
-                <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+              {state === 'memorized' ? (
+                <span className={`${STATE_PILL} gap-1 bg-emerald-50 font-bold text-emerald-700`}>
                   <CheckCircle2 size={11} /> {masteryPercent}%
                 </span>
+              ) : state === 'due' ? (
+                <span className={`${STATE_PILL} bg-orange-50 font-bold text-orange-600`}>Due</span>
               ) : (
-                <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">Unreviewed</span>
+                <span className={`${STATE_PILL} bg-slate-100 font-semibold text-slate-500`}>Unreviewed</span>
               )}
               <div className="ml-auto flex shrink-0 items-center gap-2">
-                {actionable && (
+                {state !== 'memorized' && (
                   <button
                     type="button"
                     onClick={event => { event.stopPropagation(); onMarkReviewed(sentence); }}
@@ -201,8 +204,7 @@ export function RealLifeCollectionScreen({
         sentence={sentence}
         softClass={softClass}
         saved={isSentenceSaved(sentence.text)}
-        reviewed={state !== 'unreviewed'}
-        actionable={state !== 'memorized'}
+        state={state}
         masteryPercent={progressItem?.srs ? Math.round(SRSAlgorithm.getMasteryLevel(progressItem.srs).percentage) : 0}
         onOpen={openFromList}
         onMarkReviewed={markReviewed}
@@ -267,7 +269,7 @@ export function RealLifeCollectionScreen({
           <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 px-3 py-2 text-center">
             <div><p className="text-sm font-bold text-slate-800">{progress.masteryScore}%</p><p className="text-[10px] text-slate-400">mastery</p></div>
             <div><p className="text-sm font-bold text-slate-800">{progress.reviewed}/{progress.total}</p><p className="text-[10px] text-slate-400">reviewed</p></div>
-            <div><p className="text-sm font-bold text-orange-600">{progress.toReview}</p><p className="text-[10px] text-slate-400">to review</p></div>
+            <div><p className="text-sm font-bold text-orange-600">{progress.due}</p><p className="text-[10px] text-slate-400">due · {progress.unreviewed} new</p></div>
           </div>
 
           <div className="relative mt-3">

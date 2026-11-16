@@ -136,7 +136,7 @@ export function EssayReader({ essay, progressIndex, now, onBack, onOpenSentence,
           <section className="mx-auto mt-7 grid max-w-3xl grid-cols-3 gap-2 rounded-2xl border border-stone-200 bg-white/80 p-3 text-center shadow-sm">
             <div><p className="text-lg font-bold text-stone-900">{progress.masteryScore}%</p><p className="text-[10px] uppercase tracking-wider text-stone-400">mastery</p></div>
             <div><p className="text-lg font-bold text-stone-900">{progress.reviewed}/{progress.total}</p><p className="text-[10px] uppercase tracking-wider text-stone-400">reviewed</p></div>
-            <div><p className="text-lg font-bold text-orange-600">{progress.toReview}</p><p className="text-[10px] uppercase tracking-wider text-stone-400">to review</p></div>
+            <div><p className="text-lg font-bold text-orange-600">{progress.due}</p><p className="text-[10px] uppercase tracking-wider text-stone-400">due · {progress.unreviewed} new</p></div>
           </section>
 
           <aside className="mx-auto mt-5 max-w-3xl rounded-2xl border border-stone-200 bg-stone-100/70 px-4 py-3 text-xs leading-relaxed text-stone-600">

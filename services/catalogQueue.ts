@@ -1,10 +1,10 @@
 import type { CatalogProgressIndex } from './catalogProgress';
-import { sentenceReviewState } from './sentenceReviewState';
+import { sentenceReviewState, type ReviewSummary } from './sentenceReviewState';
 
-// What the Real Life and Essays Study buttons open, and what they say. A run takes the lines due again first and then
-// the lines never reviewed, each in catalog order. That differs on purpose from the Sentences tab's weakest-first
-// order: a catalog holds hundreds of lines nobody has reviewed yet, and mixed in with them, the reviews falling due
-// would wait behind them and lapse.
+// What the Real Life and Essays Study buttons open and say, and the review line on their tiles. A run takes the lines
+// due again first and then the lines never reviewed, each in catalog order. That differs on purpose from the
+// Sentences tab's weakest-first order: a catalog holds hundreds of lines nobody has reviewed yet, and mixed in with
+// them, the reviews falling due would wait behind them and lapse.
 
 /** A Study run over the lines in view. */
 export interface CatalogQueue<T> {
@@ -38,4 +38,14 @@ export function buildCatalogQueue<T extends { id: string }>(
 export function studyButtonLabel(queue: CatalogQueue<unknown>): string {
   if (queue.sentences.length === 0) return 'Study';
   return queue.practice ? 'Practice' : `Study ${queue.sentences.length}`;
+}
+
+/**
+ * A tile's review line, 'N due · M new': the due part only while reviews are due (the tile draws it as a pill), the new
+ * part only while lines are unreviewed, and 'all reviewed' once neither is left.
+ */
+export function dueNewLine(summary: ReviewSummary): { due: string | null; rest: string } {
+  const fresh = summary.unreviewed > 0 ? `${summary.unreviewed} new` : '';
+  if (summary.due > 0) return { due: `${summary.due} due`, rest: fresh && ` · ${fresh}` };
+  return { due: null, rest: fresh || 'all reviewed' };
 }

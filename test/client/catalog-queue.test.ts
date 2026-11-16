@@ -3,16 +3,19 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { indexCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress.ts';
-import { buildCatalogQueue, studyButtonLabel } from '../../services/catalogQueue.ts';
+import { buildCatalogQueue, dueNewLine, studyButtonLabel } from '../../services/catalogQueue.ts';
 import { ESSAYS } from '../../services/essayCatalog.ts';
 import { createEssayProgressItem } from '../../services/essayProgress.ts';
 import { REAL_LIFE_COLLECTIONS, type RealLifeCollection } from '../../services/realLifeCatalog.ts';
 import { createRealLifeProgressItem } from '../../services/realLifeProgress.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import type { SRSData, StoredItem } from '../../types.ts';
+import { summarizeReviewStates } from '../../services/sentenceReviewState.ts';
 import { filterRealLifeSentences } from '../../views/reading/realLifeFilter.ts';
+import { EssayIndex } from '../../views/reading/EssayIndex.tsx';
 import { EssayReader } from '../../views/reading/EssayReader.tsx';
 import { RealLifeCollectionScreen } from '../../views/reading/RealLifeCollectionScreen.tsx';
+import { RealLifeIndex } from '../../views/reading/RealLifeIndex.tsx';
 
 const NOW = Date.UTC(2026, 10, 15, 12);
 const DAY = 86_400_000;
@@ -96,6 +99,17 @@ test('Study over a theme takes that theme\'s due lines and then its new ones, an
   assert.ok(searched.sentences.every(sentence => sentence.sectionId === 'airport-checkin-and-baggage' && /passport/i.test(sentence.text)));
 });
 
+test('a tile\'s line says how many lines are due and how many are new, and only what is left', () => {
+  const line = (...schedules: (Partial<SRSData> | undefined)[]) => dueNewLine(summarizeReviewStates(
+    schedules.map(srs => srs && { ...SRSAlgorithm.createNew('line', 'sentence', 1), ...srs }),
+    NOW,
+  ));
+  assert.deepEqual(line(DUE, DUE, undefined, LISTENED, MEMORIZED), { due: '2 due', rest: ' · 2 new' });
+  assert.deepEqual(line(undefined, MEMORIZED), { due: null, rest: '1 new' });
+  assert.deepEqual(line(DUE, MEMORIZED), { due: '1 due', rest: '' });
+  assert.deepEqual(line(MEMORIZED, MEMORIZED), { due: null, rest: 'all reviewed' });
+});
+
 // The screens, rendered as markup.
 const noop = () => {};
 const studyButton = (markup: string) => markup.match(/<button type="button"( disabled="")? class="([^"]*)" title="Study [^"]*">.*?<\/button>/);
@@ -158,4 +172,65 @@ test('the essay\'s Study button replaces Review, counting its due and new senten
     'essay',
   );
   assert.match(studyButton(render(memorized))![0], />Practice<\/span>/);
+});
+
+const DUE_PILL = '<span class="rounded-full bg-orange-500/90 px-1.5 py-0.5 text-white">';
+
+test('each Real Life tile says how many lines are due, as an orange pill, and how many are new', () => {
+  const [career, shopping, executive, restaurant, travel] = REAL_LIFE_COLLECTIONS;
+  const progress = indexCatalogProgress([
+    withSchedule(createRealLifeProgressItem(career.sentences[0], 1), DUE),
+    withSchedule(createRealLifeProgressItem(career.sentences[5], 1), DUE),
+    withSchedule(createRealLifeProgressItem(career.sentences[7], 1), MEMORIZED),
+    ...restaurant.sentences.map(sentence => withSchedule(createRealLifeProgressItem(sentence, 1), MEMORIZED)),
+    ...travel.sentences.map((sentence, i) => withSchedule(createRealLifeProgressItem(sentence, 1), i === 3 ? DUE : MEMORIZED)),
+  ], 'real-life');
+  const markup = renderToStaticMarkup(createElement(RealLifeIndex, { progressIndex: progress, now: NOW, onOpenCollection: noop, onScroll: noop }));
+  const lines = [...markup.matchAll(/<p class="text-\[10px\] font-semibold uppercase tracking-wider text-white\/70 sm:text-xs">(.*?)<\/p>/g)]
+    .map(match => match[1]);
+  assert.deepEqual(lines, [
+    `${DUE_PILL}2 due</span> · ${career.sentences.length - 3} new`,
+    `${shopping.sentences.length} new`,
+    `${executive.sentences.length} new`,
+    'all reviewed',
+    `${DUE_PILL}1 due</span>`,
+  ]);
+  assert.doesNotMatch(markup, /to review|review complete/);
+});
+
+test('each essay tile has the same line under its length', () => {
+  const [selfReliance, ...rest] = ESSAYS;
+  const progress = indexCatalogProgress([
+    withSchedule(createEssayProgressItem(selfReliance.sentences[0], 1), DUE),
+    withSchedule(createEssayProgressItem(selfReliance.sentences[1], 1), MEMORIZED),
+  ], 'essay');
+  const markup = renderToStaticMarkup(createElement(EssayIndex, {
+    essays: ESSAYS, catalogStatus: 'ready', onRetryCatalog: noop, progressIndex: progress, now: NOW, onOpenEssay: noop, onScroll: noop,
+  }));
+  const lines = [...markup.matchAll(/sentences · \d+ min<\/p><p class="mt-1\.5 text-\[10px\] font-semibold uppercase tracking-wider text-white\/65 sm:text-xs">(.*?)<\/p>/g)]
+    .map(match => match[1]);
+  assert.deepEqual(lines, [
+    `${DUE_PILL}1 due</span> · ${selfReliance.sentences.length - 2} new`,
+    ...rest.map(essay => `${essay.sentences.length} new`),
+  ]);
+});
+
+test('the collection\'s stats strip and the essay\'s progress card count due reviews, with the new lines as the caption', () => {
+  const career = REAL_LIFE_COLLECTIONS[0];
+  const careerProgress = indexCatalogProgress([
+    withSchedule(createRealLifeProgressItem(career.sentences[0], 1), DUE),
+    withSchedule(createRealLifeProgressItem(career.sentences[1], 1), MEMORIZED),
+  ], 'real-life');
+  assert.ok(renderCollection(career, careerProgress).includes(
+    `<div><p class="text-sm font-bold text-orange-600">1</p><p class="text-[10px] text-slate-400">due · ${career.sentences.length - 2} new</p></div>`,
+  ));
+
+  const essay = ESSAYS.find(candidate => candidate.id === 'why-i-wrote-the-yellow-wallpaper')!;
+  const essayProgress = indexCatalogProgress([withSchedule(createEssayProgressItem(essay.sentences[0], 1), DUE)], 'essay');
+  const reader = renderToStaticMarkup(createElement(EssayReader, {
+    essay, progressIndex: essayProgress, now: NOW, onBack: noop, onOpenSentence: noop, onScroll: noop,
+  }));
+  assert.ok(reader.includes(
+    `<div><p class="text-lg font-bold text-orange-600">1</p><p class="text-[10px] uppercase tracking-wider text-stone-400">due · ${essay.sentences.length - 1} new</p></div>`,
+  ));
 });

@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { ArrowRight, BookOpenText, Feather, Quote, Sparkles } from 'lucide-react';
 import type { Essay } from '../../services/essayCatalog';
 import { summarizeCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress';
+import { dueNewLine } from '../../services/catalogQueue';
 import type { ReviewSummary } from '../../services/sentenceReviewState';
 import { essayStyle } from './essayStyle';
 import { groupModernEssays } from './essayGroups';
@@ -14,6 +15,7 @@ const EssayTile: React.FC<{
 }> = ({ essay, progress, onOpen }) => {
   const style = essayStyle[essay.accent];
   const reviewedPercent = progress.total === 0 ? 0 : Math.round((progress.reviewed / progress.total) * 100);
+  const reviewLine = dueNewLine(progress);
   return (
     <button
       type="button"
@@ -55,6 +57,11 @@ const EssayTile: React.FC<{
               <p className="text-2xl font-bold tabular-nums sm:text-3xl">{essay.sentenceCount}</p>
               <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/65 sm:text-xs">
                 sentences · {essay.readingMinutes} min
+              </p>
+              <p className="mt-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/65 sm:text-xs">
+                {/* A pill, as on the Real Life tiles: orange text can't be read on every gradient. */}
+                {reviewLine.due && <span className="rounded-full bg-orange-500/90 px-1.5 py-0.5 text-white">{reviewLine.due}</span>}
+                {reviewLine.rest}
               </p>
             </div>
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-slate-900 transition-transform group-hover:translate-x-1">
