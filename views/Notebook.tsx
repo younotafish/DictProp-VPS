@@ -31,6 +31,7 @@ import { useNotebookAISearch } from './notebook/useNotebookAISearch';
 import { useVoiceSearch } from './notebook/useVoiceSearch';
 import { useNotebookSearch } from './notebook/useNotebookSearch';
 import { useHorizontalSwipe } from './notebook/useHorizontalSwipe';
+import { ActionStackContext, createActionStackStore } from './notebook/actionStack';
 
 const virtualRowKey = (_index: number, row: NotebookRow) => row.key;
 
@@ -94,6 +95,12 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   // Moves the list's clock on (see useNotebookSearch) when a card opens over the list.
   const [clockBump, setClockBump] = useState(0);
   const { headerRef, handleScroll, showHeader, syncScrollPosition } = useAutoHidingHeader(onScroll);
+  // Which card's actions (Refresh, Archive, Delete) are open: one at most, and a scroll of the list closes them.
+  const [actionStack] = useState(createActionStackStore);
+  const handleListScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    actionStack.close();
+    handleScroll(e);
+  }, [actionStack, handleScroll]);
 
   // AI Search state
   const {
@@ -297,20 +304,23 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       );
     }
 
+    // Compare mode's rows sit outside the provider, so their inert cards never show actions.
     return (
-      <div className="px-3 py-1.5">
-        <NotebookGroup
-          group={group}
-          section={section}
-          now={list.now}
-          onViewDetail={openGroup}
-          onDelete={onDelete}
-          onArchive={onArchive}
-          onUnarchive={onUnarchive}
-        />
-      </div>
+      <ActionStackContext.Provider value={actionStack}>
+        <div className="px-3 py-1.5">
+          <NotebookGroup
+            group={group}
+            section={section}
+            now={list.now}
+            onViewDetail={openGroup}
+            onDelete={onDelete}
+            onArchive={onArchive}
+            onUnarchive={onUnarchive}
+          />
+        </div>
+      </ActionStackContext.Provider>
     );
-  }, [compareMode, selectedForCompare, showArchived, openGroup, onDelete, onArchive, onUnarchive, listNote, list.now, filterMode]);
+  }, [compareMode, selectedForCompare, showArchived, openGroup, onDelete, onArchive, onUnarchive, listNote, list.now, filterMode, actionStack]);
 
   // The list scrolls inside this container. React detaches refs while the tab is hidden, and letting go of
   // the container then would unmount the list and lose its place, so only a new container replaces it.
@@ -401,7 +411,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     <div
       ref={attachScrollParent}
       className={`h-full overflow-y-auto overflow-x-hidden bg-slate-50${hasSavedItems ? '' : ' flex flex-col'}`}
-      onScroll={handleScroll}
+      onScroll={handleListScroll}
     >
       <NotebookHeader
         headerRef={headerRef}

@@ -1,9 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { Trash2, RefreshCw, Archive, ArchiveRestore, MoreHorizontal } from 'lucide-react';
 import { getItemTitle, isPhraseItem, isVocabItem, type StoredItem } from '../../types';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { PronunciationBlock } from '../../components/PronunciationBlock';
+import { useEscapeLayer } from '../../components/escapeStack';
 import { useLongPress } from './useLongPress';
+import { useActionStack } from './actionStack';
 
 interface NotebookItemProps {
   item: StoredItem;
@@ -22,24 +24,43 @@ interface NotebookItemProps {
 export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
   item, isDue, itemIndex, onOpen, onDelete, onArchive, onUnarchive, totalInGroup = 1
 }) => {
-  const [showActions, setShowActions] = useState(false);
-  const { pressHandlers, isClickSuppressed } = useLongPress(() => setShowActions(true));
+  // One card's actions are open at a time in the notebook (actionStack): opening these closes any other card's.
+  const { isOpen: showActions, open: openActions, close: closeActions, dismiss, justDismissed } = useActionStack(item.data.id);
+  const { pressHandlers, isClickSuppressed } = useLongPress(openActions);
+  const rootRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const focusActionsOnOpen = useRef(false);
 
-  // The more button goes away as the actions open, so the keyboard's focus moves on to the first of them.
+  // The more button goes away as the actions open, so the keyboard's focus moves on to the first of them, without
+  // scrolling the list, which would close them again.
   useEffect(() => {
     if (!showActions || !focusActionsOnOpen.current) return;
     focusActionsOnOpen.current = false;
-    actionsRef.current?.querySelector('button')?.focus();
+    actionsRef.current?.querySelector('button')?.focus({ preventScroll: true });
   }, [showActions]);
+
+  // While they're open, a press anywhere outside this card closes them, and Esc closes them before the notebook's own
+  // Escape (clear the search, leave compare mode) or anything under it.
+  useEffect(() => {
+    if (!showActions) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) dismiss(Date.now());
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+  }, [showActions, dismiss]);
+  useEscapeLayer(closeActions, 0, showActions);
 
   const handleClick = () => {
     if (isClickSuppressed()) return;
     if (showActions) {
-      setShowActions(false);
+      closeActions();
       return;
     }
+    // The press that closed another card's actions only closes them, as a menu's dismissing tap does.
+    if (justDismissed(Date.now())) return;
+    // The list goes behind the card, so no other card's actions stay open under it.
+    closeActions();
     onOpen(itemIndex);
   };
 
@@ -63,7 +84,7 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
   const intervalDays = Math.round((item.srs?.interval ?? 0) / (24 * 60));
 
   return (
-    <div className="relative overflow-hidden rounded-2xl shadow-sm border border-slate-100 bg-slate-50">
+    <div ref={rootRef} className="relative overflow-hidden rounded-2xl shadow-sm border border-slate-100 bg-slate-50">
       {/* Main Card — tap or Enter opens it; a long press, right-click or the more button shows its actions */}
       <div
         role="button"
@@ -119,7 +140,7 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
 
       {!showActions && (
         <button
-          onClick={() => { focusActionsOnOpen.current = true; setShowActions(true); }}
+          onClick={() => { focusActionsOnOpen.current = true; openActions(); }}
           className="absolute top-2 right-2 z-10 w-9 h-9 flex items-center justify-center rounded-full text-slate-300 hover:text-slate-600 hover:bg-slate-100 transition-colors"
           aria-label={`More actions for ${title}`}
           title="More actions"
@@ -132,7 +153,7 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
       {showActions && (
         <div ref={actionsRef} className="absolute top-3 right-3 flex flex-col gap-2 z-20">
           <button
-            onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('global-search', { detail: { query: title, forceAI: true } })); setShowActions(false); }}
+            onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('global-search', { detail: { query: title, forceAI: true } })); closeActions(); }}
             className="p-2 bg-white text-indigo-500 shadow rounded-full hover:bg-indigo-50 active:scale-95 transition-all"
             title="Refresh with AI (re-run, don't reuse)"
           >
@@ -141,7 +162,7 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
           {item.isArchived ? (
             onUnarchive && (
               <button 
-                onClick={(e) => { e.stopPropagation(); onUnarchive(item.data.id); setShowActions(false); }}
+                onClick={(e) => { e.stopPropagation(); onUnarchive(item.data.id); closeActions(); }}
                 className="p-2 bg-white text-emerald-500 shadow rounded-full hover:bg-emerald-50 active:scale-95 transition-all"
                 title="Unarchive"
               >
@@ -151,7 +172,7 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
           ) : (
             onArchive && (
               <button 
-                onClick={(e) => { e.stopPropagation(); onArchive(item.data.id); setShowActions(false); }}
+                onClick={(e) => { e.stopPropagation(); onArchive(item.data.id); closeActions(); }}
                 className="p-2 bg-white text-amber-500 shadow rounded-full hover:bg-amber-50 active:scale-95 transition-all"
                 title="Archive"
               >
@@ -160,7 +181,7 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
             )
           )}
           <button 
-            onClick={(e) => { e.stopPropagation(); onDelete(item.data.id); setShowActions(false); }}
+            onClick={(e) => { e.stopPropagation(); onDelete(item.data.id); closeActions(); }}
             className="p-2 bg-white text-rose-500 shadow rounded-full hover:bg-rose-50 active:scale-95 transition-all"
             title="Delete"
           >
