@@ -164,14 +164,8 @@ const VERB: Record<SearchSubject['kind'], string> = { analysis: 'analyze', compa
  * What the search says about a failed lookup, comparison or scan, quoting at most 40 characters of what it was about.
  * A request that never reached DictProp says so, a timeout says so, and the server's statuses keep their own words.
  * The toast offers the retry itself, when there is one to offer, so no message asks for it.
- *
- * Given a plain query (the form the Notebook's AI box still uses), it keeps the wording it had before subjects existed;
- * the box moves to a subject with its next owner, and the form goes then.
  */
-export function describeSearchError(subject: SearchSubject, error: unknown): string;
-export function describeSearchError(query: string, error: unknown): string;
-export function describeSearchError(subject: SearchSubject | string, error: unknown): string {
-  if (typeof subject === 'string') return describeQueryError(subject, error);
+export function describeSearchError(subject: SearchSubject, error: unknown): string {
   const { kind } = subject;
   const label = quote(subject.label);
   if (error instanceof HttpError) {
@@ -217,31 +211,3 @@ export const failureOf = (subject: SearchSubject, error: unknown, at: number): S
   notAWord: error instanceof HttpError && error.status === 422,
   at,
 });
-
-/** describeSearchError for a plain query, worded as it was before subjects. */
-function describeQueryError(query: string, error: unknown): string {
-  if (error instanceof HttpError) {
-    if (error.status === 401) return `Your session expired. Sign in again to retry "${query}".`;
-    if (error.status === 429) {
-      return error.responseBody.includes('QUOTA_EXCEEDED')
-        ? 'The AI provider quota is exhausted. Please try again later.'
-        : 'The AI provider rate-limited this request. Try again shortly.';
-    }
-    // The toast offers the retry itself, when there is one to offer.
-    if (error.status === 502) return `The model returned no usable definition for "${query}".`;
-    if (error.status === 503) return `The AI provider is temporarily unavailable for "${query}".`;
-    if (error.status === 504) return `The model did not finish "${query}" before the timeout.`;
-    // The model judged the input not to be a word (a typo or keyboard noise); retrying won't help.
-    if (error.status === 422) return `No dictionary entry found for "${query}". Check the spelling and try again.`;
-    if (error.status >= 400 && error.status < 500 && error.responseBody) {
-      return `Could not analyze "${query}": ${error.responseBody}`;
-    }
-  }
-
-  const message = error instanceof Error ? error.message : '';
-  if (message === 'QUOTA_EXCEEDED') return 'The AI provider quota is exhausted. Please try again later.';
-  if (message.includes('timed out') || message.includes('504') || (error instanceof Error && error.name === 'AbortError')) {
-    return `The model did not finish "${query}" before the timeout.`;
-  }
-  return `Could not analyze "${query}".`;
-}

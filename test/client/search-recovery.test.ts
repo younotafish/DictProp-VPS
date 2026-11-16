@@ -8,6 +8,11 @@ import {
 } from '../../services/searchRecovery.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
+const lookup = (label: string): SearchSubject => ({ kind: 'analysis', label });
+const comparison = (label: string): SearchSubject => ({ kind: 'comparison', label });
+const scan = (label: string): SearchSubject => ({ kind: 'scan', label });
+const networkDown = () => new Error('Failed to fetch', { cause: new TypeError('Failed to fetch') });
+
 test('expired-session searches survive an OAuth redirect and retain a useful error', () => {
   const storage = new MemoryStorage();
   // Builds before typed requests kept a lookup this way, to run again as a refresh.
@@ -16,26 +21,26 @@ test('expired-session searches survive an OAuth redirect and retain a useful err
   assert.deepEqual(consumeSearchRetry(storage), { kind: 'analyze', query: 'visceral', analyzeMode: 'batch', forceAI: true });
   assert.equal(consumeSearchRetry(storage), null);
   assert.match(
-    describeSearchError('visceral', new HttpError('failed', 401, 'Session expired')),
+    describeSearchError(lookup('visceral'), new HttpError('failed', 401, 'Session expired')),
     /session expired/i,
   );
 });
 
 test('search errors explain not-found, quota and rate limits distinctly', () => {
   assert.equal(
-    describeSearchError('qwxzv', new HttpError('Analysis failed (422)', 422, 'No dictionary entry found. Check the spelling and try again.')),
-    'No dictionary entry found for "qwxzv". Check the spelling and try again.',
+    describeSearchError(lookup('qwxzv'), new HttpError('Analysis failed (422)', 422, 'No dictionary entry found. Check the spelling and try again.')),
+    'No dictionary entry found for “qwxzv”. Check the spelling and try again.',
   );
   assert.equal(
-    describeSearchError('bank', new HttpError('Analysis failed (429)', 429, 'QUOTA_EXCEEDED')),
+    describeSearchError(lookup('bank'), new HttpError('Analysis failed (429)', 429, 'QUOTA_EXCEEDED')),
     'The AI provider quota is exhausted. Please try again later.',
   );
   assert.equal(
-    describeSearchError('bank', new HttpError('Analysis failed (429)', 429, 'RATE_LIMITED')),
+    describeSearchError(lookup('bank'), new HttpError('Analysis failed (429)', 429, 'RATE_LIMITED')),
     'The AI provider rate-limited this request. Try again shortly.',
   );
-  assert.equal(describeSearchError('bank', new Error('QUOTA_EXCEEDED')), 'The AI provider quota is exhausted. Please try again later.');
-  assert.match(describeSearchError('bank', new HttpError('Analysis failed (502)', 502, '')), /no usable definition/);
+  assert.equal(describeSearchError(lookup('bank'), new Error('QUOTA_EXCEEDED')), 'The AI provider quota is exhausted. Please try again later.');
+  assert.match(describeSearchError(lookup('bank'), new HttpError('Analysis failed (502)', 502, '')), /no usable definition/);
 });
 
 test('a search is offered again only when repeating it could succeed', () => {
@@ -46,13 +51,8 @@ test('a search is offered again only when repeating it could succeed', () => {
   assert.equal(isRetryableSearchError(new HttpError('Analysis failed (504)', 504, '')), true);
   assert.equal(isRetryableSearchError(new Error('The model did not finish this search before the timeout.')), true);
   // The toast adds the retry prompt itself, so the message doesn't repeat it.
-  assert.doesNotMatch(describeSearchError('bank', new HttpError('Analysis failed (504)', 504, '')), /retry/i);
+  assert.doesNotMatch(describeSearchError(lookup('bank'), new HttpError('Analysis failed (504)', 504, '')), /retry/i);
 });
-
-const lookup = (label: string): SearchSubject => ({ kind: 'analysis', label });
-const comparison = (label: string): SearchSubject => ({ kind: 'comparison', label });
-const scan = (label: string): SearchSubject => ({ kind: 'scan', label });
-const networkDown = () => new Error('Failed to fetch', { cause: new TypeError('Failed to fetch') });
 
 test('a request that never reached DictProp says so, for a lookup, a comparison and a scan', () => {
   assert.equal(describeSearchError(lookup('gamut'), networkDown()), 'Couldn’t reach DictProp for “gamut”.');
@@ -109,12 +109,6 @@ test('a network failure is found through the causes of the errors wrapping it, a
   assert.equal(isNetworkFailure(new TimeoutError()), false);
   assert.equal(isNetworkFailure('Failed to fetch'), false);
   assert.equal(isNetworkFailure(undefined), false);
-});
-
-test('a plain query keeps the wording it had before subjects, for the callers that still pass one', () => {
-  assert.equal(describeSearchError('bank', networkDown()), 'Could not analyze "bank".');
-  assert.equal(describeSearchError('bank', new HttpError('failed', 503, '')), 'The AI provider is temporarily unavailable for "bank".');
-  assert.equal(describeSearchError('bank', new Error('Request timed out')), 'The model did not finish "bank" before the timeout.');
 });
 
 test('a failure keeps its wording, whether retrying could fix it, and whether the model found no entry', () => {

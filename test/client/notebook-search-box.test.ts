@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { HttpError } from '../../services/http.ts';
+import { HttpError, TimeoutError } from '../../services/http.ts';
 import {
   OFFLINE_SEARCH_MESSAGE, aiCardStillValid, offlineSearchError, retryOffered, searchFailure, shouldBlurOnDrag,
 } from '../../services/notebook/searchBox.ts';
@@ -34,14 +34,14 @@ test('a mostly vertical drag of the list past 10 px drops the keyboard, unless i
 
 test('Retry shows only when retrying can work: never for a word the model rejected, offline only once back online', () => {
   const rejected = searchFailure('qwxzv', new HttpError('Analysis failed (422)', 422, 'Not a word'));
-  assert.deepEqual(rejected, { message: 'No dictionary entry found for "qwxzv". Check the spelling and try again.', retryable: false });
+  assert.deepEqual(rejected, { message: 'No dictionary entry found for “qwxzv”. Check the spelling and try again.', retryable: false });
   assert.equal(retryOffered(rejected, true, 'qwxzv'), false);
 
   const network = searchFailure('bank', new TypeError('Failed to fetch'));
-  assert.deepEqual(network, { message: 'Could not analyze "bank".', retryable: true });
+  assert.deepEqual(network, { message: 'Couldn’t reach DictProp for “bank”.', retryable: true });
   assert.equal(retryOffered(network, true, 'bank'), true);
-  const timeout = searchFailure('bank', new Error('Request timed out'));
-  assert.deepEqual(timeout, { message: 'The model did not finish "bank" before the timeout.', retryable: true });
+  const timeout = searchFailure('bank', new TimeoutError());
+  assert.deepEqual(timeout, { message: 'The model did not finish “bank” before the timeout.', retryable: true });
   assert.equal(retryOffered(timeout, true, 'bank'), true);
   assert.equal(retryOffered(searchFailure('bank', new HttpError('Analysis failed (503)', 503, '')), true, 'bank'), true);
 

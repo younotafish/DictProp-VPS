@@ -13,7 +13,7 @@ export const OFFLINE_SEARCH_MESSAGE = 'You’re offline — showing saved matche
 
 /** The banner's error for a failed lookup of `query`, worded as the search sheet words it. */
 export const searchFailure = (query: string, error: unknown): NotebookSearchError => ({
-  message: describeSearchError(query, error),
+  message: describeSearchError({ kind: 'analysis', label: query }, error),
   retryable: isRetryableSearchError(error),
 });
 
