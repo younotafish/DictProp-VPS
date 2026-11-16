@@ -137,6 +137,8 @@ export function useWordActions({
 
   const handleRemember = useCallback(() => {
     const saved = findSavedCopy(savedItemsRef.current, { type, data });
+    // An archived card's header offers Unarchive instead of Got it, so R and the double tap or click review nothing.
+    if (saved?.isArchived) return;
     // One gesture reviews a card once: the same card's second remember within 1.5 s is dropped, while the next card's
     // counts at once.
     const id = saved?.data.id ?? data.id;
