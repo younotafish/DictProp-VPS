@@ -10,7 +10,7 @@ function addColumnIfMissing(db: Database.Database, table: string, column: string
 export function applySchema(db: Database.Database): void {
   // Columns that older files gained by ALTER TABLE come last, in the order those files have them.
   db.exec(`
-    -- project is retired: reads leave it out and writes clear it. The repair script and the audit still read it.
+    -- project is retired: reads leave it out and writes clear it. Only the production audit still queries it.
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
       type TEXT NOT NULL CHECK(type IN ('vocab', 'phrase', 'sentence')),
@@ -76,8 +76,8 @@ export function applySchema(db: Database.Database): void {
       PRIMARY KEY (event_id, item_id)
     );
 
-    -- Retired with the project column. Kept until a production audit shows no project rows or tags remain,
-    -- because the repair script still deletes from it.
+    -- Retired with the project column, and nothing writes it. It stays while the production audit still counts
+    -- its rows (legacyProjectRowCount) beside the column's tags (legacyProjectTagCount).
     CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL);
 
     -- Images live here, out of items.data, so item reads and writes never touch image bytes. Keyed by id, a
@@ -149,7 +149,7 @@ export function applySchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_items_user_revision ON items(user_id, revision, id);
     -- Phrase scans (the owners of an image) read the user's phrase rows, not the library.
     CREATE INDEX IF NOT EXISTS idx_items_user_type ON items(user_id, type);
-    -- The audit's and the repair's project queries; without it they read every item to reach the column.
+    -- The audit's count of project tags; without it the count reads every item to reach the column.
     CREATE INDEX IF NOT EXISTS idx_items_project ON items(project);
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
