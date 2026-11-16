@@ -147,7 +147,7 @@ export function applySchema(db: Database.Database): void {
   // Primary keys and UNIQUE columns have indexes of their own: the ids, users.google_id, sentence_enrichments.source_id.
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_items_user_revision ON items(user_id, revision, id);
-    -- Phrase scans (image owners, the inline-image fallback) read the user's phrase rows, not the library.
+    -- Phrase scans (the owners of an image) read the user's phrase rows, not the library.
     CREATE INDEX IF NOT EXISTS idx_items_user_type ON items(user_id, type);
     -- The audit's and the repair's project queries; without it they read every item to reach the column.
     CREATE INDEX IF NOT EXISTS idx_items_project ON items(project);

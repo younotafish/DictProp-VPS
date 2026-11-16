@@ -79,9 +79,9 @@ function rowToItem(row: ItemRow, data: any = JSON.parse(row.data)) {
 export type ItemRead = ReturnType<typeof rowToItem>;
 
 /**
- * Rows → StoredItem JSON without image bytes. An image in item_images (post-migration) or still
- * inline (transition) becomes a marker with a content version, so clients can invalidate an older
- * IndexedDB copy after a replacement. One indexed lookup covers every image on the page.
+ * Rows → StoredItem JSON without image bytes. An image in item_images becomes a marker with a content
+ * version, so clients can invalidate an older IndexedDB copy after a replacement. One indexed lookup
+ * covers every image on the page.
  */
 function rowsToItems(rows: ItemRow[], userId: string) {
   const parsed = rows.map(row => ({ row, data: JSON.parse(row.data) }));
@@ -100,18 +100,17 @@ function rowsToItems(rows: ItemRow[], userId: string) {
       versions.set(image.id, (image.content_hash || `legacy-${image.updated_at}`).slice(0, 20));
     }
   }
-  const markerFor = (id: unknown, url: unknown): string | null => {
+  const markerFor = (id: unknown): string | null => {
     const version = typeof id === 'string' ? versions.get(id) : undefined;
-    if (version) return serverImageMarker(version);
-    return typeof url === 'string' && url.startsWith('data:image/') ? serverImageMarker('inline') : null;
+    return version ? serverImageMarker(version) : null;
   };
   return parsed.map(({ row, data }) => {
-    const topMarker = markerFor(data.id, data.imageUrl);
+    const topMarker = markerFor(data.id);
     if (topMarker) data.imageUrl = topMarker;
     if (Array.isArray(data.vocabs)) {
       data.vocabs = data.vocabs.map((vocab: unknown) => {
         if (!isJsonObject(vocab)) return vocab;
-        const marker = markerFor(vocab.id, vocab.imageUrl);
+        const marker = markerFor(vocab.id);
         return marker ? { ...vocab, imageUrl: marker } : vocab;
       });
     }

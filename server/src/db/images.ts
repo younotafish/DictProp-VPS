@@ -62,13 +62,6 @@ export function deleteUnreferencedBlobs(contentHashes?: Iterable<string | null |
   return deleted;
 }
 
-// The item rows the transitional inline-image fallback below reads.
-const inlineStmts = {
-  getDataForIds: db.prepare(`SELECT id, data FROM items WHERE user_id = ? AND id IN (SELECT value FROM json_each(?))`),
-  phrasesWithInlineImages: db.prepare(`SELECT data FROM items
-    WHERE user_id = ? AND type = 'phrase' AND data LIKE '%data:image/%'`),
-};
-
 /** What storing an image came to: stored, or refused for bytes that aren't the declared type or an id another user owns. */
 export type ImageStoreResult = 'stored' | 'invalid' | 'forbidden';
 
@@ -135,49 +128,19 @@ export function linkSentenceEnrichmentImage(
 }
 
 /**
- * TRANSITIONAL fallback: read base64 images still inlined in items.data for rows
- * the migration hasn't reached yet. Searches top-level items, then nested phrase vocabs.
- * (Removed in a later cleanup once prod confirms zero inline images remain.)
- */
-function getInlineItemImages(ids: string[], userId: string): Record<string, string> {
-  const found: Record<string, string> = {};
-  const inline = (url: unknown): url is string => typeof url === 'string' && url.startsWith('data:image/');
-  const nested = new Set(ids);
-  for (const row of inlineStmts.getDataForIds.all(userId, JSON.stringify(ids)) as Array<{ id: string; data: string }>) {
-    nested.delete(row.id);
-    const data = JSON.parse(row.data);
-    if (inline(data.imageUrl)) found[row.id] = data.imageUrl;
-  }
-  // An id without its own row might be a vocab nested in a phrase.
-  if (nested.size > 0) {
-    for (const row of inlineStmts.phrasesWithInlineImages.iterate(userId) as Iterable<{ data: string }>) {
-      const vocabs = JSON.parse(row.data).vocabs;
-      if (!Array.isArray(vocabs)) continue;
-      for (const vocab of vocabs) {
-        if (nested.has(vocab?.id) && inline(vocab.imageUrl)) found[vocab.id] ??= vocab.imageUrl;
-      }
-    }
-  }
-  return found;
-}
-
-/**
- * Get the base64 image data URI for an item or vocab id.
- * Fast path: the item_images table (direct primary-key lookup).
- * Fallback: inline base64 in items.data (only until the migration finishes).
+ * The image stored for an item or phrase vocab id, as a data URI. Item data itself never holds image bytes: a
+ * write moves an inline image into item_images, and July's migration moved the older ones there.
  */
 export function getItemImage(id: string, userId: string): string | null {
   const imgRow = imageStmts.get.get(id, userId) as { data: Buffer | string; mime_type: string | null } | undefined;
-  const stored = storedImageToDataUri(imgRow);
-  if (stored) return stored;
-  return getInlineItemImages([id], userId)[id] ?? null;
+  return storedImageToDataUri(imgRow);
 }
 
 const INLINE_DATA_URI = /^data:(image\/[a-z]+);base64,(.+)$/;
 
 /**
  * An image's bytes for the image endpoint, with their SHA-256 as a version. Blob-backed images already
- * carry that hash; a legacy or inline data URI is decoded and hashed here. Raster types only.
+ * carry that hash; a legacy row's data URI, from before image_blobs, is decoded and hashed here. Raster types only.
  */
 export function getItemImageBinary(id: string, userId: string): {
   data: Buffer;
@@ -218,10 +181,6 @@ export function getItemImagesBatch(ids: string[], userId: string): Record<string
     const dataUri = storedImageToDataUri(r);
     if (dataUri) result[r.id] = dataUri;
   }
-
-  // Transitional fallback for any ids not yet migrated.
-  const missing = ids.filter(id => !result[id]);
-  if (missing.length > 0) Object.assign(result, getInlineItemImages(missing, userId));
   return result;
 }
 
