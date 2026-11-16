@@ -38,14 +38,49 @@ const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onSelect, busy }) => (
   </button>
 );
 
-/**
- * The ⋯ button at the head of the notebook's toolbar and the panel of tools it discloses: plain buttons in tab
- * order, with the speech settings above them. A click outside or Escape closes it.
- */
-export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = ({
-  isOnline, onAnalyzeText, onBatchImport, onImportJSON, onDownloadOfflineImages, onForceSync, syncStatus,
-  onGenerateAllSpeech, speechGenerationRunning, onRestoreImagesToServer, imageRestoreRunning, onFindDuplicates,
+type NotebookToolsPanelProps = Omit<NotebookToolsMenuProps, 'isOnline'> & {
+  /** Runs before the chosen tool, to close the menu. */
+  onChosen: () => void;
+};
+
+/** What the open menu lists: the speech settings, then the tools as plain buttons in tab order. */
+export const NotebookToolsPanel: React.FC<NotebookToolsPanelProps> = ({
+  onAnalyzeText, onBatchImport, onImportJSON, onDownloadOfflineImages, onForceSync, syncStatus, onGenerateAllSpeech,
+  speechGenerationRunning, onRestoreImagesToServer, imageRestoreRunning, onFindDuplicates, onChosen,
 }) => {
+  // Choosing a tool closes the menu first.
+  const choose = (tool: () => void) => () => {
+    onChosen();
+    tool();
+  };
+
+  return (
+    <>
+      <div className="min-h-11 px-3 py-2 flex items-center justify-between gap-3 border-b border-slate-100">
+        <span className="text-sm text-slate-600">Speech playback</span>
+        <div className="flex items-center gap-1">
+          <SpeechStyleToggle className="shrink-0" />
+          <PlaybackSpeedToggle className="shrink-0 bg-slate-100 hover:bg-slate-200" />
+        </div>
+      </div>
+      <MenuItem icon={<ScanText size={17} />} label="Analyze text" onSelect={choose(onAnalyzeText)} />
+      <MenuItem icon={<ListPlus size={17} />} label="Batch import" onSelect={choose(onBatchImport)} />
+      <MenuItem icon={<FileJson size={17} />} label="Import JSON" onSelect={choose(onImportJSON)} />
+      <MenuItem icon={<Download size={17} />} label="Download image pack" onSelect={choose(onDownloadOfflineImages)} />
+      <MenuItem icon={<RefreshCw size={17} />} label="Sync now" onSelect={choose(onForceSync)} busy={syncStatus === 'syncing'} />
+      <div className="h-px bg-slate-100 my-1" />
+      <MenuItem icon={<Volume2 size={17} />} label="Generate speech cache" onSelect={choose(onGenerateAllSpeech)} busy={speechGenerationRunning} />
+      <MenuItem icon={<UploadCloud size={17} />} label="Restore server images" onSelect={choose(onRestoreImagesToServer)} busy={imageRestoreRunning} />
+      <MenuItem icon={<GitMerge size={17} />} label="Merge duplicates" onSelect={choose(onFindDuplicates)} />
+    </>
+  );
+};
+
+/**
+ * The ⋯ button at the head of the notebook's toolbar and the panel of tools it discloses (NotebookToolsPanel). A
+ * click outside or Escape closes it.
+ */
+export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = ({ isOnline, ...tools }) => {
   const [showMaintenanceMenu, setShowMaintenanceMenu] = useState(false);
   const maintenanceMenuRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
@@ -73,12 +108,6 @@ export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = ({
 
   if (!isOnline) return null;
 
-  // Choosing a tool closes the menu first.
-  const choose = (tool: () => void) => () => {
-    setShowMaintenanceMenu(false);
-    tool();
-  };
-
   return (
     <div className="relative shrink-0" ref={maintenanceMenuRef}>
       <button
@@ -93,22 +122,7 @@ export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = ({
       </button>
       {showMaintenanceMenu && (
         <div id={panelId} className="absolute right-0 top-full mt-1 w-64 max-h-[70vh] overflow-y-auto bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
-          <div className="min-h-11 px-3 py-2 flex items-center justify-between gap-3 border-b border-slate-100">
-            <span className="text-sm text-slate-600">Speech playback</span>
-            <div className="flex items-center gap-1">
-              <SpeechStyleToggle className="shrink-0" />
-              <PlaybackSpeedToggle className="shrink-0 bg-slate-100 hover:bg-slate-200" />
-            </div>
-          </div>
-          <MenuItem icon={<ScanText size={17} />} label="Analyze text" onSelect={choose(onAnalyzeText)} />
-          <MenuItem icon={<ListPlus size={17} />} label="Batch import" onSelect={choose(onBatchImport)} />
-          <MenuItem icon={<FileJson size={17} />} label="Import JSON" onSelect={choose(onImportJSON)} />
-          <MenuItem icon={<Download size={17} />} label="Download image pack" onSelect={choose(onDownloadOfflineImages)} />
-          <MenuItem icon={<RefreshCw size={17} />} label="Sync now" onSelect={choose(onForceSync)} busy={syncStatus === 'syncing'} />
-          <div className="h-px bg-slate-100 my-1" />
-          <MenuItem icon={<Volume2 size={17} />} label="Generate speech cache" onSelect={choose(onGenerateAllSpeech)} busy={speechGenerationRunning} />
-          <MenuItem icon={<UploadCloud size={17} />} label="Restore server images" onSelect={choose(onRestoreImagesToServer)} busy={imageRestoreRunning} />
-          <MenuItem icon={<GitMerge size={17} />} label="Merge duplicates" onSelect={choose(onFindDuplicates)} />
+          <NotebookToolsPanel {...tools} onChosen={() => setShowMaintenanceMenu(false)} />
         </div>
       )}
     </div>
