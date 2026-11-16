@@ -280,6 +280,7 @@ export function RealLifeCollectionScreen({
                 if (event.key === 'Escape' && !isImeKey(event.nativeEvent)) setQuery('');
               }}
               placeholder={`Search ${collection.title.toLocaleLowerCase('en-US')}…`}
+              aria-label={`Search ${collection.title}`}
               className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-9 text-sm text-slate-700 outline-none transition-colors placeholder:text-slate-400 focus:border-indigo-300 focus:bg-white"
               autoComplete="off"
               autoCapitalize="off"
@@ -308,6 +309,7 @@ export function RealLifeCollectionScreen({
                 type="button"
                 key={key}
                 onClick={() => setReviewFilter(key)}
+                aria-pressed={reviewFilter === key}
                 className={`inline-flex min-h-8 shrink-0 items-center gap-1 rounded-full px-3 text-xs font-semibold transition-colors ${reviewFilter === key ? style.active : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
               >
                 {label} <span className={reviewFilter === key ? 'text-white/70' : 'text-slate-400'}>{count}</span>
@@ -319,6 +321,7 @@ export function RealLifeCollectionScreen({
             <button
               type="button"
               onClick={() => setSectionId('all')}
+              aria-pressed={sectionId === 'all'}
               className={`inline-flex min-h-8 shrink-0 items-center gap-1 rounded-full px-3 text-xs font-semibold transition-colors ${sectionId === 'all' ? style.active : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
             >
               All {collection.sentences.length}
@@ -328,6 +331,7 @@ export function RealLifeCollectionScreen({
                 type="button"
                 key={section.id}
                 onClick={() => setSectionId(section.id)}
+                aria-pressed={sectionId === section.id}
                 className={`inline-flex min-h-8 shrink-0 items-center gap-1 rounded-full px-3 text-xs font-semibold transition-colors ${sectionId === section.id ? style.active : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
                 title={section.description}
               >

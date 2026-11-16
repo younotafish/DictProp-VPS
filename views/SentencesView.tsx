@@ -3,6 +3,7 @@ import { isSentenceItem, type ReviewRating, type SentenceData, type StoredItem }
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { MessageSquareQuote, Check, Trash2, Search, X } from 'lucide-react';
 import { HighlightedSentence } from '../components/HighlightedSentence';
+import { activateOnEnterOrSpace } from '../components/activateOnKey';
 import { isImeKey } from '../components/keyboardTarget';
 import { barColorFor } from '../components/mastery';
 import {
@@ -64,7 +65,7 @@ export const SentenceRow = React.memo(function SentenceRow({
         onClick={() => onOpen(item)}
         role="button"
         tabIndex={0}
-        onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) onOpen(item); }}
+        onKeyDown={activateOnEnterOrSpace(() => onOpen(item))}
         title="Open card to study this sentence"
         className={`relative rounded-xl border p-3 transition-colors cursor-pointer hover:border-indigo-300 hover:shadow-sm ${toReview ? 'border-orange-200 bg-orange-50/30' : 'border-slate-100 bg-white'}`}
       >
@@ -254,6 +255,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
                 if (e.key === 'Escape') setSearchQuery('');
               }}
               placeholder="Search saved sentences…"
+              aria-label="Search saved sentences"
               className="w-full pl-8 pr-9 py-2 text-sm rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:border-indigo-300 outline-none text-slate-700 placeholder:text-slate-400 transition-colors"
               autoComplete="off"
               autoCapitalize="off"
@@ -281,6 +283,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
               <button
                 key={key}
                 onClick={() => setFilter(key)}
+                aria-pressed={filter === key}
                 title={
                   key === 'unreviewed' ? 'Never reviewed yet'
                   : key === 'due' ? 'Reviewed before and due again now'
