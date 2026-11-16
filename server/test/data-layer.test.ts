@@ -3,6 +3,7 @@ import { readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import test from 'node:test';
 import Database from 'better-sqlite3';
+import type { StoredItemRecord } from '../src/db.js';
 import { exampleSentenceId } from '../src/sentence-lookup.js';
 import { srs } from './support/fixtures.js';
 import { png, sha256 } from './support/fs.js';
@@ -19,7 +20,8 @@ const USER = 'data-layer-user';
 const vocab = (id: string, data: Record<string, unknown>, updatedAt: number, extra: Record<string, unknown> = {}) => ({
   type: 'vocab', data: { id, word: 'lucid', ...data }, srs: srs(id, 'vocab'), savedAt: 1, updatedAt, ...extra,
 });
-const stored = (id: string) => getItemById(id, USER, false) as any;
+/** The stored item `id`, as a client reads it. Every item these tests read was saved by them, so it has a revision. */
+const stored = (id: string) => getItemById(id, USER, false) as StoredItemRecord & { serverRevision: number };
 const count = (table: string) => (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
 const headRevision = () => getItemsAfterRevision({ revision: 0, id: '' }, 1, USER).headRevision;
 
@@ -104,7 +106,7 @@ test('a phrase keeps each vocab\'s server fields by vocab id, not by position', 
 
   const item = stored('carry-phrase');
   assert.deepEqual(item.data.localImageEnrichment, localImage);
-  const [dream, lucid, vivid] = item.data.vocabs;
+  const [dream, lucid, vivid] = item.data.vocabs as unknown[];
   assert.deepEqual(dream, { id: 'carry-phrase-dream', word: 'dream', localImageEnrichment: localImage });
   assert.deepEqual(lucid, {
     id: 'carry-phrase-lucid', word: 'lucid', definition: 'clear', usageAudit: audit, advancedEnrichment: advanced,
@@ -243,13 +245,13 @@ test('a stored image whose blob is gone reads as no image and can be uploaded ag
   const image = png('blob-gone');
   upsertItem(vocab('blob-gone', {}, 1_000), USER);
   assert.equal(upsertItemImageBinary('blob-gone', image, 'image/png', USER), true);
-  assert.match(stored('blob-gone').data.imageUrl, /^server:has_image:[a-f0-9]{20}$/);
+  assert.match(stored('blob-gone').data.imageUrl as string, /^server:has_image:[a-f0-9]{20}$/);
   db.prepare('DELETE FROM image_blobs WHERE content_hash = ?').run(sha256(image));
 
   assert.equal(getItemImage('blob-gone', USER), null);
   assert.deepEqual(getItemImagesBatch(['blob-gone'], USER), {});
   assert.equal(stored('blob-gone').data.imageUrl, undefined);
-  assert.equal((getItemById('blob-gone', USER) as any).data.imageUrl, undefined);
+  assert.equal(getItemById('blob-gone', USER)!.data.imageUrl, undefined);
   assert.equal(hasItemImage('blob-gone', USER), false);
   // Left out of the manifest, so a client still holding the image uploads it again.
   assert.equal(getImageManifest(USER).includes('blob-gone'), false);

@@ -30,12 +30,35 @@ const item = {
   updatedAt: 1,
 };
 
+/** A stored item in a reply, as far as these tests read it. */
+interface ItemReply {
+  data: { id: string } & Record<string, unknown>;
+  srs: Record<string, unknown>;
+}
+/** A POST /api/reviews/apply reply, as far as these tests read it. */
+interface AppliedReply {
+  applied: boolean;
+  items: ItemReply[];
+  baseRevisions: Record<string, number>;
+}
+/** A POST /api/reviews/:id/undo reply, as far as these tests read it. */
+interface UndoneReply {
+  undone: boolean;
+  items: ItemReply[];
+}
+/** A GET /api/reviews/history reply, as far as these tests read it. */
+interface HistoryReply {
+  recent: Array<{ id: string } & Record<string, unknown>>;
+  olderTimes: number[];
+  olderCount: number;
+}
+
 test('private essay route is network-only and empty before an owner catalog is imported', async () => {
   const response = await app.request('/api/essays/catalog');
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('cache-control'), 'private, no-store');
   assert.equal(response.headers.get('x-robots-tag'), 'noindex, nofollow, noarchive');
-  const catalog = await response.json() as any;
+  const catalog = await response.json() as { version: number; essays: unknown[] };
   assert.equal(catalog.version, 1);
   assert.deepEqual(catalog.essays, []);
 });
@@ -51,7 +74,7 @@ test('Hono routes apply reviews idempotently and expose revision deltas', async 
   response = await app.request('/api/items');
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type') || '', /^application\/json/);
-  const fullItems = (await response.json() as any[]).filter(stored => stored.data.id === item.data.id);
+  const fullItems = (await response.json() as ItemReply[]).filter(stored => stored.data.id === item.data.id);
   assert.equal(fullItems.length, 1);
   assert.equal(fullItems[0].data.id, item.data.id);
 
@@ -67,15 +90,15 @@ test('Hono routes apply reviews idempotently and expose revision deltas', async 
   });
   response = await apply();
   assert.equal(response.status, 201);
-  assert.equal((await response.json() as any).applied, true);
+  assert.equal((await response.json() as AppliedReply).applied, true);
   response = await apply();
   assert.equal(response.status, 200);
-  assert.equal((await response.json() as any).applied, false);
+  assert.equal((await response.json() as AppliedReply).applied, false);
 
   response = await app.request('/api/items?afterRevision=0&afterId=&limit=10');
   assert.equal(response.status, 200);
-  const delta = await response.json() as any;
-  const deltaItems = delta.items.filter((stored: any) => stored.data.id === item.data.id);
+  const delta = await response.json() as { items: ItemReply[]; cursor: { revision: number } };
+  const deltaItems = delta.items.filter(stored => stored.data.id === item.data.id);
   assert.equal(deltaItems.length, 1);
   assert.equal(deltaItems[0].srs.totalReviews, 1);
   assert.equal(deltaItems[0].srs.scheduler, 'fsrs-v6');
@@ -83,8 +106,7 @@ test('Hono routes apply reviews idempotently and expose revision deltas', async 
 
   response = await app.request('/api/reviews/history?recentSince=0');
   assert.equal(response.status, 200);
-  type History = { recent: Array<Record<string, unknown>> };
-  const events = (await response.json() as History).recent.filter(stored => stored.id === event.id);
+  const events = (await response.json() as HistoryReply).recent.filter(stored => stored.id === event.id);
   assert.equal(events.length, 1);
   assert.deepEqual(
     {
@@ -98,16 +120,16 @@ test('Hono routes apply reviews idempotently and expose revision deltas', async 
 
   response = await app.request(`/api/reviews/${event.id}/undo`, { method: 'POST' });
   assert.equal(response.status, 200);
-  const undo = await response.json() as any;
+  const undo = await response.json() as UndoneReply;
   assert.equal(undo.undone, true);
   assert.equal(undo.items[0].srs.totalReviews, 0);
 
   response = await app.request(`/api/reviews/${event.id}/undo`, { method: 'POST' });
   assert.equal(response.status, 200);
-  assert.equal((await response.json() as any).undone, false);
+  assert.equal((await response.json() as UndoneReply).undone, false);
 
   response = await app.request('/api/reviews/history?recentSince=0');
-  assert.deepEqual((await response.json() as History).recent.filter(stored => stored.id === event.id), []);
+  assert.deepEqual((await response.json() as HistoryReply).recent.filter(stored => stored.id === event.id), []);
 });
 
 test('review history sends recent reviews in full and older ones as times and a count', async () => {
@@ -136,9 +158,9 @@ test('review history sends recent reviews in full and older ones as times and a 
 
   response = await app.request(`/api/reviews/history?recentSince=${at(-8)}`);
   assert.equal(response.status, 200);
-  const history = await response.json() as any;
+  const history = await response.json() as HistoryReply;
   assert.deepEqual(
-    history.recent.map((event: any) => event.id).filter((id: string) => id.startsWith('history-')),
+    history.recent.map(event => event.id).filter(id => id.startsWith('history-')),
     ['history-1'],
   );
   assert.equal(history.recent[0].rating, 'good');
@@ -189,7 +211,7 @@ test('a first catalog review atomically seeds its isolated sentence item', async
 
   let response = await apply({ event, itemIds: [id], seedItem });
   assert.equal(response.status, 201);
-  let result = await response.json() as any;
+  let result = await response.json() as AppliedReply;
   assert.equal(result.applied, true);
   assert.equal(result.items[0].data.catalogCollectionId, 'career-conversations');
   assert.equal(result.items[0].srs.totalReviews, 1);
@@ -198,7 +220,7 @@ test('a first catalog review atomically seeds its isolated sentence item', async
 
   response = await apply({ event, itemIds: [id], seedItem });
   assert.equal(response.status, 200);
-  result = await response.json() as any;
+  result = await response.json() as AppliedReply;
   assert.equal(result.applied, false);
   assert.equal(result.items[0].srs.totalReviews, 1);
   assert.deepEqual(result.baseRevisions, { [id]: 0 });
@@ -231,7 +253,7 @@ test('a review of an item the server has not stored yet seeds it instead of fail
 
   response = await apply({ event, itemIds: [id], seedItem });
   assert.equal(response.status, 201);
-  const result = await response.json() as any;
+  const result = await response.json() as AppliedReply;
   assert.equal(result.items[0].data.word, 'fresh');
   assert.equal(result.items[0].srs.totalReviews, 1);
   assert.deepEqual(result.baseRevisions, { [id]: 0 });
@@ -244,7 +266,7 @@ test('a review of an item the server has not stored yet seeds it instead of fail
   });
   assert.equal(response.status, 200);
   response = await app.request(`/api/items/${id}`);
-  assert.equal((await response.json() as any).srs.totalReviews, 1);
+  assert.equal((await response.json() as ItemReply).srs.totalReviews, 1);
 });
 
 test('item routes reject malformed records and oversized batches', async () => {
@@ -254,7 +276,7 @@ test('item routes reject malformed records and oversized batches', async () => {
     body: JSON.stringify([{ ...item, srs: { ...item.srs, nextReview: 'tomorrow' } }]),
   });
   assert.equal(response.status, 400);
-  assert.match((await response.json() as any).error, /srs\.nextReview/);
+  assert.match((await response.json() as { error: string }).error, /srs\.nextReview/);
 
   response = await app.request('/api/items', {
     method: 'PUT',
@@ -262,7 +284,7 @@ test('item routes reject malformed records and oversized batches', async () => {
     body: JSON.stringify([{ ...item, srs: { ...item.srs, lastExposureDate: -1 } }]),
   });
   assert.equal(response.status, 400);
-  assert.match((await response.json() as any).error, /srs\.lastExposureDate/);
+  assert.match((await response.json() as { error: string }).error, /srs\.lastExposureDate/);
 
   response = await app.request('/api/items', {
     method: 'PUT',
@@ -280,7 +302,7 @@ test('item routes reject malformed records and oversized batches', async () => {
     }]),
   });
   assert.equal(response.status, 400);
-  assert.match((await response.json() as any).error, /preferredSpeechStyle/);
+  assert.match((await response.json() as { error: string }).error, /preferredSpeechStyle/);
 
   response = await app.request('/api/items', {
     method: 'PUT',
@@ -328,7 +350,7 @@ test('saving a prepared example returns the server-enriched canonical sentence',
     body: JSON.stringify({ text: 'The witness finally {{came clean}}.' }),
   });
   assert.equal(response.status, 200);
-  const preview = await response.json() as any;
+  const preview = await response.json() as { found: boolean; analysis: unknown; analysisGeneratedAt: number; imageUrl: string };
   assert.equal(preview.found, true);
   assert.deepEqual(preview.analysis, analysis);
   assert.equal(preview.analysisGeneratedAt, 5);
@@ -355,7 +377,7 @@ test('saving a prepared example returns the server-enriched canonical sentence',
     body: JSON.stringify([sentence]),
   });
   assert.equal(response.status, 200);
-  const result = await response.json() as any;
+  const result = await response.json() as { canonical: ItemReply[] };
   assert.equal(result.canonical.length, 1);
   assert.equal(result.canonical[0].data.id, sentence.data.id);
   assert.deepEqual(result.canonical[0].data.analysis, analysis);
@@ -369,7 +391,7 @@ test('runtime middleware exposes readiness/request ids and rejects cross-site mu
   assert.equal(response.headers.get('x-request-id'), 'route-test-request');
   assert.match(response.headers.get('content-security-policy') || '', /frame-ancestors 'none'/);
   assert.deepEqual(
-    { status: (await response.json() as any).status },
+    { status: (await response.json() as { status: string }).status },
     { status: 'ok' },
   );
 

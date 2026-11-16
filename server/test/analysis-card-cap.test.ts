@@ -4,9 +4,18 @@ import { Hono } from 'hono';
 import type { FetchLike } from '../src/proxy-fetch.js';
 import { createAiRoutes } from '../src/routes/ai.js';
 
+/** A chat completion request to the model, as far as these tests read one. */
+interface ChatRequest {
+  messages: Array<{ content: string }>;
+}
+/** An /analyze reply, as far as these tests read it. */
+interface AnalyzeReply {
+  vocabs: Array<{ word: string; sense: string }>;
+}
+
 // The AI routes on a bare app, with DeepInfra answering these replies in turn (the last one repeats).
 function harness(...contents: unknown[]) {
-  const requests: any[] = [];
+  const requests: ChatRequest[] = [];
   const fetch: FetchLike = async (_url, init = {}) => {
     requests.push(JSON.parse(String(init.body)));
     const content = contents[Math.min(requests.length, contents.length) - 1];
@@ -20,7 +29,7 @@ function harness(...contents: unknown[]) {
       body: JSON.stringify({ text }),
     });
     assert.equal(response.status, 200);
-    return await response.json() as any;
+    return await response.json() as AnalyzeReply;
   };
   return { analyze, requests };
 }
@@ -50,7 +59,7 @@ const card = (word: string, index: number) => ({
 test('a word gets at most 8 cards, the first 8 the model gave, and the prompt asks for no more', async () => {
   const h = harness({ query: 'bank', vocabs: Array.from({ length: 11 }, (_, index) => card('bank', index + 1)) });
   const body = await h.analyze('bank');
-  assert.deepEqual(body.vocabs.map((vocab: any) => vocab.sense), Array.from({ length: 8 }, (_, index) => `noun: meaning number ${index + 1}`));
+  assert.deepEqual(body.vocabs.map(vocab => vocab.sense), Array.from({ length: 8 }, (_, index) => `noun: meaning number ${index + 1}`));
   assert.equal(h.requests.length, 1);
   assert.match(h.requests[0].messages[0].content, /Give at most 8 cards/);
 });
@@ -62,7 +71,7 @@ test('in a sentence the cap is per word, so other words keep their cards', async
     vocabs: [...Array.from({ length: 10 }, (_, index) => card('bank', index + 1)), card('river', 1), card('river', 2)],
   });
   const body = await h.analyze('We sat on the bank by the river all day.');
-  const words = body.vocabs.map((vocab: any) => vocab.word);
+  const words = body.vocabs.map(vocab => vocab.word);
   assert.equal(words.filter((word: string) => word === 'bank').length, 8);
   assert.equal(words.filter((word: string) => word === 'river').length, 2);
   assert.match(h.requests[0].messages[0].content, /at most 8 cards for any one word/);

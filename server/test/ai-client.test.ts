@@ -13,9 +13,16 @@ import {
 import type { FetchLike } from '../src/proxy-fetch.js';
 import { hang, httpStatus as status, keepingAlive, reply, type Responder } from './support/ai.js';
 
+/** A chat completion request body, as far as these tests read one. */
+interface CompletionBody {
+  messages: Array<{ role: string; content: string }>;
+  response_format?: { type: string };
+  max_tokens?: number;
+}
+
 // A fetch stub that answers from a script (the last responder repeats) and records each request body.
 function stubFetch(...responders: Responder[]) {
-  const bodies: any[] = [];
+  const bodies: CompletionBody[] = [];
   const fetch: FetchLike = async (_url, init = {}) => {
     bodies.push(typeof init.body === 'string' ? JSON.parse(init.body) : init.body);
     return responders[Math.min(bodies.length, responders.length) - 1](init);

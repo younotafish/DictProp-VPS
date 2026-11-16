@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import Database from 'better-sqlite3';
+import type { UsageAudit } from '../src/shared/usage-audit.js';
 import { srs } from './support/fixtures.js';
 import { png, sha256 } from './support/fs.js';
 import { runServerScript } from './support/scripts.js';
@@ -23,7 +24,8 @@ const owner = createUserAndClaimItems({ googleId: 'importer-owner', email: OWNER
 const dataUri = (seed: string) => `data:image/png;base64,${png(seed).toString('base64')}`;
 const save = (id: string, type: string, data: Record<string, unknown>, updatedAt = 1_000) =>
   upsertItem({ type, data: { id, ...data }, srs: srs(id, type), savedAt: 1, updatedAt }, owner.id);
-const stored = (id: string) => getItemById(id, owner.id, false) as any;
+/** The stored item `id`, as a client reads it; every item these tests read was saved by them. */
+const stored = (id: string) => getItemById(id, owner.id, false)!;
 const count = (table: string) => (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
 const walBytes = () => {
   const wal = join(DATA_DIR, 'dictprop.db-wal');
@@ -131,7 +133,7 @@ test('the offline image import publishes images with their parent and skips pare
   });
   save('oi-changed', 'vocab', { word: 'pellucid', definition: 'edited', imagePrompt: prompts['oi-changed'] }, 2_000);
   softDeleteItem('oi-deleted', owner.id);
-  const revisionBefore = stored('oi-phrase').serverRevision;
+  const revisionBefore = stored('oi-phrase').serverRevision!;
 
   const run = runServerScript('import-offline-images', [manifest]);
   assert.equal(run.status, 0, run.stderr);
@@ -148,8 +150,9 @@ test('the offline image import publishes images with their parent and skips pare
   });
   assert.deepEqual(stored('oi-vocab').data.localImageEnrichment, marker('oi-vocab'));
   assert.deepEqual(stored('oi-phrase').data.localImageEnrichment, marker('oi-phrase'));
-  assert.deepEqual(stored('oi-phrase').data.vocabs[0].localImageEnrichment, marker('oi-phrase-limpid'));
-  assert.ok(stored('oi-phrase').serverRevision > revisionBefore);
+  const [limpid] = stored('oi-phrase').data.vocabs as Array<Record<string, unknown>>;
+  assert.deepEqual(limpid.localImageEnrichment, marker('oi-phrase-limpid'));
+  assert.ok(stored('oi-phrase').serverRevision! > revisionBefore);
   for (const id of ['oi-vocab', 'oi-phrase', 'oi-phrase-limpid']) assert.equal(getItemImage(id, owner.id), dataUri(id));
 
   assert.equal(stored('oi-changed').data.definition, 'edited');
@@ -234,7 +237,7 @@ test('the corpus audit import writes a row stored before revisions existed like 
   assert.equal(run.output.updated, 1);
   assert.equal(run.output.stale, 0);
   assert.deepEqual(stored('ca-revision-zero').data.usageAudit, usageAudit);
-  assert.ok(stored('ca-revision-zero').serverRevision > 0);
+  assert.ok(stored('ca-revision-zero').serverRevision! > 0);
 });
 
 test('the corpus audit import applies explicit archive states and accepts unaudited sentences', () => {
@@ -248,7 +251,8 @@ test('the corpus audit import applies explicit archive states and accepts unaudi
     const data = { ...stored(id).data, ...changes };
     return {
       id, type, sourceHash: corpusSourceHash(stored(id).data), data, wasArchived: false,
-      archiveForUsage: data.usageAudit?.status === 'rare_or_dated', ...(setArchived === undefined ? {} : { setArchived }),
+      archiveForUsage: (data.usageAudit as UsageAudit | undefined)?.status === 'rare_or_dated',
+      ...(setArchived === undefined ? {} : { setArchived }),
     };
   };
 

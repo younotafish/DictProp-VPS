@@ -57,7 +57,7 @@ test('a review that fails after its seed is stored leaves no seed behind', async
   // This review reuses another user's event id, for an item the server hasn't stored yet.
   const response = await apply({ event: review('reused-review-id', 'unsynced'), itemIds: ['unsynced'], seedItem: vocabItem('unsynced') });
   assert.equal(response.status, 409);
-  assert.match((await response.json() as any).error, /belongs to another user/);
+  assert.match((await response.json() as { error: string }).error, /belongs to another user/);
   assert.equal((await app.request('/api/items/unsynced')).status, 404);
   assert.equal(getItemById('unsynced', DEV_AUTH_USER.id), null);
   assert.deepEqual(getReviewEvents(DEV_AUTH_USER.id, 0).filter(event => event.itemId === 'unsynced'), []);

@@ -81,9 +81,8 @@ test('example analysis waves publish validated content without waiting for image
   const root = mkdtempSync(join(tmpdir(), 'dictprop-analysis-wave-'));
   const output = join(root, 'wave');
   const first = sentence('The first [[example]] has an explanation.');
-  const second = sentence('The second [[example]] has an explanation.');
+  const second = { ...sentence('The second [[example]] has an explanation.'), hasAnalysis: true };
   const third = sentence('The third [[example]] has an explanation.');
-  (second as any).hasAnalysis = true;
   const entries = [first, second, third].map((value, index) => ({
     id: value.id,
     textHash: value.textHash,

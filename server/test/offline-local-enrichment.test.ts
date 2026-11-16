@@ -38,12 +38,12 @@ const completeCard = (id: string) => ({
   ],
   usageAudit: completeAudit,
 });
-const canonicalize = (value: any): any => Array.isArray(value)
+const canonicalize = (value: unknown): unknown => Array.isArray(value)
   ? value.map(canonicalize)
   : value && typeof value === 'object'
-    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalize(value[key])]))
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalize((value as Record<string, unknown>)[key])]))
     : value;
-const locallyEnriched = (card: any) => {
+const locallyEnriched = <T extends object>(card: T) => {
   const content = Object.fromEntries(Object.entries(card)
     .filter(([key]) => key !== 'imageUrl' && key !== 'advancedEnrichment' && key !== 'localImageEnrichment'));
   const contentHash = createHash('sha256').update(JSON.stringify(canonicalize(content))).digest('hex');
@@ -58,7 +58,7 @@ const locallyEnriched = (card: any) => {
     },
   };
 };
-const locallyImaged = (card: any) => ({
+const locallyImaged = <T extends { imagePrompt?: string }>(card: T) => ({
   ...card,
   localImageEnrichment: {
     version: 1,
@@ -151,12 +151,12 @@ test('incremental item image preparation emits only missing unarchived image rec
   const manifest = JSON.parse(readFileSync(join(outputRoot, 'manifest.json'), 'utf8'));
   const targets = JSON.parse(readFileSync(join(outputRoot, 'targets.json'), 'utf8'));
 
-  assert.deepEqual(targets.targets.map((target: any) => target.imageId), ['missing-word', 'sentence']);
+  assert.deepEqual(targets.targets.map((target: { imageId: string }) => target.imageId), ['missing-word', 'sentence']);
   assert.equal(manifest.entries[0].parentHash, corpusSourceHash(items[0].data));
   assert.equal(manifest.entries[1].parentHash, corpusSourceHash(items[3].data));
   assert.equal(
     manifest.entries[0].promptHash,
-    createHash('sha256').update(items[0].data.imagePrompt.trim()).digest('hex'),
+    createHash('sha256').update((items[0].data as { imagePrompt: string }).imagePrompt.trim()).digest('hex'),
   );
 });
 
@@ -192,7 +192,7 @@ test('a local advanced rewrite replaces an existing server-generated image', () 
   ]);
   const targets = JSON.parse(readFileSync(join(outputRoot, 'targets.json'), 'utf8'));
   const manifest = JSON.parse(readFileSync(join(outputRoot, 'manifest.json'), 'utf8'));
-  assert.deepEqual(targets.targets.map((target: any) => target.imageId), [basic.id]);
+  assert.deepEqual(targets.targets.map((target: { imageId: string }) => target.imageId), [basic.id]);
   assert.equal(manifest.entries[0].parentHash, corpusSourceHash(advanced));
   assert.equal(
     manifest.entries[0].promptHash,
@@ -241,7 +241,7 @@ test('incremental vocabulary preparation enriches every new card once and repair
   ]);
   const output = JSON.parse(readFileSync(outputPath, 'utf8'));
 
-  assert.deepEqual(output.entries.map((entry: any) => entry.id), [
+  assert.deepEqual(output.entries.map((entry: { id: string }) => entry.id), [
     'recent-example', 'recent-complete', 'legacy-critical',
   ]);
 
@@ -250,7 +250,7 @@ test('incremental vocabulary preparation enriches every new card once and repair
     script('prepare-incremental-vocab-source.mjs'), corpusPath, providerOutputPath, '10', '168', 'local-mlx',
   ]);
   assert.deepEqual(
-    JSON.parse(readFileSync(providerOutputPath, 'utf8')).entries.map((entry: any) => entry.id),
+    JSON.parse(readFileSync(providerOutputPath, 'utf8')).entries.map((entry: { id: string }) => entry.id),
     ['legacy-qwen'],
   );
 });

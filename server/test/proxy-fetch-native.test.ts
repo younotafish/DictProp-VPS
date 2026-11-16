@@ -90,7 +90,7 @@ test('an aborted signal rejects the request', async () => {
   }, async (baseUrl) => {
     await assert.rejects(
       proxyFetch(`${baseUrl}/hang`, { signal: AbortSignal.timeout(100) }),
-      (error: any) => error?.name === 'TimeoutError' || error?.name === 'AbortError',
+      (error: unknown) => error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError'),
     );
   });
 });

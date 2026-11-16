@@ -6,9 +6,15 @@ import { createAiRoutes, type AiRouteDependencies } from '../src/routes/ai.js';
 import { hang, httpStatus, keepingAlive, reply, type Responder } from './support/ai.js';
 import { bankCard as card } from './support/fixtures.js';
 
+/** A chat completion request to the model, as far as these tests read one. */
+interface ChatRequest {
+  messages: Array<{ content: string }>;
+  max_tokens?: number;
+}
+
 // The AI routes on a bare app, with DeepInfra replaced by a script of responses (the last one repeats).
 function harness(responders: Responder[], deps: Partial<AiRouteDependencies> = {}) {
-  const requests: Array<{ url: string; init: RequestInit; body: any }> = [];
+  const requests: Array<{ url: string; init: RequestInit; body: unknown }> = [];
   const fetch: FetchLike = async (url, init = {}) => {
     requests.push({ url, init, body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body });
     return responders[Math.min(requests.length, responders.length) - 1](init);
@@ -20,11 +26,14 @@ function harness(responders: Responder[], deps: Partial<AiRouteDependencies> = {
     body: JSON.stringify(body),
     ...init,
   }));
+  /** The JSON body of request `index`, a chat completion request. */
+  const chat = (index: number) => requests[index].body as ChatRequest;
   return {
     post,
     requests,
-    system: (index: number): string => requests[index].body.messages[0].content,
-    user: (index: number): string => requests[index].body.messages[1].content,
+    chat,
+    system: (index: number): string => chat(index).messages[0].content,
+    user: (index: number): string => chat(index).messages[1].content,
   };
 }
 
@@ -49,15 +58,15 @@ test('a failing card is re-asked alone with the validator reasons, and the fixed
   ]);
   const response = await h.post('/analyze', { text: 'bank' });
   assert.equal(response.status, 200);
-  const body = await response.json() as any;
-  assert.deepEqual(body.vocabs.map((vocab: any) => vocab.sense), ['noun: finance', 'noun: river']);
+  const body = await response.json() as { vocabs: Array<{ sense: string }> };
+  assert.deepEqual(body.vocabs.map(vocab => vocab.sense), ['noun: finance', 'noun: river']);
   assert.equal(h.requests.length, 2);
   assert.match(h.system(1), /Rewrite ONLY the cards you are given/);
   assert.match(h.user(1), /Headword: "bank"/);
   assert.match(h.user(1), /"mnemonic" must be a string of at least 10 characters/);
   // The card that passed is not re-generated.
   assert.doesNotMatch(h.user(1), /noun: finance/);
-  assert.equal(h.requests[1].body.max_tokens, 12_000);
+  assert.equal(h.chat(1).max_tokens, 12_000);
 });
 
 test('a card that never passes is dropped and its valid sibling is still returned', async () => {
@@ -67,8 +76,8 @@ test('a card that never passes is dropped and its valid sibling is still returne
   ]);
   const response = await h.post('/analyze', { text: 'bank' });
   assert.equal(response.status, 200);
-  const body = await response.json() as any;
-  assert.deepEqual(body.vocabs.map((vocab: any) => vocab.sense), ['noun: finance']);
+  const body = await response.json() as { vocabs: Array<{ sense: string }> };
+  assert.deepEqual(body.vocabs.map(vocab => vocab.sense), ['noun: finance']);
   assert.equal(h.requests.length, 3); // the answer plus two repair rounds
 });
 
@@ -76,12 +85,12 @@ test('cards are returned with schema fields only, and a short register label is 
   const h = harness([reply({ query: 'bank', vocabs: [card({ register: 'formal', advancedEnrichment: { v: 9 } })] })]);
   const response = await h.post('/analyze', { text: 'bank' });
   assert.equal(response.status, 200);
-  const body = await response.json() as any;
+  const body = await response.json() as { vocabs: Array<{ register: string }> };
   assert.equal(body.vocabs.length, 1);
   assert.equal(body.vocabs[0].register, '');
   assert.equal('advancedEnrichment' in body.vocabs[0], false);
   assert.equal(h.requests.length, 1);
-  assert.equal(h.requests[0].body.max_tokens, 16_000);
+  assert.equal(h.chat(0).max_tokens, 16_000);
 });
 
 test('gibberish ends at once as 422 with no retries', async () => {
@@ -104,7 +113,7 @@ test('a sentence needs a translation or a card; one with neither fails after one
   const translated = harness([reply({ query: 'The kids ran home', translation: '孩子们跑回家了。', grammar: 'Simple past.', vocabs: [] })]);
   const ok = await translated.post('/analyze', { text: 'The kids ran home' });
   assert.equal(ok.status, 200);
-  assert.equal((await ok.json() as any).translation, '孩子们跑回家了。');
+  assert.equal((await ok.json() as { translation: string }).translation, '孩子们跑回家了。');
   assert.match(translated.system(0), /SENTENCE or longer text/);
   assert.equal(translated.requests.length, 1);
 
@@ -133,7 +142,7 @@ test('a reply cut off twice is a 502, and the re-ask asks for a compact answer',
   const h = harness([reply('{"query":"bank","vocabs":[', 'length')]);
   const response = await h.post('/analyze', { text: 'bank' });
   assert.equal(response.status, 502);
-  assert.equal((await response.json() as any).error, 'The AI response was cut off before it finished. Please try again.');
+  assert.equal((await response.json() as { error: string }).error, 'The AI response was cut off before it finished. Please try again.');
   assert.equal(h.requests.length, 2);
   assert.match(h.user(1), /too long and was cut off/);
 });
@@ -142,13 +151,13 @@ test('provider failures map to 429 QUOTA_EXCEEDED, 429 RATE_LIMITED and 503', as
   const quota = harness([httpStatus(402, 'Payment Required')]);
   const quotaResponse = await quota.post('/analyze', { text: 'bank' });
   assert.equal(quotaResponse.status, 429);
-  assert.equal((await quotaResponse.json() as any).error, 'QUOTA_EXCEEDED');
+  assert.equal((await quotaResponse.json() as { error: string }).error, 'QUOTA_EXCEEDED');
   assert.equal(quota.requests.length, 1);
 
   const limited = harness([httpStatus(429, 'Too Many Requests')]);
   const limitedResponse = await limited.post('/analyze', { text: 'bank' });
   assert.equal(limitedResponse.status, 429);
-  assert.equal((await limitedResponse.json() as any).error, 'RATE_LIMITED');
+  assert.equal((await limitedResponse.json() as { error: string }).error, 'RATE_LIMITED');
   assert.equal(limited.requests.length, 2);
 
   const down = harness([httpStatus(500, 'Internal Server Error')]);
@@ -220,16 +229,16 @@ test('comparisons accept up to 8 distinct words with an accurate message beyond 
   const h = harness([reply(comparison({ words: WORDS.slice(0, 8) }))]);
   const tooMany = await h.post('/compare', { words: WORDS });
   assert.equal(tooMany.status, 400);
-  assert.equal((await tooMany.json() as any).error, 'You can compare up to 8 words at a time.');
+  assert.equal((await tooMany.json() as { error: string }).error, 'You can compare up to 8 words at a time.');
   const duplicates = await h.post('/compare', { words: ['Fleeting', ' fleeting '] });
   assert.equal(duplicates.status, 400);
-  assert.equal((await duplicates.json() as any).error, 'Please provide at least 2 different words to compare.');
+  assert.equal((await duplicates.json() as { error: string }).error, 'Please provide at least 2 different words to compare.');
   assert.equal(h.requests.length, 0);
 
   const eight = await h.post('/compare', { words: WORDS.slice(0, 8) });
   assert.equal(eight.status, 200);
   assert.equal(h.requests.length, 1);
-  assert.equal(h.requests[0].body.max_tokens, 8_000);
+  assert.equal(h.chat(0).max_tokens, 8_000);
   assert.ok(h.user(0).endsWith(JSON.stringify(WORDS.slice(0, 8))));
 });
 
@@ -286,9 +295,9 @@ test('extraction drops malformed entries, keeps each expression once and returns
   })]);
   const response = await h.post('/extract-vocabulary', { text: 'Some long text worth scanning.' });
   assert.equal(response.status, 200);
-  const body = await response.json() as any;
+  const body = await response.json() as { words: Array<{ word: string }>; sourceLang: string };
   assert.equal(body.words.length, 12);
-  assert.deepEqual(body.words.slice(0, 3).map((word: any) => word.word), ['Tenacity', 'break  the ice', 'word0']);
+  assert.deepEqual(body.words.slice(0, 3).map(word => word.word), ['Tenacity', 'break  the ice', 'word0']);
   assert.deepEqual(body.words[0], { word: 'Tenacity', context: 'in context', level: 'C1', reason: 'Worth it.' });
   assert.equal(body.sourceLang, 'en');
 });
@@ -340,6 +349,6 @@ test('transcription rejects bad input before the upload and maps provider quota'
   assert.equal(h.requests.length, 0);
   const quota = await h.post('/transcribe', { audio: 'AAAA', mimeType: 'audio/ogg;codecs=opus' });
   assert.equal(quota.status, 429);
-  assert.equal((await quota.json() as any).error, 'QUOTA_EXCEEDED');
+  assert.equal((await quota.json() as { error: string }).error, 'QUOTA_EXCEEDED');
   assert.equal(((h.requests[0].init.body as FormData).get('audio') as File).name, 'audio.ogg');
 });

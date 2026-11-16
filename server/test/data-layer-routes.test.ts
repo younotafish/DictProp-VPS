@@ -52,7 +52,7 @@ test('a push that leaves out a field the server keeps saves the edit and returns
   assert.ok(saved.revisions['route-carry'] > revision);
   assert.deepEqual(saved.kept, { 'route-carry': { usageAudit: audit } });
 
-  const item = await (await app.request('/api/items/route-carry')).json() as any;
+  const item = await (await app.request('/api/items/route-carry')).json() as { data: Record<string, unknown> };
   assert.equal(item.data.definition, 'easy to understand');
   assert.deepEqual(item.data.usageAudit, audit);
 
@@ -124,13 +124,13 @@ test('an image whose blob is gone is served as missing rather than as an empty i
 
 test('the image endpoint names its bytes with a strong ETag and answers a matching revalidation with 304', async () => {
   let response = await putItems([vocab('route-etag')]);
-  const revision = (await response.json() as any).revisions['route-etag'];
+  const revision = (await response.json() as PutReply).revisions['route-etag'];
   const bytes = png('route-etag');
   response = await putImage('route-etag', bytes);
   assert.equal(response.status, 200);
   // The upload reaches delta clients through the item's revision.
   response = await app.request(`/api/items?afterRevision=${revision}&limit=50`);
-  assert.ok((await response.json() as any).items.some((item: any) => item.data.id === 'route-etag'));
+  assert.ok((await response.json() as { items: Array<{ data: { id: string } }> }).items.some(item => item.data.id === 'route-etag'));
 
   const etag = `"${sha256(bytes)}"`;
   response = await app.request('/api/items/route-etag/image');
@@ -180,9 +180,10 @@ test('comparison saves are bounded, and neither an older nor a future-dated copy
   const future = { key: 'legend|myth', words: ['legend', 'myth'], data: { v: 'future' }, updatedAt: before + 365 * 86_400_000 };
   assert.equal((await put(future)).status, 200);
 
-  const saved = new Map((await (await app.request('/api/comparisons')).json() as any[]).map(entry => [entry.key, entry]));
-  assert.deepEqual(saved.get('fable|parable').data, { v: 'newer' });
-  assert.equal(saved.get('fable|parable').updatedAt, 2_000);
-  const clamped = saved.get('legend|myth').updatedAt;
+  const comparisons = await (await app.request('/api/comparisons')).json() as Array<{ key: string; data: unknown; updatedAt: number }>;
+  const saved = new Map(comparisons.map(entry => [entry.key, entry]));
+  assert.deepEqual(saved.get('fable|parable')!.data, { v: 'newer' });
+  assert.equal(saved.get('fable|parable')!.updatedAt, 2_000);
+  const clamped = saved.get('legend|myth')!.updatedAt;
   assert.ok(clamped >= before && clamped <= Date.now() + 5 * 60 * 1000, String(clamped));
 });

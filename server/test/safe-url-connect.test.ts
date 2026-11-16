@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import type { LookupFunction } from 'node:net';
 import test from 'node:test';
 
 // The proxy is chosen when the module loads; the connect-time check only applies to direct (VPS) requests.
@@ -60,18 +61,21 @@ test('the connection lookup refuses any private answer, an empty one, and passes
 
 test('a direct request resolves its host through the given lookup when the socket connects', async () => {
   await withServer(async (port, requests) => {
-    const toLoopback = (_hostname: string, options: { all?: boolean }, callback: Function) => {
+    const toLoopback: LookupFunction = (_hostname, options, callback) => {
       if (options.all) callback(null, [{ address: '127.0.0.1', family: 4 }]);
       else callback(null, '127.0.0.1', 4);
     };
-    const response = await proxyFetch(`http://dictprop-test.invalid:${port}/`, {}, { lookup: toLoopback as any });
+    const response = await proxyFetch(`http://dictprop-test.invalid:${port}/`, {}, { lookup: toLoopback });
     assert.equal(await response.text(), 'reached');
     assert.equal(requests(), 1);
 
     // A host that rebinds to a private address after any earlier check is refused before a byte is sent.
     await assert.rejects(
       proxyFetch(`http://rebinding.invalid:${port}/`, {}, { lookup: answering('127.0.0.1') }),
-      (error: any) => (error?.cause?.code ?? error?.code) === 'ERR_PRIVATE_ADDRESS',
+      (error: unknown) => {
+        const failure = error as { code?: string; cause?: { code?: string } } | undefined;
+        return (failure?.cause?.code ?? failure?.code) === 'ERR_PRIVATE_ADDRESS';
+      },
     );
     assert.equal(requests(), 1);
   });
@@ -115,7 +119,7 @@ test('redirects are followed by hand, and every hop is checked again', async () 
     assert.equal(calls.length, 1, target);
   }
 
-  ({ calls, transport } = transportFor({ 'http://8.8.8.8/start': redirect() }));
+  ({ transport } = transportFor({ 'http://8.8.8.8/start': redirect() }));
   await assert.rejects(fetchPublicHttpUrl('http://8.8.8.8/start', {}, { transport }), /no location/);
 
   ({ calls, transport } = transportFor({ 'http://8.8.8.8/start': redirect('http://8.8.8.8/start') }));

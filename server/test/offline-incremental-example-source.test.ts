@@ -13,7 +13,9 @@ const mergeAnalysisScript = fileURLToPath(
   new URL('../../scripts/offline/merge-sentence-analysis-manifests.mjs', import.meta.url),
 );
 const sentence = (id: string, textHash = `${id}-hash`) => ({ id, textHash, text: id, lookupHash: `${id}-lookup` });
-const source = (sentences: any[]) => ({ version: 1, exportedAt: 1, sentences, stats: {} });
+/** A sentence source, whose records carry their production coverage when it's known. */
+const source = (sentences: Array<ReturnType<typeof sentence> & { hasAnalysis?: boolean; hasImage?: boolean }>) =>
+  ({ version: 1, exportedAt: 1, sentences, stats: {} });
 
 test('incremental example source refuses a current source without production coverage', () => {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-incremental-examples-'));
@@ -63,7 +65,7 @@ test('incremental example source restores baseline records missing from producti
     execFileSync(process.execPath, [script, currentPath, baselinePath, outputPath, previousPath]);
 
     const output = JSON.parse(readFileSync(outputPath, 'utf8'));
-    assert.deepEqual(output.sentences.map((entry: any) => entry.id), [
+    assert.deepEqual(output.sentences.map((entry: { id: string }) => entry.id), [
       'baseline-gap', 'current-gap', 'previous',
     ]);
     assert.equal(output.sentences[2].textHash, 'previous-hash');
@@ -104,20 +106,19 @@ test('example pool carries encrypted production enrichment coverage into local r
 
     execFileSync(process.execPath, [buildPoolScript, corpusPath, outputPath]);
 
-    const output = JSON.parse(readFileSync(outputPath, 'utf8'));
-    const byText = new Map<string, any>(output.sentences.map((entry: any) => [entry.text, entry]));
-    assert.deepEqual(
-      { hasAnalysis: byText.get(covered).hasAnalysis, hasImage: byText.get(covered).hasImage },
-      { hasAnalysis: true, hasImage: false },
-    );
-    assert.deepEqual(
-      { hasAnalysis: byText.get(incomplete).hasAnalysis, hasImage: byText.get(incomplete).hasImage },
-      { hasAnalysis: false, hasImage: true },
-    );
-    assert.deepEqual(
-      { hasAnalysis: byText.get(missing).hasAnalysis, hasImage: byText.get(missing).hasImage },
-      { hasAnalysis: false, hasImage: false },
-    );
+    const output = JSON.parse(readFileSync(outputPath, 'utf8')) as {
+      sentences: Array<{ text: string; hasAnalysis: boolean; hasImage: boolean }>;
+      stats: { exampleEnrichmentCoverageAvailable: boolean };
+    };
+    const byText = new Map(output.sentences.map(entry => [entry.text, entry]));
+    /** The coverage the pool carries for `text`, which it must hold. */
+    const coverage = (text: string) => {
+      const { hasAnalysis, hasImage } = byText.get(text)!;
+      return { hasAnalysis, hasImage };
+    };
+    assert.deepEqual(coverage(covered), { hasAnalysis: true, hasImage: false });
+    assert.deepEqual(coverage(incomplete), { hasAnalysis: false, hasImage: true });
+    assert.deepEqual(coverage(missing), { hasAnalysis: false, hasImage: false });
     assert.equal(output.stats.exampleEnrichmentCoverageAvailable, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -197,7 +198,7 @@ test('example pool uses a same-cycle local vocabulary overlay', () => {
     execFileSync(process.execPath, [buildPoolScript, corpusPath, outputPath, overlayPath]);
 
     const output = JSON.parse(readFileSync(outputPath, 'utf8'));
-    assert.deepEqual(output.sentences.map((entry: any) => entry.text), [
+    assert.deepEqual(output.sentences.map((entry: { text: string }) => entry.text), [
       'The lab tested a {{sample}} from every shipment.',
       'I brought home a {{sample}} before choosing the paint color.',
     ].sort((left, right) => sentenceLookupHash(left).localeCompare(sentenceLookupHash(right))));
@@ -229,7 +230,7 @@ test('analysis manifest merge prefers the newest reusable entry', () => {
     execFileSync(process.execPath, [mergeAnalysisScript, outputPath, basePath, recentPath]);
 
     const output = JSON.parse(readFileSync(outputPath, 'utf8'));
-    assert.deepEqual(output.entries.map((entry: any) => [entry.id, entry.textHash]), [
+    assert.deepEqual(output.entries.map((entry: { id: string; textHash: string }) => [entry.id, entry.textHash]), [
       ['base', 'base'],
       ['shared', 'new'],
     ]);

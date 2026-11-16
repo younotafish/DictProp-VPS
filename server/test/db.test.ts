@@ -106,7 +106,7 @@ test('legacy project tags cannot split the unified library again', () => {
   upsertItem(item, 'project-user');
   const stored = getItemById('legacy-project-item', 'project-user');
   assert.ok(stored);
-  assert.equal((stored as any).project, undefined);
+  assert.equal((stored as { project?: unknown }).project, undefined);
   const row = db.prepare('SELECT project FROM items WHERE id = ?').get('legacy-project-item') as { project: string | null };
   assert.equal(row.project, null);
 });

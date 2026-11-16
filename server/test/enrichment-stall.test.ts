@@ -15,7 +15,7 @@ import { completeAnalysis, completeVocab } from './support/fixtures.js';
 const HOUR = 60 * 60 * 1_000;
 const now = Date.UTC(2026, 8, 28, 12);
 
-const withAdvancedEnrichment = (data: any, generatedAt = 1) => ({
+const withAdvancedEnrichment = (data: Record<string, unknown>, generatedAt = 1) => ({
   ...data,
   advancedEnrichment: {
     version: 1,
