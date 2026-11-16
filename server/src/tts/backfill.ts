@@ -6,12 +6,12 @@ import { env } from '../env.js';
 import { getAllSentenceTexts } from '../db.js';
 import { getAllRealLifeCatalogSentenceTexts } from '../real-life-catalog.js';
 import { getAllEssayCatalogSentenceTexts } from '../essay-catalog.js';
+import { runPool } from '../shared/pool.js';
 import { stripSentenceMarkers } from '../shared/sentence-markers.js';
 import { audioPath, CASUAL_STYLE, fileExists, isComplete, MIMO_VOICE, ttsKey, writeFileAtomic } from './cache.js';
 import { reduceCasualBatch, RESPELLING_BATCH_SIZE, respellingUnavailable } from './casual.js';
 import type { ClipStore } from './clips.js';
 import { acquireLock, type LockOwner } from './lock.js';
-import { runPool } from './pool.js';
 
 // The lock holder's progress, rewritten at every heartbeat: the web server reports a detached worker's run from it,
 // and the scheduled workflow prints it.

@@ -5,6 +5,7 @@ import { readFile } from 'fs/promises';
 import type { AlignmentPriority } from '../local-whisper.js';
 import { readJsonObject } from '../middleware/json-body.js';
 import { GENERATE_MAX_ITEMS } from '../shared/ai-limits.js';
+import { runPool } from '../shared/pool.js';
 import { createBackfill, getDetachedBackfillStatus, type BackfillTexts } from '../tts/backfill.js';
 import {
   audioPath,
@@ -18,7 +19,6 @@ import {
   ttsKey,
 } from '../tts/cache.js';
 import { createClipStore, defaultClipDependencies, type ClipDependencies } from '../tts/clips.js';
-import { runPool } from '../tts/pool.js';
 
 // Covers every study sentence: essay-catalog sentences run to ~600 characters and examples to 1000.
 export const GENERATE_MAX_TEXT_CHARS = 1000;

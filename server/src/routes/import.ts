@@ -5,6 +5,7 @@ import { detectImageMimeType } from '../image-format.js';
 import type { AppEnv } from '../middleware/auth.js';
 import { readJsonArray } from '../middleware/json-body.js';
 import { fetchPublicHttpUrl } from '../safe-url.js';
+import { runPool } from '../shared/pool.js';
 import { checkStoredItem, isItemId } from '../validation.js';
 import { isRecord } from '../validation-helpers.js';
 import { MAX_IMAGE_BYTES } from './item-images.js';
@@ -131,20 +132,15 @@ export function createImportRoutes({ fetchImage = fetchImageAsBase64 }: ImportRo
     for (const holder of holders.slice(MAX_IMPORT_IMAGES)) delete holder.imageUrl;
     const fetching = holders.slice(0, MAX_IMPORT_IMAGES);
     let imagesFetched = 0;
-    let next = 0;
-    const worker = async () => {
-      while (next < fetching.length) {
-        const holder = fetching[next++];
-        const base64 = await fetchImage(holder.imageUrl as string);
-        if (base64) {
-          holder.imageUrl = base64;
-          imagesFetched++;
-        } else {
-          delete holder.imageUrl;
-        }
+    await runPool(fetching, IMAGE_FETCH_CONCURRENCY, async (holder) => {
+      const base64 = await fetchImage(holder.imageUrl as string);
+      if (base64) {
+        holder.imageUrl = base64;
+        imagesFetched++;
+      } else {
+        delete holder.imageUrl;
       }
-    };
-    await Promise.all(Array.from({ length: IMAGE_FETCH_CONCURRENCY }, worker));
+    });
 
     upsertMany(items, userId);
     return c.json({
