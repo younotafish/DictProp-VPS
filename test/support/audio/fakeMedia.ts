@@ -85,6 +85,13 @@ export class FakeAudioElement {
   /** A media error ('error'). */
   fail(): void { this.onerror?.(); }
 
+  /** The browser or the OS pauses the element (a call, AirPods taken out): 'pause', as no call of pause() made it. */
+  externalPause(): void {
+    this.paused = true;
+    this.rejectPendingPlays();
+    this.onpause?.();
+  }
+
   private rejectPendingPlays(): void {
     const rejected = this.pendingPlays;
     this.pendingPlays = [];
@@ -184,6 +191,27 @@ export const installFakeMedia = (options: { speech?: boolean; userAgent?: string
       return element;
     },
   };
+};
+
+/** navigator.mediaSession as the engine drives it: the state the lock screen shows and the actions it offers. */
+export class FakeMediaSession {
+  playbackState: MediaSessionPlaybackState = 'none';
+  metadata: unknown = null;
+  readonly handlers = new Map<string, () => void>();
+  setActionHandler(action: string, handler: (() => void) | null): void {
+    if (handler) this.handlers.set(action, handler);
+    else this.handlers.delete(action);
+  }
+  /** The lock screen or a headset presses `action`. */
+  press(action: string): void { this.handlers.get(action)?.(); }
+}
+
+/** Install a fake navigator.mediaSession (and MediaMetadata) and return it. */
+export const installFakeMediaSession = (): FakeMediaSession => {
+  const session = new FakeMediaSession();
+  Object.defineProperty(globalThis.navigator, 'mediaSession', { configurable: true, value: session });
+  Object.assign(globalThis, { MediaMetadata: class { constructor(readonly init: unknown) {} } });
+  return session;
 };
 
 export const IPHONE_USER_AGENT = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';

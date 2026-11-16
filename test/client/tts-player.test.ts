@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { FakeAudioElement, FakeTtsServer, IPHONE_USER_AGENT, installFakeMedia, until } from '../support/audio/fakeMedia.ts';
+import { FakeAudioElement, FakeTtsServer, IPHONE_USER_AGENT, installFakeMedia, installFakeMediaSession, until } from '../support/audio/fakeMedia.ts';
 
 // An iPhone, so a cache miss goes straight to the system voice. No IndexedDB: clips come from the server.
 const media = installFakeMedia({ userAgent: IPHONE_USER_AGENT });
+const lockScreen = installFakeMediaSession();
 const server = new FakeTtsServer();
 server.install();
 
@@ -25,12 +26,19 @@ const sentence = (cached: boolean, timings?: Array<{ text: string; start: number
 };
 const reads = () => {
   const heard: string[] = [];
-  return { heard, onEnd: () => heard.push('end'), onError: () => heard.push('error') };
+  return {
+    heard,
+    onEnd: () => heard.push('end'),
+    onError: () => heard.push('error'),
+    onInterrupted: (reason: string) => heard.push(`interrupted: ${reason}`),
+  };
 };
+/** Let every queued microtask run, the engine's interruption reports among them. */
+const microtasks = () => new Promise<void>(resolve => setImmediate(resolve));
 /** Start a cached sentence and wait until its clip is playing. */
 const playing = async (callbacks = reads()) => {
   const text = await sentence(true);
-  const handle = engine.speakNatural(text, { allowDownload: true, onEnd: callbacks.onEnd, onError: callbacks.onError });
+  const handle = engine.speakNatural(text, { allowDownload: true, ...callbacks });
   const el = media.element();
   await until(() => el.src.startsWith('blob:') && !el.paused, 'the clip is playing');
   el.loadMetadata(4);
@@ -293,4 +301,98 @@ test('without a speech engine a miss fails the read instead of loading for good'
   } finally {
     speechSynthesis.speechSynthesis = synth;
   }
+});
+
+test('another sentence, a word, a stop or a style change ends a live read, which hears why once, after the call that ended it', async () => {
+  const cases: Array<[string, () => void]> = [
+    ['superseded', () => { engine.speakNatural('Another sentence altogether.', { allowDownload: true }); }],
+    ['superseded', () => { engine.speakWord('serendipity'); }],
+    ['stopped', () => engine.stopCurrent()],
+    ['style-changed', () => setTtsStyle('casual')],
+  ];
+  try {
+    for (const [reason, interrupt] of cases) {
+      const { callbacks } = await playing();
+      interrupt();
+      assert.deepEqual(callbacks.heard, [], 'not during the call that interrupts');
+      await microtasks();
+      assert.deepEqual(callbacks.heard, [`interrupted: ${reason}`]);
+      engine.stopCurrent();
+      await microtasks();
+      assert.deepEqual(callbacks.heard, [`interrupted: ${reason}`], 'once');
+    }
+  } finally {
+    setTtsStyle('clear');
+  }
+});
+
+test('a read still loading hears an interruption too', async () => {
+  const callbacks = reads();
+  engine.speakNatural(await sentence(true), { allowDownload: true, ...callbacks });
+  engine.stopCurrent();
+  await microtasks();
+  assert.deepEqual(callbacks.heard, ['interrupted: stopped']);
+});
+
+test('the owner\'s own stop, the end of a read and its failure are never interruptions', async () => {
+  const stopped = await playing();
+  stopped.handle.stop();
+  // A view's unmount stops its own read, then calls stopCurrent() for whatever else may play.
+  engine.stopCurrent();
+  const ended = await playing();
+  ended.el.finish();
+  engine.speakWord('afterwards');
+  const failed = await playing();
+  failed.el.fail();
+  engine.stopCurrent();
+  await microtasks();
+  assert.deepEqual(stopped.callbacks.heard, []);
+  assert.deepEqual(ended.callbacks.heard, ['end']);
+  assert.deepEqual(failed.callbacks.heard, ['error']);
+});
+
+test('a hold between reads hears the next speech or stop, and nothing once released', async () => {
+  const ended = await playing();
+  ended.el.finish();
+  const heard: string[] = [];
+  const hold = () => engine.reservePlayback(reason => heard.push(reason));
+  hold();
+  engine.pauseCurrent();
+  engine.resumeCurrent();
+  await microtasks();
+  assert.deepEqual(heard, [], 'pause and resume end nothing');
+  engine.speakWord('hello');
+  await microtasks();
+  assert.deepEqual(heard, ['superseded']);
+
+  hold();
+  engine.stopCurrent();
+  await microtasks();
+  assert.deepEqual(heard, ['superseded', 'stopped']);
+
+  const release = hold();
+  release();
+  engine.speakNatural(await sentence(true), { allowDownload: true });
+  await microtasks();
+  assert.deepEqual(heard, ['superseded', 'stopped'], 'a released hold hears nothing');
+
+  // Taken while another read still plays, a hold hears at once that something else speaks.
+  await playing();
+  hold();
+  await microtasks();
+  assert.deepEqual(heard, ['superseded', 'stopped', 'superseded']);
+});
+
+test('the lock screen follows the engine unless an override says playing or paused', async () => {
+  const { el } = await playing();
+  assert.equal(lockScreen.playbackState, 'playing');
+  engine.setPlaybackStateOverride('paused');
+  assert.equal(lockScreen.playbackState, 'paused', 'the override wins over a playing clip');
+  el.finish();
+  assert.equal(engine.getPlaybackState().status, 'idle');
+  assert.equal(lockScreen.playbackState, 'paused');
+  engine.setPlaybackStateOverride('playing');
+  assert.equal(lockScreen.playbackState, 'playing', 'auto-play reads as playing in a gap between reads');
+  engine.setPlaybackStateOverride(null);
+  assert.equal(lockScreen.playbackState, 'none', 'back to the engine\'s idle');
 });

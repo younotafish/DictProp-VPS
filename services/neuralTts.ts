@@ -34,10 +34,12 @@ import {
   playUrl,
   resumeCurrent,
   setPlaybackState,
+  startRequest,
   stopCurrent,
   stopPlayback,
   supersedePlayback,
   unlockAudio,
+  type InterruptReason,
 } from './audio/player';
 import { STYLE_VOICES } from './audio/voices';
 export {
@@ -48,10 +50,12 @@ export {
   resumeCurrent,
   stopCurrent,
   seekCurrent,
+  reservePlayback,
+  type InterruptReason,
   type PlaybackStatus,
   type PlaybackState,
 } from './audio/player';
-export { setMediaMetadata, type MediaSessionHandlers } from './audio/mediaSession';
+export { setMediaMetadata, setPlaybackStateOverride, type MediaSessionHandlers } from './audio/mediaSession';
 export { primeKeepAlive, acquireKeepAlive, releaseKeepAlive, afterGap } from './audio/keepAlive';
 export { getTimingsFor, ensureTimings } from './audio/clipStore';
 export { prefetchTTS, ensureTTS, preloadAudio } from './audio/clipWarmers';
@@ -76,6 +80,12 @@ export interface SpeakOptions {
   onEnd?: () => void;
   /** The read failed for good (nothing played it to the end). */
   onError?: (event: unknown) => void;
+  /**
+   * Something else ended the read before it ended by itself: another sentence or word ('superseded'), a stop from
+   * elsewhere ('stopped') or a change of speech style ('style-changed'). Called once, in a microtask; never after the
+   * handle's own stop(), the end of the read or its failure.
+   */
+  onInterrupted?: (reason: InterruptReason) => void;
 }
 
 const INACTIVE_HANDLE: SpeakHandle = { stop: () => {}, isActive: () => false };
@@ -84,7 +94,7 @@ let activeStyle = getTtsStyle();
 subscribeTtsStyle(style => {
   if (style !== activeStyle) {
     activeStyle = style;
-    stopCurrent();
+    stopCurrent('style-changed');
   }
 });
 
@@ -100,8 +110,8 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
   const plain = stripSentenceMarkers(text).trim();
   if (!plain) return INACTIVE_HANDLE;
 
-  const { startAt, onEnd, onError, allowDownload = true } = opts;
-  const isCurrent = supersedePlayback();
+  const { startAt, onEnd, onError, onInterrupted, allowDownload = true } = opts;
+  const { isCurrent, release } = startRequest(onInterrupted);
 
   // Drive the shared playback state so every speaker UI reflects THIS playback (keyed by text),
   // whatever triggered it. Gated by isCurrent() so a superseded call can't clobber a newer one's state,
@@ -180,7 +190,8 @@ export const speakNatural = (text: string, opts: SpeakOptions = {}): SpeakHandle
   })();
 
   return {
-    stop: () => { if (isCurrent()) stopCurrent(); },
+    // The owner's own stop: let go of onInterrupted first, so stopping its own read never reports an interruption.
+    stop: () => { release(); if (isCurrent()) stopCurrent(); },
     isActive: () => isCurrent(),
   };
 };

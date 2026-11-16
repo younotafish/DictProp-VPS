@@ -31,6 +31,18 @@ export interface PlaybackState {
 /** The output sounding the active request: a clip in the shared <audio> element, or the system voice. */
 export type PlaybackBackend = 'clip' | 'speech';
 
+/**
+ * What ended a live request its owner didn't stop itself: another request ('superseded': a sentence or a word), a stop
+ * from elsewhere ('stopped'), or a change of speech style ('style-changed').
+ */
+export type InterruptReason = 'superseded' | 'stopped' | 'style-changed';
+
+/** A live request, or a hold on the engine between reads (reservePlayback), and who to tell when something ends it. */
+interface RequestRecord {
+  token: number;
+  onInterrupted?: (reason: InterruptReason) => void;
+}
+
 interface PlayerRecord {
   /** Bumped by every request and every stop, so callbacks from a superseded request do nothing. */
   token: number;
@@ -41,9 +53,11 @@ interface PlayerRecord {
    *  earlier clip, or one the browser refused to play. A pause pauses the element whatever the output, which does
    *  no harm: the element is already paused then. */
   backend: PlaybackBackend | null;
+  /** The live request (its token is the current one) until it ends, fails or is superseded; null otherwise. */
+  request: RequestRecord | null;
 }
 
-const player: PlayerRecord = { token: 0, state: { text: null, status: 'idle' }, backend: null };
+const player: PlayerRecord = { token: 0, state: { text: null, status: 'idle' }, backend: null, request: null };
 const playbackListeners = new Set<(s: PlaybackState) => void>();
 
 // ---------------------------------------------------------------------------
@@ -114,11 +128,52 @@ const resumePlayback = (onRefused: () => void): void => {
   }
 };
 
-/** Make a new request the current one, superseding whatever was active. Returns that request's check. */
-export const supersedePlayback = (): (() => boolean) => {
+/** Tell a request's owner once, after the code that ended it has finished, unless the owner let go first. */
+const reportInterruption = (record: RequestRecord, reason: InterruptReason): void => {
+  queueMicrotask(() => {
+    const onInterrupted = record.onInterrupted;
+    record.onInterrupted = undefined;
+    onInterrupted?.(reason);
+  });
+};
+
+/**
+ * Make a new request the current one, superseding whatever was active. Returns that request's check. A request still
+ * live hears `reason` in a microtask, so its owner can tell another caller's speech or stop from its own.
+ */
+export const supersedePlayback = (reason: InterruptReason = 'superseded'): (() => boolean) => {
+  const live = player.request?.token === player.token ? player.request : null;
   const token = ++player.token;
   player.backend = null;
+  player.request = null;
+  if (live) reportInterruption(live, reason);
   return () => token === player.token;
+};
+
+/**
+ * Start a request that tells `onInterrupted` if another request or a stop ends it before it ends by itself. release()
+ * lets go first, as the owner does before stopping the request itself, so the owner's own stop is never reported.
+ */
+export const startRequest = (onInterrupted?: (reason: InterruptReason) => void): { isCurrent: () => boolean; release: () => void } => {
+  const isCurrent = supersedePlayback();
+  const record: RequestRecord = { token: player.token, onInterrupted };
+  player.request = record;
+  return { isCurrent, release: () => { record.onInterrupted = undefined; } };
+};
+
+/**
+ * Hold the engine between reads: until the returned release(), the next request or stop by anyone (a sentence, a word,
+ * a stop, a change of style) is reported to `onInterrupted`, as it would be to a read's owner. Taken while another
+ * request is still live, it reports that at once ('superseded'), since something else already speaks.
+ */
+export const reservePlayback = (onInterrupted: (reason: InterruptReason) => void): (() => void) => {
+  const record: RequestRecord = { token: player.token, onInterrupted };
+  if (player.request?.token === player.token) reportInterruption(record, 'superseded');
+  else player.request = record;
+  return () => {
+    record.onInterrupted = undefined;
+    if (player.request === record) player.request = null;
+  };
 };
 
 export const setPlaybackState = (patch: Partial<PlaybackState>): void => {
@@ -129,9 +184,10 @@ export const setPlaybackState = (patch: Partial<PlaybackState>): void => {
   playbackListeners.forEach((cb) => { try { cb(player.state); } catch { /* ignore */ } });
 };
 
-/** The current request finished, or failed for good: nothing is active any more. */
+/** The current request finished, or failed for good: nothing is active any more, and nothing can interrupt it. */
 export const endPlayback = (): void => {
   player.backend = null;
+  player.request = null;
   setPlaybackState({ text: null, status: 'idle' });
 };
 
@@ -170,9 +226,12 @@ export const resumeCurrent = (): void => {
   setPlaybackState({ status: 'playing' });
 };
 
-/** Stop playback entirely and clear the active text (supersedes the in-flight handle). */
-export const stopCurrent = (): void => {
-  supersedePlayback();
+/**
+ * Stop playback entirely and clear the active text (supersedes the in-flight handle). A live request's owner hears
+ * `reason`: 'stopped', or 'style-changed' when a new speech style stops it.
+ */
+export const stopCurrent = (reason: 'stopped' | 'style-changed' = 'stopped'): void => {
+  supersedePlayback(reason);
   stopPlayback();
   setPlaybackState({ text: null, status: 'idle' });
 };

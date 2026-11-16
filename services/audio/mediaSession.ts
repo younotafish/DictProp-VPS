@@ -9,16 +9,32 @@ import type { PlaybackStatus } from './player';
 
 const hasMediaSession = (): boolean => typeof navigator !== 'undefined' && 'mediaSession' in navigator;
 
+// What the lock screen shows: the engine's status, unless a caller that knows better has set an override.
+let engineStatus: PlaybackStatus = 'idle';
+let statusOverride: 'playing' | 'paused' | null = null;
+
+const showPlaybackState = (): void => {
+  if (!hasMediaSession()) return;
+  try {
+    navigator.mediaSession.playbackState = statusOverride
+      ?? (engineStatus === 'playing' || engineStatus === 'loading' ? 'playing' : engineStatus === 'paused' ? 'paused' : 'none');
+  } catch { /* ignore */ }
+};
+
 /** Mirror the playback status to the OS media session so the lock screen reflects play ⇄ pause in the background. */
 export const mirrorPlaybackStatus = (status: PlaybackStatus): void => {
-  if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
-    try {
-      navigator.mediaSession.playbackState =
-        status === 'playing' || status === 'loading' ? 'playing'
-        : status === 'paused' ? 'paused'
-        : 'none';
-    } catch { /* ignore */ }
-  }
+  engineStatus = status;
+  showPlaybackState();
+};
+
+/**
+ * Show `status` on the lock screen whatever the engine reports, or with null go back to following it. Auto-play sets
+ * 'playing' while it runs, gaps between reads included, and 'paused' while it's paused, so the headset's one
+ * play/pause button pauses it in a gap rather than asking to play.
+ */
+export const setPlaybackStateOverride = (status: 'playing' | 'paused' | null): void => {
+  statusOverride = status;
+  showPlaybackState();
 };
 
 /** Set the lock-screen "now playing" card. Safe no-op where Media Session is unsupported. */
