@@ -1,8 +1,8 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import type { ReviewRating, StoredItem } from '../types';
 import { REAL_LIFE_COLLECTIONS } from '../services/realLifeCatalog';
 import { indexRealLifeProgress } from '../services/realLifeProgress';
-import { useListClock } from '../hooks/useNow';
+import { useNow } from '../hooks/useNow';
 import { RealLifeIndex } from './reading/RealLifeIndex';
 import { RealLifeCollectionScreen } from './reading/RealLifeCollectionScreen';
 
@@ -29,14 +29,10 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
 
   const selectedCollection = REAL_LIFE_COLLECTIONS.find(collection => collection.id === selectedCollectionId) ?? null;
-  // What's due counts from this time, taken again when a collection opens or closes and when a sentence opens over
-  // the list, not when progress arrives from a sync.
-  const { now, noteOpened } = useListClock(selectedCollectionId);
+  // The landing page counts what's due from this time, taken again when a collection opens or closes, not when
+  // progress arrives from a sync. An open collection keeps a clock of its own (useRealLifeList).
+  const now = useNow(selectedCollectionId);
   const progressIndex = useMemo(() => indexRealLifeProgress(progressItems), [progressItems]);
-  const openSentence = useCallback((ordered: StoredItem[], index: number) => {
-    onOpenSentence(ordered, index);
-    noteOpened();
-  }, [onOpenSentence, noteOpened]);
   // Back from a collection finds the landing page scrolled where it was left.
   const landingScroll = useRef(0);
 
@@ -57,9 +53,8 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
       key={selectedCollection.id}
       collection={selectedCollection}
       progressIndex={progressIndex}
-      now={now}
       onClose={() => setSelectedCollectionId(null)}
-      onOpenSentence={openSentence}
+      onOpenSentence={onOpenSentence}
       onUpdateSRS={onUpdateSRS}
       isSentenceSaved={isSentenceSaved}
       onScroll={onScroll}

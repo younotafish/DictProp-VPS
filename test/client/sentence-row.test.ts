@@ -98,7 +98,7 @@ test('the review chips say which one is selected, and the search boxes have name
 
   const collection = REAL_LIFE_COLLECTIONS[0];
   const realLife = renderToStaticMarkup(createElement(RealLifeCollectionScreen, {
-    collection, progressIndex: indexRealLifeProgress([]), now: NOW, onClose: noop, onOpenSentence: noop,
+    collection, progressIndex: indexRealLifeProgress([]), onClose: noop, onOpenSentence: noop,
     onUpdateSRS: async () => true, isSentenceSaved: () => false, onScroll: noop,
   }));
   assert.ok(realLife.includes(`aria-label="Search ${collection.title}"`));

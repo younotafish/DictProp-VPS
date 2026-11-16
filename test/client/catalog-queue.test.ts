@@ -114,15 +114,17 @@ test('a tile\'s line says how many lines are due and how many are new, and only 
 const noop = () => {};
 const studyButton = (markup: string) => markup.match(/<button type="button"( disabled="")? class="([^"]*)" title="Study [^"]*">.*?<\/button>/);
 
+// A collection counts what's due from the time it opens, so the tests that open one set the clock to NOW.
 const renderCollection = (collection: RealLifeCollection, progressIndex: CatalogProgressIndex) => renderToStaticMarkup(createElement(
   RealLifeCollectionScreen,
   {
-    collection, progressIndex, now: NOW, onClose: noop, onOpenSentence: noop, onUpdateSRS: async () => true,
+    collection, progressIndex, onClose: noop, onOpenSentence: noop, onUpdateSRS: async () => true,
     isSentenceSaved: () => false, onScroll: noop,
   },
 ));
 
-test('the collection\'s Study button counts the run and keeps a fixed width; with nothing in view it is disabled', () => {
+test('the collection\'s Study button counts the run and keeps a fixed width; with nothing in view it is disabled', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
   const career = REAL_LIFE_COLLECTIONS[0];
   const progress = indexCatalogProgress([
     withSchedule(createRealLifeProgressItem(career.sentences[3], 1), DUE),
@@ -215,7 +217,8 @@ test('each essay tile has the same line under its length', () => {
   ]);
 });
 
-test('the collection\'s stats strip and the essay\'s progress card count due reviews, with the new lines as the caption', () => {
+test('the collection\'s stats strip and the essay\'s progress card count due reviews, with the new lines as the caption', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
   const career = REAL_LIFE_COLLECTIONS[0];
   const careerProgress = indexCatalogProgress([
     withSchedule(createRealLifeProgressItem(career.sentences[0], 1), DUE),
@@ -235,7 +238,8 @@ test('the collection\'s stats strip and the essay\'s progress card count due rev
   ));
 });
 
-test('on a phone the collection header drops its stats strip and shows mastery and reviewed under the title instead', () => {
+test('on a phone the collection header drops its stats strip and shows mastery and reviewed under the title instead', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
   const career = REAL_LIFE_COLLECTIONS[0];
   const progress = indexCatalogProgress([
     withSchedule(createRealLifeProgressItem(career.sentences[0], 1), { ...DUE, memoryStrength: 50 }),

@@ -1,4 +1,4 @@
-import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -30,6 +30,7 @@ import { collectionStyle } from './realLifeStyle';
 import { filterRealLifeSentences } from './realLifeFilter';
 import { createSpeechSlot } from './speechSlot';
 import { useReadingEscape } from './useReadingEscape';
+import { useRealLifeList } from './useRealLifeList';
 
 const sentenceKey = (_index: number, sentence: RealLifeSentence) => sentence.id;
 const listComponents = { Footer: () => <div className="h-[calc(6rem+env(safe-area-inset-bottom))]" /> };
@@ -143,7 +144,6 @@ export const RealLifeSentenceRow = React.memo(function RealLifeSentenceRow({
 interface RealLifeCollectionScreenProps {
   collection: RealLifeCollection;
   progressIndex: CatalogProgressIndex;
-  now: number;
   onClose: () => void;
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
   onUpdateSRS: (itemId: string, rating?: ReviewRating, context?: { seedItem?: StoredItem }) => Promise<boolean>;
@@ -155,12 +155,12 @@ interface RealLifeCollectionScreenProps {
 
 /**
  * A collection's lines, narrowed by theme, review state and search, and Study for the theme and search in view. Its
- * parent mounts it afresh for each collection opened, so every collection starts on All with an empty search.
+ * parent mounts it afresh for each collection opened, so every collection starts on All with an empty search, counting
+ * what's due from the time it opened (useRealLifeList).
  */
 export function RealLifeCollectionScreen({
   collection,
   progressIndex,
-  now,
   onClose,
   onOpenSentence,
   onUpdateSRS,
@@ -169,10 +169,8 @@ export function RealLifeCollectionScreen({
   findSaved,
   onOpenCard,
 }: RealLifeCollectionScreenProps) {
-  const [sectionId, setSectionId] = useState('all');
-  const [reviewFilter, setReviewFilter] = useState<SentenceReviewFilter>('all');
-  const [query, setQuery] = useState('');
-  const deferredQuery = useDeferredValue(query);
+  const { scope, query, setQuery, setSectionId, setReviewFilter, now, noteOpened } = useRealLifeList();
+  const { sectionId, reviewFilter } = scope;
 
   // Esc clears the search, then goes back to the collections, unless a layer above (a lesson, the word popup, a dialog,
   // the search sheet) takes it, or a lesson or popup still loading, or crashed, covers the page. In the search box too:
@@ -186,19 +184,21 @@ export function RealLifeCollectionScreen({
   );
 
   const filtered = useMemo(
-    () => filterRealLifeSentences(collection.sentences, { sectionId, reviewFilter, query: deferredQuery }, progressIndex, now),
-    [deferredQuery, now, progressIndex, reviewFilter, sectionId, collection],
+    () => filterRealLifeSentences(collection.sentences, scope, progressIndex, now),
+    [collection, scope, progressIndex, now],
   );
 
   // Study takes the theme and the search in view but not the review chip: due reviews first, then new lines.
   const studyQueue = useMemo(() => buildCatalogQueue(
-    filterRealLifeSentences(collection.sentences, { sectionId, reviewFilter: 'all', query: deferredQuery }, progressIndex, now),
+    filterRealLifeSentences(collection.sentences, { ...scope, reviewFilter: 'all' }, progressIndex, now),
     progressIndex,
     now,
-  ), [collection, deferredQuery, now, progressIndex, sectionId]);
+  ), [collection, scope, progressIndex, now]);
 
+  // The list catches up with the time behind the sentence that opens, out of sight.
   const openSentence = (ordered: readonly RealLifeSentence[], index: number) => {
     onOpenSentence(buildRealLifeStudyItems(ordered, progressIndex, Date.now()), index);
+    noteOpened();
   };
 
   const startStudy = () => {
@@ -247,7 +247,7 @@ export function RealLifeCollectionScreen({
   const CollectionIcon = style.icon;
 
   // An empty list names what emptied it, the search, the review filter or the theme, and offers to clear each.
-  const shownQuery = deferredQuery.trim();
+  const shownQuery = scope.query;
   const filtersActive = reviewFilter !== 'all' || sectionId !== 'all';
   const emptyScope = [
     'No',
