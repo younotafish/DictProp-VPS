@@ -376,7 +376,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
     handleArchiveItem,
     isSaved,
     savedItemMatch,
-    onUnarchive,
+    handleUnarchiveItem,
     onSpace: handleSpace,
     cycleSpeed,
   });

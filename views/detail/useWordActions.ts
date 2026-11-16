@@ -32,6 +32,9 @@ interface WordActionsOptions {
   showRemembered: (next: SRSData, now: number, id: string) => void;
 }
 
+/** Whether `now` falls within acceptDestructive's window after a press at `lastAt`, without counting as a press itself. */
+const withinDestructiveWindow = (lastAt: number, now: number): boolean => !acceptDestructive({ current: lastAt }, now);
+
 /** What the word card does to the library: save, delete, archive and unarchive, reset, remember, and a phrase's key-vocab saves. */
 export function useWordActions({
   data, type, title, savedItemMatch, isSaved, savedItemsRef, isVocabSaved, onSave, onDelete, onArchive, onUnarchive,
@@ -70,6 +73,9 @@ export function useWordActions({
   // One delete, archive or reset per press (acceptDestructive): a double tap on the trash deletes the card on screen,
   // not then the one that slides into its place, and the header, the menu and D, A and Shift+R share the one guard.
   const lastDestructiveAtRef = useRef(-Infinity);
+  // Unarchive keeps the card on screen and puts Got it in its place in the header, beside the trash, so a double press
+  // on it would go on to review or delete the card. An Unarchive starts the guard's window, and Got it waits it out too.
+  const lastUnarchiveAtRef = useRef(-Infinity);
 
   const handleDeleteItem = () => {
     // Use savedItemMatch ID if available, otherwise use currentItem's ID
@@ -107,6 +113,9 @@ export function useWordActions({
 
   const handleUnarchiveItem = () => {
     if (!onUnarchive || !savedItemMatch?.isArchived) return;
+    const now = performance.now();
+    lastUnarchiveAtRef.current = now;
+    lastDestructiveAtRef.current = now;
     setShowActionMenu(false);
     onUnarchive(savedItemMatch.data.id);
   };
@@ -137,8 +146,9 @@ export function useWordActions({
 
   const handleRemember = useCallback(() => {
     const saved = findSavedCopy(savedItemsRef.current, { type, data });
-    // An archived card's header offers Unarchive instead of Got it, so R and the double tap or click review nothing.
-    if (saved?.isArchived) return;
+    // An archived card's header offers Unarchive instead of Got it, so R and the double tap or click review nothing,
+    // and just after an Unarchive a Got it is the double press's second press.
+    if (saved?.isArchived || withinDestructiveWindow(lastUnarchiveAtRef.current, performance.now())) return;
     // One gesture reviews a card once: the same card's second remember within 1.5 s is dropped, while the next card's
     // counts at once.
     const id = saved?.data.id ?? data.id;

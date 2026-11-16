@@ -47,7 +47,7 @@ const wordOnScreen = (word: string, done: string[], flags: Partial<WordKeyHandle
   handleArchiveItem: () => done.push(`archive ${word}`),
   isSaved: false,
   savedItemMatch: undefined,
-  onUnarchive: id => done.push(`unarchive ${id}`),
+  handleUnarchiveItem: () => done.push(`unarchive ${word}`),
   onSpace: () => done.push(`space on ${word}`),
   cycleSpeed: () => done.push('cycle speed'),
   ...flags,
@@ -154,7 +154,7 @@ test('the word card\'s D and A act on the card on screen, only once it is saved,
   const archivedFig = { type: 'vocab', savedAt: 0, isArchived: true, data: { id: 'fig-1', word: 'fig' } } as unknown as StoredItem;
   onScreen.current = wordOnScreen('fig', done, { isSaved: true, savedItemMatch: archivedFig });
   listener(press('A', { shiftKey: true }));
-  assert.deepEqual(done, ['archive apple', 'delete pear', 'unarchive fig-1']);
+  assert.deepEqual(done, ['archive apple', 'delete pear', 'unarchive fig']);
 });
 
 test('the word card\'s H, R, S, E, Space and + keys', () => {

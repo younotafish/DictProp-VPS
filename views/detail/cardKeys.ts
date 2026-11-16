@@ -99,7 +99,8 @@ export interface WordKeyHandlers {
   handleArchiveItem: () => void;
   isSaved: boolean;
   savedItemMatch: StoredItem | undefined;
-  onUnarchive?: (id: string) => void;
+  /** Unarchives the archived card on screen, as the header's Unarchive does, sharing its guard (useWordActions). */
+  handleUnarchiveItem: () => void;
   /** Space: stop example auto-play while it runs, else the play rule, else start or stop the slideshow. */
   onSpace: () => void;
   cycleSpeed: () => void;
@@ -109,7 +110,7 @@ export interface WordKeyHandlers {
 export function handleWordKey(e: CardKeyEvent, handlers: WordKeyHandlers): void {
   const {
     speakSentenceAt, setShowHeader, title, readCardExamples, handleRemember, handleResetSRS, handleSaveShortcut,
-    handleDeleteItem, handleArchiveItem, isSaved, savedItemMatch, onUnarchive, onSpace, cycleSpeed,
+    handleDeleteItem, handleArchiveItem, isSaved, savedItemMatch, handleUnarchiveItem, onSpace, cycleSpeed,
   } = handlers;
   if (!acceptKeyRepeat(e)) return;
 
@@ -162,7 +163,7 @@ export function handleWordKey(e: CardKeyEvent, handlers: WordKeyHandlers): void 
   // A: Archive / Unarchive
   if (e.key === 'a' || e.key === 'A') {
     e.preventDefault();
-    if (savedItemMatch?.isArchived) onUnarchive?.(savedItemMatch.data.id);
+    if (savedItemMatch?.isArchived) handleUnarchiveItem();
     else if (isSaved) handleArchiveItem();
   }
 

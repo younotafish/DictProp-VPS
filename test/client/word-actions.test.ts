@@ -7,7 +7,7 @@ import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import { useWordActions } from '../../views/detail/useWordActions.ts';
 
 // What the word card's actions do to the library (views/detail/useWordActions.ts): Got it, from the header, R, or a
-// double tap or click, on archived cards.
+// double tap or click, on archived cards and just after an Unarchive.
 
 /** Runs a hook once, in a server render, and hands back what it returned; refs and callbacks keep working after. */
 function capture<T>(useHook: () => T): T {
@@ -45,4 +45,25 @@ test('on an archived card Got it reviews nothing: its header offers Unarchive, a
 
   appleActions({ current: [apple(false)] }, done).handleRemember();
   assert.deepEqual(done, ['Remembered! apple-1', 'review apple-1']);
+});
+
+test('right after Unarchive, which puts Got it in its place beside the trash, Got it and the trash wait out 0.7 s', t => {
+  let clock = 10_000;
+  t.mock.method(performance, 'now', () => clock);
+  const done: string[] = [];
+  const library = { current: [apple(true)] };
+  const actions = appleActions(library, done);
+  actions.handleUnarchiveItem();
+  // The card stays on screen, unarchived, and its header shows Got it where Unarchive was.
+  library.current = [apple(false)];
+  clock += 300;
+  actions.handleRemember(); // the second click of a double click on Unarchive, or the second tap of a double tap
+  actions.handleDeleteItem(); // or that press landing on the trash beside it
+  actions.handleArchiveItem(); // or A pressed twice: unarchive, then archive again
+  actions.handleResetSRS();
+  assert.deepEqual(done, ['unarchive apple-1']);
+
+  clock += 400;
+  actions.handleRemember();
+  assert.deepEqual(done, ['unarchive apple-1', 'Remembered! apple-1', 'review apple-1']);
 });
