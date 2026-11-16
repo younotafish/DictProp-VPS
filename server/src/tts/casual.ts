@@ -98,7 +98,7 @@ export function acceptBatchRespellings(sentences: string[], lines: unknown[]): A
 
 /** True when no respelling can succeed for the rest of a run: the provider's balance is spent, or the key is missing or refused. */
 export function respellingUnavailable(error: unknown): error is AiError {
-  return error instanceof AiError && (error.kind === 'quota' || error.kind === 'config');
+  return error instanceof AiError && (error.kind === 'quota' || error.kind === 'auth');
 }
 
 // Respell ONE sentence into its casual spoken form (vocabulary preserved). Null when the respelling

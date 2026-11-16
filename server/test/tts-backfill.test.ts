@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { AiError } from '../src/ai-client.js';
+import { AiError, createChatClient } from '../src/ai-client.js';
 import {
   BACKFILL_STATUS_PATH,
   createBackfill,
@@ -12,8 +12,10 @@ import {
   type BackfillTexts,
 } from '../src/tts/backfill.js';
 import { audioPath, CASUAL_STYLE, timingsPath, ttsKey } from '../src/tts/cache.js';
+import { reduceCasualBatch } from '../src/tts/casual.js';
 import { createClipStore, type ClipDependencies } from '../src/tts/clips.js';
 import type { LockOwner } from '../src/tts/lock.js';
+import { reply } from './support/ai.js';
 
 const DATA_DIR = process.env.DATA_DIR!;
 const LOCK_PATH = join(DATA_DIR, 'tts-backfill.lock');
@@ -159,6 +161,41 @@ test('any other batch failure leaves each casual clip to be respelled on its own
   assert.deepEqual(calls.reduce.sort(), ['Fallback one.', 'Fallback two.']);
   assert.deepEqual(calls.casual.sort(), ['Fallback one. (casual)', 'Fallback two. (casual)']);
   assert.deepEqual(counts(), { running: false, total: 4, done: 4, generated: 4, failed: 0 });
+});
+
+test('a batch the provider rejects for what is in it costs only that batch: the rest of the run still asks', async () => {
+  const rejected = 'The provider rejects the batch with this one.';
+  // DeepInfra's chat API: a 422 for the batch holding the rejected sentence, every line respelled for any other.
+  const model = createChatClient({
+    fetch: async (_url, init = {}) => {
+      const numbered: string = JSON.parse(String(init.body)).messages[1].content;
+      if (numbered.includes(rejected)) return new Response('{"error":"unprocessable"}', { status: 422 });
+      return reply({ lines: numbered.split('\n').map(line => `${line.replace(/^\d+\. /, '')} (batch)`) })();
+    },
+    apiKey: () => 'test-key',
+    retryDelayMs: 0,
+  });
+  const respelledAlone: string[] = [];
+  const { backfill, calls, counts } = harness(
+    { catalog: [rejected, 'Batched with the rejected one.'], library: ['Batched after it.', 'Also batched after it.'] },
+    {
+      reduceBatch: (sentences) => reduceCasualBatch(sentences, model),
+      deps: {
+        reduce: async (sentence) => {
+          respelledAlone.push(sentence);
+          return sentence === rejected ? null : `${sentence} (casual)`;
+        },
+      },
+    },
+  );
+  await runToEnd(backfill);
+  assert.equal(calls.batches.length, 2);
+  // The rejected batch's sentences are respelled one by one; only the one no respelling works for fails.
+  assert.deepEqual(respelledAlone.sort(), ['Batched with the rejected one.', rejected, rejected, rejected]);
+  assert.deepEqual(calls.casual.sort(), [
+    'Also batched after it. (batch)', 'Batched after it. (batch)', 'Batched with the rejected one. (casual)',
+  ]);
+  assert.deepEqual(counts(), { running: false, total: 8, done: 8, generated: 7, failed: 1 });
 });
 
 test('a run holds the lock while it works, publishes its progress, and lets go at the end', async () => {

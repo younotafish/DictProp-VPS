@@ -33,7 +33,8 @@ export type AiErrorKind =
   | 'truncated'      // finish_reason "length": the reply hit max_tokens
   | 'invalid'        // unusable content (not JSON, wrong shape, failed validation)
   | 'not_found'      // the model reports no dictionary entry for the input
-  | 'config'         // missing key or a request the provider rejects
+  | 'auth'           // no key, or the provider refuses it (401, 403)
+  | 'config'         // a request the provider rejects (any other 4xx)
   | 'internal';
 
 export class AiError extends Error {
@@ -53,6 +54,9 @@ export function providerError(status: number, bodyText: string): AiError {
   }
   if (status === 429) return new AiError('rate_limited', `Provider rate limit (${status})`);
   if (status >= 500) return new AiError('unavailable', `Provider unavailable (${status})`);
+  if (status === 401 || status === 403) {
+    return new AiError('auth', `Provider refused the key (${status}): ${bodyText.slice(0, 200)}`);
+  }
   return new AiError('config', `Provider rejected the request (${status}): ${bodyText.slice(0, 200)}`);
 }
 
@@ -235,7 +239,7 @@ function createChatCaller(options: ChatClientOptions) {
   /** One request; resolves the reply's content. */
   async function callOnce(ctx: AiRequestContext, request: ChatRequest, format: ReplyFormat, withMaxTokens: boolean): Promise<string> {
     const key = apiKey();
-    if (!key) throw new AiError('config', 'DEEPINFRA_API_KEY not configured');
+    if (!key) throw new AiError('auth', 'DEEPINFRA_API_KEY not configured');
     ctx.signal.throwIfAborted();
     // A call may use whatever is left of the request's budget.
     const window = remainingMs(ctx);
@@ -288,7 +292,7 @@ function createChatCaller(options: ChatClientOptions) {
         failure = classifyAiError(error, ctx.clientSignal);
       }
       // Retry fast transient failures only. A timeout already burned its window, a cut-off reply would be
-      // cut off again, and quota/config errors do not change on a retry.
+      // cut off again, and quota, auth and config errors do not change on a retry.
       const retryable = failure.kind === 'unavailable' || failure.kind === 'rate_limited' || failure.kind === 'invalid';
       if (!retryable || attempt >= TRANSIENT_RETRIES || ctx.signal.aborted || remainingMs(ctx) < retryDelayMs + MIN_RETRY_WINDOW_MS) {
         throw failure;

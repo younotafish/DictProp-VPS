@@ -53,13 +53,18 @@ test('transport failures map to accurate kinds and statuses', () => {
   assert.equal(aiErrorStatus(cancelled), 499);
 });
 
-test('provider statuses: 402 and billing 429s are quota, other 429s a rate limit, 5xx unavailable', () => {
+test('provider statuses: 402 and billing 429s are quota, other 429s a rate limit, 5xx unavailable, 401 and 403 auth', () => {
   assert.equal(providerError(402, 'Payment Required').kind, 'quota');
   assert.equal(providerError(429, 'Too Many Requests').kind, 'rate_limited');
   assert.equal(providerError(429, '{"error":"insufficient balance"}').kind, 'quota');
   assert.equal(providerError(503, 'Service Unavailable').kind, 'unavailable');
-  assert.equal(providerError(400, 'bad request').kind, 'config');
+  assert.equal(providerError(401, 'Unauthorized').kind, 'auth');
+  assert.equal(providerError(403, 'Forbidden').kind, 'auth');
+  for (const code of [400, 404, 408, 413, 422]) assert.equal(providerError(code, 'rejected').kind, 'config', String(code));
   const messages = { label: 'Test', failed: 'Test failed.' };
+  // A refused key and any other rejected request answer alike.
+  assert.deepEqual(aiErrorBody(providerError(401, ''), messages), { error: 'Test failed.', status: 500 });
+  assert.deepEqual(aiErrorBody(providerError(400, ''), messages), { error: 'Test failed.', status: 500 });
   assert.deepEqual(aiErrorBody(providerError(402, ''), messages), { error: 'QUOTA_EXCEEDED', status: 429 });
   assert.deepEqual(aiErrorBody(providerError(429, ''), messages), { error: 'RATE_LIMITED', status: 429 });
   assert.equal(aiErrorBody(providerError(500, ''), messages).status, 503);
@@ -96,17 +101,21 @@ test('a provider 5xx is retried once', async () => {
   assert.equal(down.bodies.length, 2);
 });
 
-test('quota, timeouts and missing keys are not retried', async () => {
+test('quota, timeouts, and missing or refused keys are not retried', async () => {
   const quota = stubFetch(status(402, 'Payment Required'));
   await assert.rejects(client(quota.fetch)(createRequestContext(undefined, 60_000), REQUEST), kindOf('quota'));
   assert.equal(quota.bodies.length, 1);
+
+  const refused = stubFetch(status(401, 'Unauthorized'));
+  await assert.rejects(client(refused.fetch)(createRequestContext(undefined, 60_000), REQUEST), kindOf('auth'));
+  assert.equal(refused.bodies.length, 1);
 
   const timedOut = stubFetch(() => { throw new DOMException('timed out', 'TimeoutError'); });
   await assert.rejects(client(timedOut.fetch)(createRequestContext(undefined, 60_000), REQUEST), kindOf('timeout'));
   assert.equal(timedOut.bodies.length, 1);
 
   const noKey = stubFetch(reply({}));
-  await assert.rejects(client(noKey.fetch, () => undefined)(createRequestContext(undefined, 60_000), REQUEST), kindOf('config'));
+  await assert.rejects(client(noKey.fetch, () => undefined)(createRequestContext(undefined, 60_000), REQUEST), kindOf('auth'));
   assert.equal(noKey.bodies.length, 0);
 });
 

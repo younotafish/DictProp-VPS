@@ -58,11 +58,21 @@ test('a batch reply with the wrong count or that keeps failing leaves every sent
   assert.equal(down.bodies.length, 2); // the chat client's one retry
 });
 
-test('a spent balance or a missing key rejects the batch, since no respelling can work for the rest of the run', async () => {
-  await assert.rejects(reduceCasualBatch(['One.', 'Two.'], chat(httpStatus(402, 'Payment Required')).json),
-    (error: unknown) => error instanceof AiError && error.kind === 'quota');
+test('a spent balance or a missing or refused key rejects the batch, since no respelling can work for the rest of the run', async () => {
+  const kindOf = (kind: AiError['kind']) => (error: unknown) => error instanceof AiError && error.kind === kind;
+  await assert.rejects(reduceCasualBatch(['One.', 'Two.'], chat(httpStatus(402, 'Payment Required')).json), kindOf('quota'));
+  await assert.rejects(reduceCasualBatch(['One.', 'Two.'], chat(httpStatus(401, 'Unauthorized')).json), kindOf('auth'));
+  await assert.rejects(reduceCasualBatch(['One.', 'Two.'], chat(httpStatus(403, 'Forbidden')).json), kindOf('auth'));
   const noKey = createChatClient({ fetch: async () => { throw new Error('no request expected'); }, apiKey: () => '' });
-  await assert.rejects(reduceCasualBatch(['One.', 'Two.'], noKey), (error: unknown) => error instanceof AiError && error.kind === 'config');
+  await assert.rejects(reduceCasualBatch(['One.', 'Two.'], noKey), kindOf('auth'));
+});
+
+test('a batch the provider rejects for any other reason leaves each sentence to be respelled on its own', async () => {
+  for (const code of [400, 404, 408, 413, 422]) {
+    const model = chat(httpStatus(code, 'rejected'));
+    assert.deepEqual(await reduceCasualBatch(['One.', 'Two.'], model.json), [null, null], String(code));
+    assert.equal(model.bodies.length, 1, String(code));
+  }
 });
 
 test('casual respellings lose wrapping quotes but keep their apostrophes', () => {
