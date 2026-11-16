@@ -112,6 +112,7 @@ export function EssayReader({
     [essay, now, progressIndex],
   );
   const studyQueue = useMemo(() => buildCatalogQueue(essay.sentences, progressIndex, now), [essay, now, progressIndex]);
+  const studyLabel = studyButtonLabel(studyQueue);
 
   // Read when a sentence is tapped and when the essay opens or is left, so the paragraphs' callback stays the same while
   // progress changes.
@@ -260,9 +261,9 @@ export function EssayReader({
             onClick={startStudy}
             disabled={studyQueue.sentences.length === 0}
             className="flex min-h-10 min-w-[6.5rem] shrink-0 items-center justify-center gap-1.5 rounded-xl bg-slate-950 px-3 text-xs font-bold text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300 sm:px-4"
-            title={`Study ${essay.title}`}
+            title={`${studyLabel === 'Practice' ? 'Practice' : 'Study'} ${essay.title}`}
           >
-            <Play size={14} fill="currentColor" /> <span className="tabular-nums">{studyButtonLabel(studyQueue)}</span>
+            <Play size={14} fill="currentColor" /> <span className="tabular-nums">{studyLabel}</span>
           </button>
         </div>
       </header>

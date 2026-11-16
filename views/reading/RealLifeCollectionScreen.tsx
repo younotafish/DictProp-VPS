@@ -194,6 +194,7 @@ export function RealLifeCollectionScreen({
     progressIndex,
     now,
   ), [collection, scope, progressIndex, now]);
+  const studyLabel = studyButtonLabel(studyQueue);
 
   // The list catches up with the time behind the sentence that opens, out of sight.
   const openSentence = (ordered: readonly RealLifeSentence[], index: number) => {
@@ -293,9 +294,9 @@ export function RealLifeCollectionScreen({
               onClick={startStudy}
               disabled={studyQueue.sentences.length === 0}
               className="flex min-h-10 min-w-[6.5rem] shrink-0 items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-3 text-xs font-bold text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-              title={`Study ${collection.title}`}
+              title={`${studyLabel === 'Practice' ? 'Practice' : 'Study'} ${collection.title}`}
             >
-              <Play size={14} fill="currentColor" /> <span className="tabular-nums">{studyButtonLabel(studyQueue)}</span>
+              <Play size={14} fill="currentColor" /> <span className="tabular-nums">{studyLabel}</span>
             </button>
           </div>
 

@@ -112,7 +112,7 @@ test('a tile\'s line says how many lines are due and how many are new, and only 
 
 // The screens, rendered as markup.
 const noop = () => {};
-const studyButton = (markup: string) => markup.match(/<button type="button"( disabled="")? class="([^"]*)" title="Study [^"]*">.*?<\/button>/);
+const studyButton = (markup: string) => markup.match(/<button type="button"( disabled="")? class="([^"]*)" title="(?:Study|Practice) [^"]*">.*?<\/button>/);
 
 // A collection counts what's due from the time it opens, so the tests that open one set the clock to NOW.
 const renderCollection = (collection: RealLifeCollection, progressIndex: CatalogProgressIndex) => renderToStaticMarkup(createElement(
@@ -144,11 +144,15 @@ test('the collection\'s Study button counts the run and keeps a fixed width; wit
     career.sentences.map(sentence => withSchedule(createRealLifeProgressItem(sentence, 1), MEMORIZED)),
     'real-life',
   );
-  assert.match(studyButton(renderCollection(career, allMemorized))![0], />Practice<\/span>/);
+  // Its title says what it does, as its label does.
+  const practice = studyButton(renderCollection(career, allMemorized))![0];
+  assert.match(practice, />Practice<\/span>/);
+  assert.match(practice, new RegExp(`title="Practice ${career.title}"`));
 
   const empty = studyButton(renderCollection({ ...career, sections: [], sentences: [] }, progress))!;
   assert.equal(empty[1], ' disabled=""');
   assert.match(empty[0], />Study<\/span>/);
+  assert.match(empty[0], new RegExp(`title="Study ${career.title}"`));
 });
 
 test('the essay\'s Study button replaces Review, counting its due and new sentences', () => {
@@ -173,7 +177,9 @@ test('the essay\'s Study button replaces Review, counting its due and new senten
     essay.sentences.map(sentence => withSchedule(createEssayProgressItem(sentence, 1), MEMORIZED)),
     'essay',
   );
-  assert.match(studyButton(render(memorized))![0], />Practice<\/span>/);
+  const practice = studyButton(render(memorized))![0];
+  assert.match(practice, />Practice<\/span>/);
+  assert.match(practice, new RegExp(`title="Practice ${essay.title}"`));
 });
 
 const DUE_PILL = '<span class="rounded-full bg-orange-500/90 px-1.5 py-0.5 text-white">';
