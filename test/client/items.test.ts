@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { makeSentenceStoredItem, makeVocabStoredItem, sameItemContent } from '../../services/items.ts';
-import type { SentenceAnalysis, SentenceData, VocabCard } from '../../types.ts';
+import {
+  findSavedCopy, findSavedCopyIndex, makeSentenceStoredItem, makeVocabStoredItem, sameItemContent, type SavedCopyProbe,
+} from '../../services/items.ts';
+import type { SearchResult, SentenceAnalysis, SentenceData, StoredItem, VocabCard } from '../../types.ts';
 
 const vocab: VocabCard = {
   id: 'saved-id', word: 'visceral', sense: 'adj: instinctive', chinese: '', ipa: '', definition: 'deep',
@@ -57,4 +59,41 @@ test('a sentence saved from the copy a screen holds takes its truthy optional fi
   }, 'an empty title and a zero analysis time are left out, as is everything else the copy carries');
   assert.notEqual(item.data.id, prepared.id);
   assert.equal(item.srs.id, item.data.id);
+});
+
+const word = (id: string, spelling: string, sense?: string): StoredItem => makeVocabStoredItem({ ...vocab, id, word: spelling, sense });
+const phrase = (id: string, query: string): StoredItem => ({
+  ...makeVocabStoredItem(vocab),
+  type: 'phrase',
+  data: { id, query, translation: '', grammar: '', visualKeyword: '', pronunciation: '', vocabs: [], timestamp: 0 } satisfies SearchResult,
+});
+
+test('a saved copy is the item with the same id, else the same spelling and type and, for a word, the exact sense label', () => {
+  const items = [
+    word('w1', 'Visceral', 'adj: instinctive'),
+    word('w2', 'visceral', 'Adj: instinctive'),
+    word('w3', 'visceral'),
+    phrase('p1', 'Run Down'),
+    makeSentenceStoredItem('She ran home.', 'run'),
+  ];
+  const at = (probe: SavedCopyProbe) => findSavedCopyIndex(items, probe);
+
+  assert.equal(at(word('w2', 'something else entirely')), 1, 'the id wins over every other rule');
+  assert.equal(at(word('new', '  VISCERAL ', 'adj: instinctive')), 0, 'spelling ignores case and surrounding space');
+  assert.equal(at(word('new', 'visceral', 'adj: Instinctive')), -1, 'the sense label is compared exactly');
+  assert.equal(at(word('new', 'visceral', 'Adj: instinctive')), 1);
+  assert.equal(at(word('new', 'visceral', '')), 2, 'an empty sense is the missing one');
+  assert.equal(at(word('new', 'visceral', 'noun: the gut')), -1, 'another meaning is another card');
+  assert.equal(at(phrase('new', 'run down ')), 3);
+  assert.equal(at(word('new', 'run down')), -1, 'a word never matches a phrase');
+  assert.equal(at(phrase('new', 'visceral')), -1, 'nor a phrase a word');
+  assert.equal(at({ type: 'sentence', data: { id: 'new', text: 'she ran home.', sourceWord: 'run' } }), 4, 'a probe needs only type and data');
+
+  assert.equal(findSavedCopy(items, phrase('new', 'RUN DOWN')), items[3]);
+  assert.equal(findSavedCopy(items, phrase('new', 'run up')), undefined);
+});
+
+test('a deleted copy is still found, so saving a deleted card again brings its history back', () => {
+  const deleted: StoredItem = { ...word('old', 'visceral', 'adj: instinctive'), isDeleted: true };
+  assert.equal(findSavedCopy([deleted], word('fresh-ai-id', 'visceral', 'adj: instinctive')), deleted);
 });

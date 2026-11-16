@@ -1,4 +1,4 @@
-import type { SentenceData, StoredItem, VocabCard } from '../types';
+import { getItemSpelling, savedVocabKey, type SentenceData, type StoredItem, type VocabCard } from '../types';
 import { SRSAlgorithm } from './srsAlgorithm';
 
 /**
@@ -44,6 +44,33 @@ export const makeSentenceStoredItem = (
     savedAt: Date.now(),
     srs: SRSAlgorithm.createNew(sentenceData.id, 'sentence'),
   };
+};
+
+/** What findSavedCopy looks a saved copy up by: the card on screen, a search result or a card being saved. */
+export type SavedCopyProbe = Pick<StoredItem, 'type' | 'data'>;
+
+/**
+ * Where `probe`'s saved copy is in `items`, or -1: the item with its id, else the first of its type with the same
+ * spelling (ignoring case and surrounding space) and, for a word, the exact same sense label (savedVocabKey, where a
+ * missing sense is the empty one), so each meaning of a word keeps its own card. Deleted items count too: callers
+ * pass the list they mean.
+ */
+export const findSavedCopyIndex = (items: readonly StoredItem[], probe: SavedCopyProbe): number => {
+  const byId = items.findIndex(item => item.data.id === probe.data.id);
+  if (byId >= 0) return byId;
+  if (probe.type === 'vocab') {
+    const key = savedVocabKey(probe.data as VocabCard);
+    return items.findIndex(item => item.type === 'vocab' && savedVocabKey(item.data as VocabCard) === key);
+  }
+  // getItemSpelling reads nothing of an item but its type and data.
+  const spelling = getItemSpelling(probe as StoredItem);
+  return items.findIndex(item => item.type === probe.type && getItemSpelling(item) === spelling);
+};
+
+/** `probe`'s saved copy in `items` (see findSavedCopyIndex), or undefined. */
+export const findSavedCopy = (items: readonly StoredItem[], probe: SavedCopyProbe): StoredItem | undefined => {
+  const index = findSavedCopyIndex(items, probe);
+  return index < 0 ? undefined : items[index];
 };
 
 /**
