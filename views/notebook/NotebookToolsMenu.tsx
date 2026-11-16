@@ -22,7 +22,7 @@ interface NotebookToolsMenuProps {
   imageRestoreRunning: boolean;
   onFindDuplicates: () => void;
   /** Opens the gestures and shortcuts sheet: on a phone, the only way to it. */
-  onShowShortcuts?: () => void;
+  onShowShortcuts: () => void;
 }
 
 interface MenuItemProps {
@@ -90,12 +90,8 @@ export const NotebookToolsPanel: React.FC<NotebookToolsPanelProps> = ({
       <MenuItem icon={<Volume2 size={17} />} label="Generate speech cache" onSelect={choose(onGenerateAllSpeech)} busy={speechGenerationRunning} disabledReason={reason('speech')} />
       <MenuItem icon={<UploadCloud size={17} />} label="Restore server images" onSelect={choose(onRestoreImagesToServer)} busy={imageRestoreRunning} disabledReason={reason('restore')} />
       <MenuItem icon={<GitMerge size={17} />} label="Merge duplicates" onSelect={choose(onFindDuplicates)} disabledReason={reason('merge')} />
-      {onShowShortcuts && (
-        <>
-          <div className="h-px bg-slate-100 my-1" />
-          <MenuItem icon={<Keyboard size={17} />} label="Gestures & shortcuts" onSelect={choose(onShowShortcuts)} disabledReason={reason('shortcuts')} />
-        </>
-      )}
+      <div className="h-px bg-slate-100 my-1" />
+      <MenuItem icon={<Keyboard size={17} />} label="Gestures & shortcuts" onSelect={choose(onShowShortcuts)} disabledReason={reason('shortcuts')} />
     </>
   );
 };

@@ -197,16 +197,15 @@ test('a private essay is offered with its stored title, unopenable, until the pr
   assert.doesNotMatch(landing([privateEssay], 'ready'), /Continue reading/, 'loaded without it: gone');
 });
 
-test('the tab reads the signed-in user\'s positions as it opens, and keeps none without a user', () => {
+test('the tab reads the signed-in user\'s positions as it opens', () => {
   const storage = new MemoryStorage();
   writeReadingPosition('u1', leftAt(), storage);
   const globals = globalThis as { localStorage?: unknown };
   globals.localStorage = storage;
   try {
-    const tab = (userId?: string) => renderToStaticMarkup(createElement(EssaysView, { onOpenSentence: noop, progressItems: [], onScroll: noop, userId }));
+    const tab = (userId: string) => renderToStaticMarkup(createElement(EssaysView, { onOpenSentence: noop, progressItems: [], onScroll: noop, userId }));
     assert.match(tab('u1'), /Continue reading/);
     assert.doesNotMatch(tab('u2'), /Continue reading/);
-    assert.doesNotMatch(tab(), /Continue reading/);
   } finally {
     delete globals.localStorage;
   }

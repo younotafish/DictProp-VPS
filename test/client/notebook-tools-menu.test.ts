@@ -28,7 +28,6 @@ test('the menu ends with the gestures and shortcuts sheet, the way to it on a ph
     'Analyze text', 'Batch import', 'Import JSON', 'Download image pack', 'Sync now', 'Generate speech cache',
     'Restore server images', 'Merge duplicates', 'Gestures & shortcuts',
   ]);
-  assert.ok(!menuRows(renderPanel({ onShowShortcuts: undefined })).some(row => row.label === 'Gestures & shortcuts'));
 });
 
 test('offline, the tools that need the server stay in place, disabled with the reason; the device\'s own tools work', () => {

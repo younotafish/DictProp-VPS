@@ -201,7 +201,7 @@ test('the reading tabs render to markup, counting what is due from the clock', (
   }));
   assert.ok(realLife.includes(`1 due</span> · ${career.sentences.length - 1} new`));
 
-  const essays = renderToStaticMarkup(createElement(EssaysView, { onOpenSentence: noop, progressItems: [], onScroll: noop }));
+  const essays = renderToStaticMarkup(createElement(EssaysView, { onOpenSentence: noop, progressItems: [], onScroll: noop, userId: 'u1' }));
   assert.match(essays, /American Essays/);
   assert.match(essays, /\d+ new<\/p>/);
 });

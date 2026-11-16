@@ -61,9 +61,9 @@ interface NotebookProps {
    */
   offline: boolean;
   /** The saved base words a query inflects (ran -> run), which a search lists first after the word typed. */
-  matchSavedBases?: (query: string) => Set<string>;
+  matchSavedBases: (query: string) => Set<string>;
   /** Tells the nav bar that the notebook moved its list itself, so the jump doesn't hide the bar. */
-  onSyncScroll?: (element: HTMLElement) => void;
+  onSyncScroll: (element: HTMLElement) => void;
   isVocabSaved: (vocab: VocabCard) => boolean;
   onFindDuplicates: () => void;
   onArchive: (id: string) => void;
@@ -83,7 +83,7 @@ interface NotebookProps {
   imageRestoreRunning: boolean;
   onDownloadOfflineImages: () => void;
   /** Opens the gestures and shortcuts sheet, from the tools menu. */
-  onShowShortcuts?: () => void;
+  onShowShortcuts: () => void;
 }
 
 export const NotebookView: React.FC<NotebookProps> = ({
@@ -420,7 +420,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
     }
     if (action.scroll) {
       syncScrollPosition(scrollParent);
-      onSyncScroll?.(scrollParent);
+      onSyncScroll(scrollParent);
     }
     if (action.anchor === 'drop') browseSpotRef.current = null;
   }, [scrollInputs, scrollParent, virtualRows, headerRef, syncScrollPosition, onSyncScroll]);

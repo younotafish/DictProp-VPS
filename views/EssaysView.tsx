@@ -14,9 +14,9 @@ interface EssaysViewProps {
   onScroll: (event: React.UIEvent<HTMLElement>) => void;
   /**
    * The signed-in user, whose reading positions this device keeps (services/readingPosition): each essay reopens where
-   * it was left, and the landing page offers to continue the last one. Without it no position is kept, as before.
+   * it was left, and the landing page offers to continue the last one.
    */
-  userId?: string;
+  userId: string;
 }
 
 /** The Essays tab: the landing page, or the essay the user opened. */
@@ -36,9 +36,9 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
   const landingScroll = useRef(0);
   // Where each essay was left, read as the tab opens (it opens for one signed-in user), so the Continue card is on the
   // landing page from its first frame.
-  const [positions, setPositions] = useState<ReadingPosition[]>(() => (userId ? readReadingPositions(userId) : []));
+  const [positions, setPositions] = useState<ReadingPosition[]>(() => readReadingPositions(userId));
   const savePosition = useCallback((entry: ReadingPosition) => {
-    if (userId) setPositions(writeReadingPosition(userId, entry));
+    setPositions(writeReadingPosition(userId, entry));
   }, [userId]);
 
   if (!selectedEssay) {
@@ -70,7 +70,7 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
       nextEssay={nextReading(essays, selectedEssay.id)}
       onOpenEssay={setSelectedEssayId}
       initialPosition={positions.find(position => position.id === selectedEssay.id)}
-      onSavePosition={userId ? savePosition : undefined}
+      onSavePosition={savePosition}
     />
   );
 };
