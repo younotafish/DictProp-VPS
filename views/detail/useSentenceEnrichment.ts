@@ -4,6 +4,7 @@ import { warn } from '../../services/logger';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
 import { isCatalogProgressItem } from '../../services/catalogProgressIdentity';
 import { hasDetailedSentenceAnalysis, mergePreparedSentence, SENTENCE_PREFETCH_AHEAD } from './detailUtils';
+import type { DetailViewProps } from './types';
 
 interface SentenceEnrichmentOptions {
   sentenceItems: StoredItem[];
@@ -11,6 +12,8 @@ interface SentenceEnrichmentOptions {
   sentenceIndex: number;
   savedSentenceItemsRef: RefObject<StoredItem[]>;
   onSaveRef: RefObject<(item: StoredItem) => void>;
+  /** Writes an upgrade to a saved sentence's live copy, never to a deleted one (DetailViewProps.onPatchItem). */
+  onPatchItemRef: RefObject<DetailViewProps['onPatchItem']>;
 }
 
 /** How long after a failed fetch the lessons are asked for again; coming back online asks at once. */
@@ -30,7 +33,9 @@ const withoutId = (ids: ReadonlySet<string>, id: string): ReadonlySet<string> =>
  * on screen while its analysis loads, and failedSentenceIds the sentences whose last fetch threw: those are asked for
  * again 15 s later, when the device comes back online, or when the review moves.
  */
-export function useSentenceEnrichment({ sentenceItems, sentenceIndex, savedSentenceItemsRef, onSaveRef }: SentenceEnrichmentOptions) {
+export function useSentenceEnrichment({
+  sentenceItems, sentenceIndex, savedSentenceItemsRef, onSaveRef, onPatchItemRef,
+}: SentenceEnrichmentOptions) {
   const [preparedSentenceById, setPreparedSentenceById] = useState<Record<string, StoredItem>>({});
   const [preparingSentenceId, setPreparingSentenceId] = useState<string | null>(null);
   const [failedSentenceIds, setFailedSentenceIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -100,23 +105,36 @@ export function useSentenceEnrichment({ sentenceItems, sentenceIndex, savedSente
       });
       if (!savedMatch) return;
 
-      const savedData = savedMatch.data as SentenceData;
-      const replaceAnalysis = !hasDetailedSentenceAnalysis(savedData.analysis);
-      const nextImageUrl = savedData.imageUrl ?? result.imageUrl;
-      if (!replaceAnalysis && nextImageUrl === savedData.imageUrl) return;
-      onSaveRef.current({
-        ...savedMatch,
-        data: {
-          ...savedData,
-          ...(sourceSentence.catalogSentenceId ? { catalogSentenceId: sourceSentence.catalogSentenceId } : {}),
-          ...(sourceSentence.catalogCollectionId ? { catalogCollectionId: sourceSentence.catalogCollectionId } : {}),
-          ...(sourceSentence.catalogKind ? { catalogKind: sourceSentence.catalogKind } : {}),
-          ...(sourceSentence.catalogTitle ? { catalogTitle: sourceSentence.catalogTitle } : {}),
-          analysis: replaceAnalysis ? result.analysis : savedData.analysis,
-          analysisGeneratedAt: replaceAnalysis ? result.analysisGeneratedAt : savedData.analysisGeneratedAt,
-          ...(nextImageUrl ? { imageUrl: nextImageUrl } : {}),
-        },
-      });
+      // The upgrade, worked out on the copy it lands on: nothing when that copy already has a detailed analysis and
+      // a picture link.
+      const upgrade = (saved: StoredItem): StoredItem | null => {
+        const savedData = saved.data as SentenceData;
+        const replaceAnalysis = !hasDetailedSentenceAnalysis(savedData.analysis);
+        const nextImageUrl = savedData.imageUrl ?? result.imageUrl;
+        if (!replaceAnalysis && nextImageUrl === savedData.imageUrl) return null;
+        return {
+          ...saved,
+          data: {
+            ...savedData,
+            ...(sourceSentence.catalogSentenceId ? { catalogSentenceId: sourceSentence.catalogSentenceId } : {}),
+            ...(sourceSentence.catalogCollectionId ? { catalogCollectionId: sourceSentence.catalogCollectionId } : {}),
+            ...(sourceSentence.catalogKind ? { catalogKind: sourceSentence.catalogKind } : {}),
+            ...(sourceSentence.catalogTitle ? { catalogTitle: sourceSentence.catalogTitle } : {}),
+            analysis: replaceAnalysis ? result.analysis : savedData.analysis,
+            analysisGeneratedAt: replaceAnalysis ? result.analysisGeneratedAt : savedData.analysisGeneratedAt,
+            ...(nextImageUrl ? { imageUrl: nextImageUrl } : {}),
+          },
+        };
+      };
+      // On the library's live copy, so a sentence deleted on another device while the lookup ran stays deleted;
+      // without onPatchItem, the copy found above is saved as before.
+      const patchItem = onPatchItemRef.current;
+      if (patchItem) {
+        patchItem(savedMatch.data.id, upgrade);
+      } else {
+        const upgraded = upgrade(savedMatch);
+        if (upgraded) onSaveRef.current(upgraded);
+      }
     } catch (error) {
       // A fetch that threw (the network or the server) is not marked checked, so it's asked for again: after a while,
       // on reconnecting, or when the review moves. A reply that found nothing was marked checked above: not a failure.
@@ -133,7 +151,7 @@ export function useSentenceEnrichment({ sentenceItems, sentenceIndex, savedSente
       // Whichever call showed the loading, it ends with the fetch.
       setPreparingSentenceId(current => current === id ? null : current);
     }
-  }, [savedSentenceItemsRef, onSaveRef]);
+  }, [savedSentenceItemsRef, onSaveRef, onPatchItemRef]);
 
   useEffect(() => {
     const prepare = () => {

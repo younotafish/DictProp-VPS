@@ -10,6 +10,13 @@ export interface DetailViewProps {
 
   onClose: () => void;
   onSave: (item: StoredItem) => void;
+  /**
+   * Applies `patch` to the library's live copy of the item `id`, for the writes the view makes on its own (the voice a
+   * listen or a style choice leaves, an analysis or picture that arrives); a deleted item is left alone, so they never
+   * bring one back. A null patch writes nothing. Until App passes it, those writes go through onSave as before, and
+   * only to a sentence the library still holds.
+   */
+  onPatchItem?: (id: string, patch: (item: StoredItem) => StoredItem | null) => void;
   onDelete: (id: string) => void;
   onArchive?: (id: string) => void;
   /** Returns an archived card to review; the action menu and the A key offer it on archived cards. */

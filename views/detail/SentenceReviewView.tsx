@@ -17,8 +17,9 @@ import { getTtsStyle, setTtsStyle, type TtsStyle } from '../../services/ttsSetti
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
 import { preloadSession } from './cardReading';
-import { resolveSentenceUnderReview, SENTENCE_PREVIEW_ID_PREFIX } from './sentenceUnderReview';
+import { resolveSentenceUnderReview } from './sentenceUnderReview';
 import { withSpeechStyle } from './speechStyle';
+import { automaticWrite } from './goneItems';
 import { lessonReviewPill, memorizedCount, sentenceRowState } from './sentenceRowState';
 import { PLATFORM } from '../../services/platform';
 import { RememberToast } from './RememberToast';
@@ -58,6 +59,7 @@ export function SentenceReviewView({
   navigationKey,
   onClose,
   onSave,
+  onPatchItem,
   onDelete,
   onResetSRS,
   savedSentenceItems = [],
@@ -102,7 +104,9 @@ export function SentenceReviewView({
   const savedSentenceItemsRef = useLatest(savedSentenceItems);
   // Preview lookups run on every render, so index saved sentences once instead of re-normalizing all of them.
   const savedSentenceIndex = useSavedSentenceIndex(savedSentenceItems);
+  const savedSentenceIndexRef = useLatest(savedSentenceIndex);
   const onSaveRef = useLatest(onSave);
+  const onPatchItemRef = useLatest(onPatchItem);
 
   // The sentence's source card.
   const data = currentItem.data;
@@ -113,7 +117,7 @@ export function SentenceReviewView({
   const sentenceIndex = Math.min(currentGroupIndex, sentenceItems.length - 1);
   const currentSentenceSnapshot = sentenceItems[sentenceIndex] ?? null;
   const { preparedSentenceById, preparingSentenceId, failedSentenceIds, sentencePreloadWindow } = useSentenceEnrichment({
-    sentenceItems, sentenceIndex, savedSentenceItemsRef, onSaveRef,
+    sentenceItems, sentenceIndex, savedSentenceItemsRef, onSaveRef, onPatchItemRef,
   });
   const {
     currentSentence, catalogSentencePreview, catalogPreviewKind, isSentencePreview, sentenceExitLabel,
@@ -156,25 +160,40 @@ export function SentenceReviewView({
     if (currentSentenceSpeechStyle) setTtsStyle(currentSentenceSpeechStyle);
   }, [currentSentenceId, currentSentenceSpeechStyle]);
 
+  // The writes the view makes on its own, the voice a listen or a style choice leaves, go to the sentence's live record
+  // (onPatchItem, which leaves a deleted item alone), so they never bring back a sentence deleted on another device. A
+  // Real Life or essay line with no record yet gets one from its first listen, as before; a sentence the library
+  // doesn't hold gets nothing.
+  const writeSentence = useCallback((sentence: StoredItem, patch: (item: StoredItem) => StoredItem | null) => {
+    const id = sentence.data.id;
+    const write = automaticWrite({
+      live: savedSentenceIndexRef.current.byId.has(id),
+      catalogLine: !!(sentence.data as SentenceData).catalogSentenceId,
+    });
+    if (write === 'skip') return;
+    const updated = patch(sentence);
+    if (!updated) return;
+    currentSentenceRef.current = updated;
+    const patchItem = onPatchItemRef.current;
+    if (write === 'patch' && patchItem) patchItem(id, patch);
+    else onSaveRef.current(updated);
+  }, [onPatchItemRef, onSaveRef, savedSentenceIndexRef]);
+
   const rememberCurrentSentenceSpeechStyle = useCallback((nextStyle: TtsStyle) => {
     const sentence = currentSentenceRef.current;
     if (!sentence || isSentencePreview) return;
-    const updated = withSpeechStyle(sentence, nextStyle, Date.now());
-    if (!updated) return;
-    currentSentenceRef.current = updated;
-    onSaveRef.current(updated);
-  }, [isSentencePreview, onSaveRef]);
+    const now = Date.now();
+    writeSentence(sentence, item => withSpeechStyle(item, nextStyle, now));
+  }, [isSentencePreview, writeSentence]);
 
   // A sentence heard to its end remembers the voice it was heard in. Nothing is written when it already does, so a
   // listen no longer saves and pushes the sentence each time. An unsaved word-card preview is never saved by a
   // listen; a catalog line, with its stable progress identity, is: its first listen creates its record.
   const handleListened = useCallback((sentence: StoredItem) => {
-    if (sentence.data.id.startsWith(SENTENCE_PREVIEW_ID_PREFIX) && !(sentence.data as SentenceData).catalogSentenceId) return;
-    const updated = withSpeechStyle(sentence, getTtsStyle(), Date.now());
-    if (!updated) return;
-    currentSentenceRef.current = updated;
-    onSaveRef.current(updated);
-  }, [onSaveRef]);
+    const style = getTtsStyle();
+    const now = Date.now();
+    writeSentence(sentence, item => withSpeechStyle(item, style, now));
+  }, [writeSentence]);
 
   // The bottom row goes by the sentence's reviews, not by whether it has a record, so a first listen that creates a
   // catalog line's record changes nothing on screen. Its memory shows from the first review on.

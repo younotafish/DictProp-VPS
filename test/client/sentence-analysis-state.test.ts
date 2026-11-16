@@ -176,7 +176,11 @@ async function settle(done: () => boolean = () => true) {
  * the sentence's text. Just enough of a browser for React to render a component that draws nothing, as in
  * sentence-source.test.ts.
  */
-async function enrichmentHarness(items: StoredItem[]) {
+async function enrichmentHarness(items: StoredItem[], library: {
+  saved?: StoredItem[];
+  onSave?: (item: StoredItem) => void;
+  onPatchItem?: (id: string, patch: (item: StoredItem) => StoredItem | null) => void;
+} = {}) {
   const asked = new Map<string, ReturnType<typeof deferred<Response>>[]>();
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
@@ -196,10 +200,11 @@ async function enrichmentHarness(items: StoredItem[]) {
   const root = createRoot(container as unknown as Element);
   let state: ReturnType<typeof useSentenceEnrichment> | undefined;
   // Refs keep their identity across renders, as the view's useLatest refs do.
-  const savedSentenceItemsRef = { current: [] as StoredItem[] };
-  const onSaveRef = { current: () => {} };
+  const savedSentenceItemsRef = { current: library.saved ?? [] };
+  const onSaveRef = { current: library.onSave ?? (() => {}) };
+  const onPatchItemRef = { current: library.onPatchItem };
   const Lesson = ({ index }: { index: number }) => {
-    state = useSentenceEnrichment({ sentenceItems: items, sentenceIndex: index, savedSentenceItemsRef, onSaveRef });
+    state = useSentenceEnrichment({ sentenceItems: items, sentenceIndex: index, savedSentenceItemsRef, onSaveRef, onPatchItemRef });
     return null;
   };
   const show = (index: number) => act(() => root.render(createElement(Lesson, { index })));
@@ -286,6 +291,65 @@ test('a failed lookup is tried again 15 s later on its own, as the failure messa
     await act(() => { t.mock.timers.tick(1); });
     await settle(() => lesson.asks('Only line.') === 2);
     assert.equal(lesson.state.preparingSentenceId, 'a');
+  } finally {
+    await lesson.close();
+  }
+});
+
+// critic-01: an analysis that arrives for a saved sentence goes to the library's live copy, so it can't bring back a
+// sentence deleted on another device while the lookup ran.
+const analysisReply = () => new Response(JSON.stringify({
+  found: true,
+  analysis: { translation: '她终于坦白了。', americanEnglish: { status: 'shared', explanation: 'Common.' }, terms: [] },
+  analysisGeneratedAt: 42,
+  imageUrl: '/api/sentence-enrichments/abc/image',
+}), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+test('an analysis that arrives for a saved sentence patches its live copy instead of saving the copy the view holds', async () => {
+  const saved = lessonSentence('s1', 'Saved line.');
+  const patches: [string, (item: StoredItem) => StoredItem | null][] = [];
+  const saves: StoredItem[] = [];
+  const lesson = await enrichmentHarness([saved], {
+    saved: [saved], onSave: item => { saves.push(item); }, onPatchItem: (id, patch) => { patches.push([id, patch]); },
+  });
+  try {
+    await settle(() => lesson.asks('Saved line.') === 1);
+    await lesson.answer('Saved line.', analysisReply());
+    await settle(() => patches.length === 1);
+    assert.equal(saves.length, 0);
+    const [id, patch] = patches[0];
+    assert.equal(id, 's1');
+    // Applied to whatever copy the library holds then: it adds the analysis and the picture link, keeping the rest.
+    const live = { ...saved, srs: { ...saved.srs, totalReviews: 3 } };
+    const upgraded = patch(live)!;
+    assert.equal(upgraded.srs.totalReviews, 3);
+    assert.equal((upgraded.data as SentenceData).analysisGeneratedAt, 42);
+    assert.equal((upgraded.data as SentenceData).imageUrl, '/api/sentence-enrichments/abc/image');
+    // A copy that already has a detailed analysis and a picture link gets nothing written.
+    const detailed = {
+      translation: '她终于坦白了。',
+      americanEnglish: { status: 'shared', explanation: 'Common.', evidence: ['Heard everywhere.'] },
+      terms: [],
+      grammar: { structure: 'Subject + adverb + verb + particle.', points: [] },
+      pronunciation: { slowIpa: 'ʃi ˈfaɪnəli keɪm klin', fastIpa: 'ʃi ˈfaɪnli keɪm klin', fastSpeechFeatures: ['elision'] },
+    } as unknown as SentenceData['analysis'];
+    const complete = { ...live, data: { ...live.data, analysis: detailed, imageUrl: 'idb:stored' } as SentenceData };
+    assert.equal(patch(complete), null);
+  } finally {
+    await lesson.close();
+  }
+});
+
+test('without onPatchItem the arriving analysis is saved over the saved copy, as before', async () => {
+  const saved = lessonSentence('s1', 'Saved line.');
+  const saves: StoredItem[] = [];
+  const lesson = await enrichmentHarness([saved], { saved: [saved], onSave: item => { saves.push(item); } });
+  try {
+    await settle(() => lesson.asks('Saved line.') === 1);
+    await lesson.answer('Saved line.', analysisReply());
+    await settle(() => saves.length === 1);
+    assert.equal(saves[0].data.id, 's1');
+    assert.equal((saves[0].data as SentenceData).analysisGeneratedAt, 42);
   } finally {
     await lesson.close();
   }
