@@ -1,6 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { Download, FileJson, GitMerge, Keyboard, ListPlus, Loader2, MoreHorizontal, RefreshCw, ScanText, UploadCloud, Volume2 } from 'lucide-react';
-import type { SyncStatus } from '../../types';
 import { NEEDS_CONNECTION, networkRowDisabled, type HeaderControl } from '../../services/connectivityNotice';
 import { SpeechStyleToggle } from '../../components/SpeechStyleToggle';
 import { PlaybackSpeedToggle } from '../../components/PlaybackSpeedToggle';
@@ -15,7 +14,8 @@ interface NotebookToolsMenuProps {
   onImportJSON: () => void;
   onDownloadOfflineImages: () => void;
   onForceSync: () => void;
-  syncStatus: SyncStatus;
+  /** Sync now is running: its tool shows busy until it ends. */
+  forceSyncRunning: boolean;
   onGenerateAllSpeech: () => void;
   speechGenerationRunning: boolean;
   onRestoreImagesToServer: () => void;
@@ -62,7 +62,7 @@ type NotebookToolsPanelProps = NotebookToolsMenuProps & {
  */
 export const NotebookToolsPanel: React.FC<NotebookToolsPanelProps> = ({
   offline, onAnalyzeText, onBatchImport, batchImportRunning, onImportJSON, onDownloadOfflineImages, onForceSync,
-  syncStatus, onGenerateAllSpeech, speechGenerationRunning, onRestoreImagesToServer, imageRestoreRunning,
+  forceSyncRunning, onGenerateAllSpeech, speechGenerationRunning, onRestoreImagesToServer, imageRestoreRunning,
   onFindDuplicates, onShowShortcuts, onChosen,
 }) => {
   // Choosing a tool closes the menu first.
@@ -85,7 +85,7 @@ export const NotebookToolsPanel: React.FC<NotebookToolsPanelProps> = ({
       <MenuItem icon={<ListPlus size={17} />} label="Batch import" onSelect={choose(onBatchImport)} busy={batchImportRunning} disabledReason={reason('batch')} />
       <MenuItem icon={<FileJson size={17} />} label="Import JSON" onSelect={choose(onImportJSON)} disabledReason={reason('json')} />
       <MenuItem icon={<Download size={17} />} label="Download image pack" onSelect={choose(onDownloadOfflineImages)} disabledReason={reason('images')} />
-      <MenuItem icon={<RefreshCw size={17} />} label="Sync now" onSelect={choose(onForceSync)} busy={syncStatus === 'syncing'} disabledReason={reason('sync')} />
+      <MenuItem icon={<RefreshCw size={17} />} label="Sync now" onSelect={choose(onForceSync)} busy={forceSyncRunning} disabledReason={reason('sync')} />
       <div className="h-px bg-slate-100 my-1" />
       <MenuItem icon={<Volume2 size={17} />} label="Generate speech cache" onSelect={choose(onGenerateAllSpeech)} busy={speechGenerationRunning} disabledReason={reason('speech')} />
       <MenuItem icon={<UploadCloud size={17} />} label="Restore server images" onSelect={choose(onRestoreImagesToServer)} busy={imageRestoreRunning} disabledReason={reason('restore')} />

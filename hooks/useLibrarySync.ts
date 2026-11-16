@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { StoredItem, SyncStatus } from '../types';
+import type { StoredItem } from '../types';
 import { logout } from '../services/auth';
 import { deleteItemRecords, loadData, saveData, storeMissingItemHashes, subscribeLibraryWriteFailures } from '../services/libraryStore';
 import { dropExpiredTombstones } from '../services/sync';
-import { isItemDirty } from '../services/itemHash';
 import { createImageUploadRetry, stripAndStoreImages } from '../services/libraryImages';
 import { setReloadGuard } from '../services/appUpdate';
 import { EXTERNAL_NAV_EVENT } from '../services/externalNavigation';
@@ -11,6 +10,7 @@ import { readPendingReviewMutations } from '../services/reviewQueue';
 import { prepareStoredLibrary } from '../services/libraryLaunch';
 import { sendBeforeLeaving } from '../services/unsentChanges';
 import { subscribeToServerMutations } from '../services/syncSignals';
+import type { ForceSyncPhase } from '../services/jobNotices';
 import { log, logError, warn } from '../services/logger';
 import { useLatest } from './useStableValue';
 import type { Library } from './useLibrary';
@@ -56,21 +56,25 @@ export function useLibrarySync(
   // server copy, so the server's copy doesn't overwrite unsynced changes still stored here.
   const [libraryReadFailed, setLibraryReadFailed] = useState(false);
   const [libraryLoadAttempt, setLibraryLoadAttempt] = useState(0);
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
 
   // Saving the library on this device keeps failing (storage full, say): unsynced changes then live only in
   // this tab until they reach the server.
   const [libraryWriteFailed, setLibraryWriteFailed] = useState(false);
   useEffect(() => subscribeLibraryWriteFailures(setLibraryWriteFailed), []);
 
-  // Force sync — uploads changed items, pulls remote, merges
+  // Force sync — uploads changed items, pulls remote, merges. Its pill says how far it has got, then how it ended: up
+  // to date for 2.5 s, or failed, with Retry, for 6 s. A second tap while it runs does nothing.
+  const [forceSync, setForceSync] = useState<ForceSyncPhase | null>(null);
   const forceSyncInProgressRef = useRef(false);
+  const forceSyncTimerRef = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(forceSyncTimerRef.current), []);
   const handleForceSync = useCallback(async () => {
     if (forceSyncInProgressRef.current) return;
     forceSyncInProgressRef.current = true;
+    window.clearTimeout(forceSyncTimerRef.current);
+    setForceSync('syncing');
 
-    setSyncStatus('syncing');
-
+    let ended: ForceSyncPhase = 'done';
     try {
       await flushPendingReviews();
       await inSyncLane(async () => {
@@ -78,13 +82,14 @@ export function useLibrarySync(
         const pushed = await pushNow();
         if (pushed > 0) log(`Server: Force sync uploaded ${pushed} changed items`);
       });
-      setSyncStatus('saved');
     } catch (e) {
       logError("Force Sync Failed:", e);
-      setSyncStatus('error');
+      ended = 'failed';
     } finally {
       forceSyncInProgressRef.current = false;
     }
+    setForceSync(ended);
+    forceSyncTimerRef.current = window.setTimeout(() => setForceSync(null), ended === 'done' ? 2_500 : 6_000);
   }, [flushPendingReviews, inSyncLane, syncFullSnapshot, pushNow]);
 
   // Signing out ends the server session, and reloading for a new version ends the page, so anything this
@@ -310,17 +315,11 @@ export function useLibrarySync(
       try {
         // Writes only the items replaced since their last write.
         await userSaveData(latestItemsRef.current);
-        if (!latestItemsRef.current.some(isItemDirty)) {
-          setSyncStatus('saved');
-          return;
-        }
-        setSyncStatus('syncing');
-        // Items waiting on the review outbox are skipped, which leaves nothing pushed.
-        const pushed = await pushDirtyItems();
-        setSyncStatus(pushed > 0 ? 'saved' : 'idle');
+        // Pushes the unsent items (services/unsentChanges), which may be none: those held for an undo, refused, or
+        // waiting on the review outbox are left out.
+        await pushDirtyItems();
       } catch (e) {
         logError("Sync error:", e);
-        setSyncStatus('error');
       }
     }, Math.max(0, Math.min(5_000, pushDeadlineRef.current - now)));
 
@@ -331,5 +330,5 @@ export function useLibrarySync(
   const retryLibraryLoad = () => { setLibraryReadFailed(false); setLibraryLoadAttempt(attempt => attempt + 1); };
   const openWithServerCopy = () => { setLibraryReadFailed(false); setIsLoaded(true); };
 
-  return { isLoaded, libraryReadFailed, retryLibraryLoad, openWithServerCopy, syncStatus, libraryWriteFailed, handleForceSync, handleSignOut };
+  return { isLoaded, libraryReadFailed, retryLibraryLoad, openWithServerCopy, forceSync, libraryWriteFailed, handleForceSync, handleSignOut };
 }

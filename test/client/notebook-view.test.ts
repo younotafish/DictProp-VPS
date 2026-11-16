@@ -10,7 +10,7 @@ const noop = () => {};
 const render = (items: StoredItem[], extra: Partial<ComponentProps<typeof NotebookView>> = {}) =>
   renderToStaticMarkup(createElement(NotebookView, {
     items, user: { id: 'owner', email: 'owner@example.com', displayName: 'Ji Song', photoUrl: null, isAdmin: true },
-    isOnline: true, offline: false, syncStatus: 'idle', hasOverlay: false, onDelete: noop, onSearch: noop, onViewDetail: noop,
+    isOnline: true, offline: false, forceSyncRunning: false, hasOverlay: false, onDelete: noop, onSearch: noop, onViewDetail: noop,
     onSignOut: async () => false, onViewRefusedReviews: noop, onScroll: noop,
     onForceSync: noop, isVocabSaved: () => false, onFindDuplicates: noop, onArchive: noop, onUnarchive: noop,
     onSave: noop, onCompare: noop, onSaveSentence: noop, isSentenceSaved: () => false, onBatchImport: noop,

@@ -184,8 +184,6 @@ export interface ItemGroup {
   items: StoredItem[];
 }
 
-export type SyncStatus = 'idle' | 'syncing' | 'saved' | 'error';
-
 export type ViewState = 'notebook' | 'study' | 'sentences' | 'real-life' | 'essays';
 
 // Cached per card: the saved-sense set is rebuilt from every card when the library changes, and cards

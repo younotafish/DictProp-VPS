@@ -41,6 +41,8 @@ const noJobs: JobProps = {
   onHideSpeechProgress: () => {},
   batchImportProgress: null,
   onStopBatchImport: () => {},
+  forceSync: null,
+  onForceSync: () => {},
   jobNotice: null,
   onRetryJob: () => {},
   onDismissJobNotice: () => {},
@@ -180,6 +182,13 @@ test('the speech sweep shows its progress, with no time estimate, and a × that 
   assert.doesNotMatch(html, /left<|Stop generating|Generating/);
 });
 
+test('Sync now shows that it is syncing, then that everything is up to date, or that it failed, with Retry', () => {
+  const syncing = renderJobs({ forceSync: 'syncing' });
+  assert.match(syncing, /<div role="status" class="[^"]*bg-indigo-600[^"]*"><svg[^>]*animate-spin[^>]*>.*?<\/svg><span class="min-w-0 truncate">Syncing…<\/span><\/div>/);
+  assert.match(renderJobs({ forceSync: 'done' }), /<div role="status" class="[^"]*bg-emerald-600[^"]*"><span class="min-w-0 truncate">Up to date<\/span><\/div>/);
+  assert.match(renderJobs({ forceSync: 'failed' }), /<div role="alert" class="[^"]*bg-rose-600[^"]*"><span class="min-w-0 truncate">Couldn’t sync<\/span><button type="button" class="[^"]*">Retry<\/button><\/div>/);
+});
+
 const importing = (current: number, total: number, stopping = false) =>
   ({ current, total, skipped: 0, failed: 0, saved: current, stopping });
 
@@ -219,11 +228,12 @@ test('the jobs come after the progress slot, and the last result just above the 
     jobPills: jobPills({
       speechProgress: { current: 10, total: 100 },
       batchImportProgress: importing(12, 40),
+      forceSync: 'syncing',
       jobNotice: { text: 'No duplicates found', tone: 'emerald', timeoutMs: 3_000 },
     }),
   });
   const order = ['data-notice-slot="progress"', 'Offline images · 3/40', 'Sentence audio · 10/100', 'Adding words · 12/40',
-    'No duplicates found', '1 review wasn’t accepted'].map(text => html.indexOf(text));
+    'Syncing…', 'No duplicates found', '1 review wasn’t accepted'].map(text => html.indexOf(text));
   assert.ok(order.every(index => index >= 0), `every notice renders: ${order}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order);
 });

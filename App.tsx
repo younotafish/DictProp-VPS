@@ -105,8 +105,8 @@ function SignedInApp({ user }: { user: AuthUser }) {
   } = libraryViews;
   const detail = useDetailView(libraryViews, library);
   const {
-    detailContext, liveDetailGroups, liveDetailSentenceItems, closeDetail, removeItemFromDetailContext,
-    removeSentenceFromDetailContext, handleViewStoredItem, handleViewSentence, prepareExampleSentence, handleOpenStudyExample,
+    detailContext, liveDetailGroups, liveDetailSentenceItems, closeDetail, handleViewStoredItem, handleViewSentence,
+    prepareExampleSentence, handleOpenStudyExample, removeItemFromDetailContext, removeSentenceFromDetailContext,
   } = detail;
   const undo = useUndoOffer(library, detail);
   const { undoMessage, closeUndoOffer, undoLastChange } = undo;
@@ -143,7 +143,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
   const offlineImages = useOfflineImages(library);
   const { imagePrefetchProgress, imageRestoreProgress, stopImageDownload, handleDownloadOfflineImages, handleRestoreImagesToServer } = offlineImages;
   const {
-    isLoaded, libraryReadFailed, retryLibraryLoad, openWithServerCopy, syncStatus, libraryWriteFailed, handleForceSync, handleSignOut,
+    isLoaded, libraryReadFailed, retryLibraryLoad, openWithServerCopy, forceSync, libraryWriteFailed, handleForceSync, handleSignOut,
   } = useLibrarySync(user.id, library, { flushPendingReviews, closeUndoOffer, prefetchImages: offlineImages.prefetchImages });
 
   const speech = useSpeechBackfill(jobs);
@@ -225,7 +225,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
         imagePrefetchProgress={imagePrefetchProgress}
         onStopImageDownload={stopImageDownload}
         imageRestoreProgress={imageRestoreProgress}
-        jobPills={(speechProgress || batchImportProgress || jobNotice) && (
+        jobPills={(speechProgress || batchImportProgress || forceSync || jobNotice) && (
           <Suspense fallback={null}>
             <ErrorBoundary variant="overlay">
               <JobPills
@@ -233,6 +233,8 @@ function SignedInApp({ user }: { user: AuthUser }) {
                 onHideSpeechProgress={stopWatchingSpeechGeneration}
                 batchImportProgress={batchImportProgress}
                 onStopBatchImport={stopBatchImport}
+                forceSync={forceSync}
+                onForceSync={handleForceSync}
                 jobNotice={jobNotice}
                 onRetryJob={retryJob}
                 onDismissJobNotice={dismissJobNotice}
@@ -332,7 +334,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
             user={user}
             onSignOut={handleSignOut}
             onViewRefusedReviews={openRefusedReviews}
-            syncStatus={syncStatus}
+            forceSyncRunning={forceSync === 'syncing'}
             onScroll={handleScroll}
             onForceSync={handleForceSync}
             isOnline={isOnline}

@@ -3,11 +3,13 @@ import test from 'node:test';
 import type { TtsBackfillStatus } from '../../services/api/tts.ts';
 import type { BatchImportTally } from '../../services/batchImport.ts';
 import {
-  describeBatchResult, describeDuplicateScan, describeSpeechResult, nextPollDelay, retryingPoll, type JobNotice,
+  describeBatchResult, describeDuplicateScan, describeSpeechResult, forceSyncText, nextPollDelay, retryingPoll,
+  type JobNotice,
 } from '../../services/jobNotices.ts';
 import { runSpeechSweep } from '../../services/speechSweep.ts';
 
-// services/jobNotices.ts: what each background job's result pill says, in what tone and for how long.
+// services/jobNotices.ts: what each background job's result pill says, in what tone and for how long, and what Sync
+// now says.
 
 const tally = (counts: Partial<BatchImportTally> = {}): BatchImportTally => ({
   added: 0, saved: 0, skipped: 0, failed: 0, failedWords: [], importedIds: [], ...counts,
@@ -138,4 +140,10 @@ test('no result says it with a check mark or an emoji', () => {
   ]) {
     assertPlain(notice);
   }
+});
+
+test('Sync now says it is syncing, then up to date, or that it could not sync', () => {
+  assert.equal(forceSyncText('syncing'), 'Syncing…');
+  assert.equal(forceSyncText('done'), 'Up to date');
+  assert.equal(forceSyncText('failed'), 'Couldn’t sync');
 });

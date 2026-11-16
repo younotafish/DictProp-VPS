@@ -2,7 +2,7 @@ import React from 'react';
 import { NoticePill, type NoticeAction } from './NoticePill';
 import type { BatchImportStatus } from '../hooks/useBatchImport';
 import type { SpeechProgress } from '../hooks/useSpeechBackfill';
-import { count, type JobNotice } from '../services/jobNotices';
+import { count, forceSyncText, type ForceSyncPhase, type JobNotice } from '../services/jobNotices';
 
 /**
  * The background jobs' pills in the notice stack (components/AppStatus). App renders them into the stack's progress
@@ -56,16 +56,19 @@ export interface JobPillsProps {
   /** A batch import under way, which the pill's × stops. */
   batchImportProgress: BatchImportStatus | null;
   onStopBatchImport: () => void;
+  /** Sync now under way or just ended (useLibrarySync); a failed one's Retry runs it again. */
+  forceSync: ForceSyncPhase | null;
+  onForceSync: () => void;
   /** A background job's result (services/jobNotices), with Retry when it offers one, and a × that dismisses it. */
   jobNotice: JobNotice | null;
   onRetryJob: (notice: JobNotice) => void;
   onDismissJobNotice: () => void;
 }
 
-/** The progress group's job pills, in order: the speech sweep, a batch import, then the last job's result. */
+/** The progress group's job pills, in order: the speech sweep, a batch import, Sync now, then the last job's result. */
 export const JobPills: React.FC<JobPillsProps> = ({
-  speechProgress, onHideSpeechProgress, batchImportProgress, onStopBatchImport, jobNotice, onRetryJob,
-  onDismissJobNotice,
+  speechProgress, onHideSpeechProgress, batchImportProgress, onStopBatchImport, forceSync, onForceSync, jobNotice,
+  onRetryJob, onDismissJobNotice,
 }) => (
   <>
     {speechProgress && (
@@ -82,6 +85,16 @@ export const JobPills: React.FC<JobPillsProps> = ({
       </NoticePill>
     )}
     {batchImportProgress && <BatchImportPill status={batchImportProgress} onStop={onStopBatchImport} />}
+    {forceSync && (
+      <NoticePill
+        tone={forceSync === 'syncing' ? 'indigo' : forceSync === 'done' ? 'emerald' : 'rose'}
+        role={forceSync === 'failed' ? 'alert' : 'status'}
+        spinner={forceSync === 'syncing'}
+        actions={forceSync === 'failed' ? [{ label: 'Retry', onClick: onForceSync }] : undefined}
+      >
+        {forceSyncText(forceSync)}
+      </NoticePill>
+    )}
     {jobNotice && (
       <JobNoticePill
         notice={jobNotice}

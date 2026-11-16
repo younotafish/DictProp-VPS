@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, startTransition } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
-import { getItemTitle, type ItemGroup, type StoredItem, type SyncStatus, type VocabCard } from '../types';
+import { getItemTitle, type ItemGroup, type StoredItem, type VocabCard } from '../types';
 import type { AuthUser } from '../services/auth';
 import { TextAnalyzer } from '../components/TextAnalyzer';
 import { BatchImport } from '../components/BatchImport';
@@ -48,7 +48,8 @@ interface NotebookProps {
   onSignOut: () => Promise<boolean>;
   /** Opens the list of reviews the server refused. */
   onViewRefusedReviews: () => void;
-  syncStatus: SyncStatus;
+  /** Sync now is running, so its tool shows busy; its pill reports how it ends. */
+  forceSyncRunning: boolean;
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
   onForceSync: () => void;
   /** The connection now, for what the user asks for (a lookup, voice search, the AI search's banner). */
@@ -91,7 +92,7 @@ interface NotebookProps {
 
 export const NotebookView: React.FC<NotebookProps> = ({
     items, onDelete, onSearch, onViewDetail,
-    user, onSignOut, onViewRefusedReviews, syncStatus, onScroll, onForceSync, isOnline, offline,
+    user, onSignOut, onViewRefusedReviews, forceSyncRunning, onScroll, onForceSync, isOnline, offline,
     isVocabSaved, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
     onBatchImport, batchImportRunning, onJSONImported,
@@ -449,7 +450,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
             onImportJSON={() => setShowJSONImport(true)}
             onDownloadOfflineImages={onDownloadOfflineImages}
             onForceSync={onForceSync}
-            syncStatus={syncStatus}
+            forceSyncRunning={forceSyncRunning}
             onGenerateAllSpeech={onGenerateAllSpeech}
             speechGenerationRunning={speechGenerationRunning}
             onRestoreImagesToServer={onRestoreImagesToServer}

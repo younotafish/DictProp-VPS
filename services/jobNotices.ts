@@ -3,10 +3,10 @@ import type { BatchImportOutcome } from './batchImport';
 import type { SpeechSweepOutcome } from './speechSweep';
 
 /**
- * What a background job says when it ends: a pill in the notice stack (components/JobPills), never a dialog, since
- * none of it asks for a decision; and how the speech sweep's watch rides out a failed progress check. It loads with
- * the notebook tools (services/libraryTools), so it stays out of the app's first chunk; elsewhere only `import type`
- * from here.
+ * What the background jobs and sync tell the user, as pills in the notice stack (components/JobPills), never a dialog,
+ * since none of it asks for a decision: each job's result and Sync now; and how the speech sweep's watch rides out a
+ * failed progress check. It loads with the notebook tools (services/libraryTools) and the pills, so it stays out of
+ * the app's first chunk; elsewhere only `import type` from here.
  */
 
 /** A job's result as its pill shows it. */
@@ -98,3 +98,10 @@ export function retryingPoll<T>(
     }
   };
 }
+
+/** Where a Sync now has got: still syncing, done, or failed. */
+export type ForceSyncPhase = 'syncing' | 'done' | 'failed';
+
+/** What the Sync now pill says; a failed one also offers Retry. */
+export const forceSyncText = (phase: ForceSyncPhase): string =>
+  phase === 'syncing' ? 'Syncing…' : phase === 'done' ? 'Up to date' : 'Couldn’t sync';
