@@ -168,7 +168,7 @@ Rows that need a connection grey out with "Needs a connection" once the connecti
 
 - **The scan** finds groups of cards saved under different forms of one word (run, ran, running), archived cards included. With none, a pill says "No duplicates found" for 3 seconds.
 - **The dialog** suggests a headword for each group, the base the other forms belong to ("run" for "ran"). A group starts ticked only when the evidence says it is one word; pairs that may be different words (find/found, lie/lay, saw/see, left/leave) start unticked under "Possibly different words", with each word's short definition. The button says what it will do, for example "Merge 5" over "relabels 7 cards, removes 2".
-- **Merging** relabels the cards to the headword and joins their forms. For each sense label it keeps the more reviewed card (then the richer one) and removes the others; a card with no sense label is never merged away. It pushes at once, with no undo. Review progress isn't merged: each card keeps its own, as the dialog says. While the ticked merges remove cards, the dialog warns: "Merging removes 2 duplicate cards of the same sense. Close other open tabs and devices first, so sync doesn’t bring them back."
+- **Merging** relabels the cards to the headword and joins their forms. For each sense label it keeps the more reviewed card (then the richer one) and removes the others; a card with no sense label is never merged away. It pushes at once, with no undo. Review progress isn't merged: each card keeps its own, as the dialog says. While the ticked merges remove cards, the dialog warns: "Merging removes 2 cards that repeat another card’s meaning label. Close other open tabs and devices first, so sync doesn’t bring them back."
 
 ### 4.8 Batch import and Import JSON
 
@@ -271,7 +271,7 @@ A sentence lesson is the card view for sentences: saved sentences, Real Life lin
 
 - **Where it opens:** a row on the Sentences tab, a line in a Real Life collection or a sentence in an essay (the lesson walks that list in its on-screen order, from the tapped sentence); a collection's or essay's Study button; the search box's saved-sentence suggestions; and "Open sentence review" on a word card (over the card) or under a study answer.
 - Each sentence is paired with its source card, the word it came from; P and ⌘1-4 act on that card.
-- An unsaved example opened from a word card or under a study answer is a preview: it has no review pill, Reset, Delete or picture button, and its right-hand button is "Save sentence". One opened under a study answer shows no pill after it is saved either.
+- An unsaved example opened from a word card or under a study answer is a preview: it has no review pill, Reset, Delete or picture button, and its right-hand button is "Save sentence". One opened under a study answer shows no pill after it is saved either, nor the memorized count beside its memory.
 
 ### 6.2 The sentence page
 
@@ -441,7 +441,7 @@ Saved words and phrases that aren't archived, each meaning on its own schedule; 
 - **The grades** are four buttons in one row (Again, Hard, Good, Easy; keys 1-4), each showing its next interval, in the slot where Show answer was. A tap within 350 ms of the reveal or of a grade is ignored.
 - A grade whose interval is under a day brings the card back at the end of the session: Again (10 minutes), and Hard on a new or relearning card (15 minutes). A card reviewed elsewhere since the session began (in the popup, the card view or on another device), deleted or archived is skipped. Time away from a prompt counts at most two minutes toward the review.
 - **The receipt line** above the grades names the last grade, for example "↶ walk · Good · next in 2d". It says "again later this session" when the card will come back, shows "Undoing…" during an undo, and adds "· saved on this device" while the grade waits to reach the server.
-- **Undo** (U, or the line's button) goes back one grade only, to the card, revealed. It needs the grade to have reached the server first ("This review is still syncing. Try undo again."). A failed undo says why, in the line for 4 seconds or on the summary: "This card changed since, so the review can’t be undone." when a later change to the card superseded the review, "Reconnect to undo this review." offline, and otherwise "The review could not be undone." A grade, ending the session or an undo stops only audio the session started.
+- **Undo** (U, or the line's button) goes back one grade only, to the card, revealed. It needs the grade to have reached the server first ("This review is still syncing. Try undo again."). A failed undo says why, in the line for 4 seconds or on the summary: "This card has changed since, so the review can’t be undone." when a later change to the card superseded the review, "Reconnect to undo this review." offline, and otherwise "The review could not be undone." A grade, ending the session or an undo stops only audio the session started.
 
 ### 8.6 Ending, the summary and reloads
 
@@ -513,7 +513,7 @@ Notices are pills in one column at the bottom centre: above the tab bar on the t
 | Can't save | Rose: "Couldn’t save on this device. Your changes still sync." Offline: "Couldn’t save on this device. Keep this tab open until you’re back online." | When saving to the device fails, until a save works; also over cards |
 | Stuck sync | Amber: "3 changes not synced", with Retry | Online and visible, after two failed pushes in a row and a minute since the first |
 | Offline | Amber: "Offline" | After 3 seconds without a connection, until it returns; on the tabs only |
-| Refused changes | Amber: "1 change stays on this device: the server refused it" ("3 changes stay on this device: the server refused them") | While an item holds content the server refused (invalid, or too large), until it changes and is sent again |
+| Refused changes | Amber, naming the one item: "“gamut” stays on this device: the server refused it" (a title over 20 characters is cut at a word, with the whole of it as the tooltip); "3 changes stay on this device: the server refused them" for several; with × | While an item holds content the server refused (invalid, or too large), until it changes and is sent again. × hides it until the server refuses another change or the app reloads |
 | Refused reviews | Amber: "1 review wasn’t accepted", with View | Until viewed or dismissed (11.3) |
 | Update | "Update ready" with Reload, or "Reload needed" | A new version waits until no card or popup is open; "Reload needed" (part of the app failed to load) shows at once |
 
@@ -550,7 +550,7 @@ Notices are pills in one column at the bottom centre: above the tab bar on the t
 
 ## 12. Accounts
 
-- **One owner.** DictProp signs in with Google only and admits one person. With `OWNER_GOOGLE_EMAIL` set, only that address can sign in; its first sign-in on an empty database creates the admin account, and later sign-ins need that account. Anyone else gets a page saying "This DictProp instance is private. If it’s yours, sign in with the Google account that owns it.", with a Back to DictProp link; a request that doesn't accept HTML still gets the JSON error.
+- **One owner.** DictProp signs in with Google only and admits one person. With `OWNER_GOOGLE_EMAIL` set, only that address can sign in; its first sign-in on an empty database creates the admin account, and later sign-ins need that account. Anyone else gets a page saying "This DictProp instance is private. If it’s yours, sign in with the Google account that owns it.", with a Back to DictProp link; a request that doesn't accept HTML still gets the JSON error. Every sign-in that doesn't finish ends on such a page, the sign-in rate limit's included: "Too many sign-in attempts from this device. Wait a minute, then start again from DictProp."
 - **The sign-in screen** reads "DictProp", "AI-powered vocabulary learning" and "Sign in with Google". Offline, the button reads "Connect to sign in" and stays disabled until the connection returns.
 - **Sessions:** an httpOnly cookie, whose token the server stores only as a hash. A session lasts 30 days, and using the app renews it once it has less than 23 days left, up to 180 days after you signed in. In practice you sign in again after three to four weeks away from the app, or every 180 days.
 - **Expiry while the app is open:** the app keeps the library and any unsynced changes on the device and shows the sign-in screen with "Your sign-in expired. Your library and any changes not yet synced are kept on this device. Sign in to pick up where you left off." The lookups, comparisons and scans the expiry interrupted run again after you sign in (3.3).
