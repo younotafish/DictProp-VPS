@@ -13,7 +13,7 @@ import { useLatest } from '../hooks/useStableValue';
 import { looksLikeSentence } from '../services/queryMode';
 import { useSearchQueue } from './search/useSearchQueue';
 import { useSheetPlayback } from './search/useSheetPlayback';
-import { useTimedMessage } from './search/useTimedMessage';
+import { useTimedMessage } from '../hooks/useTimedMessage';
 import { meaningAfterRefresh, stepMeaning, viewingIndexAfterDismiss, type SearchMode } from './search/searchViewing';
 import { SearchToasts, type SearchErrorToast } from './search/SearchToasts';
 import { SearchInputBar } from './search/SearchInputBar';
