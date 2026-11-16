@@ -6,7 +6,7 @@
  * or they'd join that code.
  */
 export { runBatchImport } from './batchImport';
-export { describeBatchResult } from './jobNotices';
+export { describeBatchResult, describeDuplicateScan } from './jobNotices';
 export { findDuplicateClusterViews } from './duplicateClusters';
 export { applyMerges } from './mergeDuplicates';
 export { restoreImagesToServer } from './imageRestore';

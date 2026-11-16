@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { BatchImportTally } from '../../services/batchImport.ts';
-import { describeBatchResult, type JobNotice } from '../../services/jobNotices.ts';
+import { describeBatchResult, describeDuplicateScan, type JobNotice } from '../../services/jobNotices.ts';
 
 // services/jobNotices.ts: what each background job's result pill says, in what tone and for how long.
 
@@ -40,10 +40,15 @@ test('a stopped import says what it added before the stop, on a dark pill for fo
   assert.equal(describeBatchResult({ kind: 'stopped', ...tally({ added: 1, failed: 2, failedWords: ['a', 'b'] }) }).text, 'Stopped · added 1 word');
 });
 
+test('a scan for duplicates that finds none says so for three seconds; one that finds some leaves it to the dialog', () => {
+  assert.deepEqual(describeDuplicateScan(0), { text: 'No duplicates found', tone: 'emerald', timeoutMs: 3_000 });
+  assert.equal(describeDuplicateScan(3), null);
+});
+
 test('no result says it with a check mark or an emoji', () => {
   for (const notice of [
     describeBatchResult({ kind: 'all-saved', listed: 2 }), done({ added: 2 }), done({ failed: 2 }), done({}),
-    describeBatchResult({ kind: 'stopped', ...tally() }),
+    describeBatchResult({ kind: 'stopped', ...tally() }), describeDuplicateScan(0),
   ]) {
     assertPlain(notice);
   }

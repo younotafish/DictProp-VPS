@@ -29,7 +29,14 @@ export function describeBatchResult(outcome: BatchImportOutcome): JobNotice {
   }
   const { added, skipped, failed, failedWords } = outcome;
   if (outcome.kind === 'stopped') return { text: `Stopped · added ${words(added)}`, tone: 'dark', timeoutMs: 4_000 };
-  if (failed > 0) return { text: `Couldn’t add ${words(failed)}`, tone: 'rose', timeoutMs: null, retryWords: failedWords };
-  const alreadySaved = skipped > 0 ? ` · ${count(skipped)} already saved` : '';
-  return { text: `${added > 0 ? `Added ${words(added)}` : 'Nothing new to add'}${alreadySaved}`, tone: 'emerald', timeoutMs: 4_000 };
+  if (failed > 0) {
+    return { text: `Couldn’t add ${words(failed)}`, tone: 'rose', timeoutMs: null, retryWords: failedWords };
+  }
+  const summary = added > 0 ? `Added ${words(added)}` : 'Nothing new to add';
+  const text = skipped > 0 ? `${summary} · ${count(skipped)} already saved` : summary;
+  return { text, tone: 'emerald', timeoutMs: 4_000 };
 }
+
+/** What a scan for variant duplicates says when it finds none; with clusters to review, their dialog opens instead. */
+export const describeDuplicateScan = (clusterCount: number): JobNotice | null =>
+  clusterCount === 0 ? { text: 'No duplicates found', tone: 'emerald', timeoutMs: 3_000 } : null;

@@ -1,30 +1,26 @@
 import { useCallback } from 'react';
 import { log } from '../services/logger';
 import { isActiveLibraryItem } from './useLibraryViews';
+import type { JobNotices } from './useJobNotice';
 import type { Library } from './useLibrary';
 import type { Overlays } from './useOverlays';
 
 export function useDuplicateMerge(
   { latestItemsRef, updateItems, persistChangedItems }: Pick<Library, 'latestItemsRef' | 'updateItems' | 'persistChangedItems'>,
-  { showNotice, setDuplicateClusters }: Pick<Overlays, 'showNotice' | 'setDuplicateClusters'>,
+  { setDuplicateClusters }: Pick<Overlays, 'setDuplicateClusters'>,
+  { showJobNotice }: Pick<JobNotices, 'showJobNotice'>,
 ) {
   // ── Find & merge variant duplicates (Phase 2 dedup tool) ──────────────────
   // Detection is read-only: cluster base words that are variants of one another
   // (run/running/ran), then open the review modal. Scans the whole notebook.
+  // Finding none is a passing pill (services/jobNotices); the merge itself stays a decision in the dialog.
   const handleFindDuplicates = useCallback(async () => {
-    const { findDuplicateClusterViews } = await import('../services/libraryTools');
+    const { findDuplicateClusterViews, describeDuplicateScan } = await import('../services/libraryTools');
     const detailed = findDuplicateClusterViews(latestItemsRef.current.filter(isActiveLibraryItem));
-
-    if (detailed.length === 0) {
-      showNotice({
-        title: 'No Duplicates Found',
-        message: 'No variant duplicates detected — your words are already consolidated. 🎉',
-        variant: 'success',
-      });
-      return;
-    }
-    setDuplicateClusters(detailed);
-  }, []);
+    const notice = describeDuplicateScan(detailed.length);
+    if (notice) showJobNotice(notice);
+    else setDuplicateClusters(detailed);
+  }, [latestItemsRef, setDuplicateClusters, showJobNotice]);
 
   // Apply the user-confirmed merges: relabel to canonical, union forms, dedupe senses,
   // and push the changed items immediately (like delete/SRS paths).
@@ -39,7 +35,7 @@ export function useDuplicateMerge(
     const changed = after.filter((item, index) => item !== before[index]);
     log(`🔀 Merge: ${changed.length} item(s) changed across ${merges.length} cluster(s)`);
     await persistChangedItems(changed, '🔀 Merge');
-  }, [updateItems, persistChangedItems]);
+  }, [latestItemsRef, setDuplicateClusters, updateItems, persistChangedItems]);
 
   return { handleFindDuplicates, handleMergeDuplicates };
 }

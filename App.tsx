@@ -148,7 +148,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
 
   const speech = useSpeechBackfill(overlays);
   const { ttsGenProgress, ttsGenAbortRef, handleGenerateAllSpeech } = speech;
-  const { handleFindDuplicates, handleMergeDuplicates } = useDuplicateMerge(library, overlays);
+  const { handleFindDuplicates, handleMergeDuplicates } = useDuplicateMerge(library, overlays, jobs);
   const actions = useLibraryActions(library, detail, undo);
   const {
     handleSave, handleAttachSentenceImage, handleDelete, handleArchive, handleRemoveVocabFromPhrase, handleUnarchive,
