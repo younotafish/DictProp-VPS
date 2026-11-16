@@ -165,8 +165,11 @@ export function applySchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_comparisons_user_id ON comparisons(user_id);
   `);
 
-  // Indexes no statement uses, or that repeat a key or the leading columns of another index. An older image
-  // recreates them if it is rolled back to.
+  // Indexes no statement uses, or that repeat a key or the leading columns of another index. Rolling back to the
+  // image deployed before these drops brings back all but two: idx_items_user_id, which it creates only when it
+  // adds the user_id column, and idx_review_event_items_event, which it drops as well. Its statements miss
+  // neither: idx_items_user_type and idx_items_user_revision lead with user_id, and review_event_items' primary
+  // key leads with event_id.
   db.exec(`
     DROP INDEX IF EXISTS idx_items_type;
     DROP INDEX IF EXISTS idx_items_updated;
