@@ -80,8 +80,13 @@ export type QueueAction =
   | { type: 'refresh-ready'; id: string; query: string; results: SearchResult }
   | { type: 'refresh-fail'; id: string }
   | { type: 'dismiss'; id: string }
-  /** Clear all: drops every finished entry (ready or failed) and keeps the ones still running. */
+  /** Clear all: drops every finished entry (ready or failed, see finishedEntries) and keeps the ones still running. */
   | { type: 'clear-finished' }
+  /** Undo of Clear all: puts back the entries it dropped, ahead of the entries there now, since they were asked for
+   *  earlier. A finished scan stays out (its expressions are entries of their own), and so does an entry asked for
+   *  again meanwhile, unless only its failure is there now, which then gives way to a restored result. Each keeps
+   *  its seen flag and failure; a refresh it was showing is over. Restoring twice puts nothing back twice. */
+  | { type: 'restore'; entries: readonly QueueItem[] }
   /** The sheet has shown the result. */
   | { type: 'mark-seen'; id: string }
   /** The lookup was asked for again, at `at`, while it was still running. */
@@ -96,6 +101,14 @@ const patch = (queue: QueueItem[], id: string, fields: Partial<QueueItem>): Queu
 
 /** Queued, or waiting on its answer. */
 const isRunning = (item: QueueItem): boolean => item.status === 'pending' || item.status === 'searching';
+
+/** Whether two entries stand for the same request: the same kind, and the same query, or the same words compared. */
+const sameAsk = (a: QueueItem, b: QueueItem): boolean => a.kind === b.kind && (a.kind === 'compare'
+  ? comparisonKey(a.words || []) === comparisonKey(b.words || [])
+  : sameQuery(a.query, b.query));
+
+/** What Clear all drops: every finished entry, ready or failed, scans included. */
+export const finishedEntries = (queue: readonly QueueItem[]): QueueItem[] => queue.filter(item => !isRunning(item));
 
 /** Whether a lookup of `query` would duplicate a lookup or comparison still running or ready (case-insensitively). */
 export const hasLiveDuplicate = (queue: readonly QueueItem[], query: string): boolean =>
@@ -165,6 +178,15 @@ export function searchQueueReducer(queue: QueueItem[], action: QueueAction): Que
       return queue.filter(item => item.id !== action.id);
     case 'clear-finished':
       return queue.filter(isRunning);
+    case 'restore': {
+      const present = new Set(queue.map(item => item.id));
+      const back = action.entries
+        .filter(entry => entry.kind !== 'scan' && !present.has(entry.id)
+          && !queue.some(item => sameAsk(item, entry) && (item.status !== 'failed' || entry.status === 'failed')))
+        .map(({ refreshing: _refreshing, ...entry }) => entry);
+      if (back.length === 0) return queue;
+      return [...back, ...queue.filter(item => !(item.status === 'failed' && back.some(entry => sameAsk(item, entry))))];
+    }
     case 'mark-seen':
       return patch(queue, action.id, { seen: true });
     case 'repeat-asked':

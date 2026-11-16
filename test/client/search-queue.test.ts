@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  PASSING_FAILURE_MS, classifyEnqueue, createRefreshLog, findLiveComparison, findLiveLookup, hasLiveDuplicate, isBusyOf, isQueued,
+  PASSING_FAILURE_MS, classifyEnqueue, createRefreshLog, findLiveComparison, findLiveLookup, finishedEntries, hasLiveDuplicate, isBusyOf, isQueued,
   nextFailureExpiry, openIndexForResults, pendingRequestsOf, queueUpdate, readyItemsOf, requestOf, runningCountOf,
   savedCardsResult, searchQueueReducer, summarizeFailures, unseenReadyCount, type QueueAction, type QueueItem,
 } from '../../components/search/searchQueue.ts';
@@ -480,4 +480,60 @@ test('a lookup keeps the sentence it came from, through a refresh in place, but 
   assert.deepEqual(requestOf(queue[0]), { kind: 'analyze', query: 'gamut' });
   assert.deepEqual(pendingRequestsOf(queue, 5), [{ request: { kind: 'analyze', query: 'gamut' }, at: 5 }]);
   assert.equal('context' in run([add('q-2', 'impasse')])[0], false, 'a lookup without one carries none');
+});
+
+/** A tray before Clear all: a seen result, an unseen comparison, a failure, a finished scan and a lookup still running. */
+const trayBeforeClearAll = (): QueueItem[] => run([
+  ...ready('q-1', 'gamut'), { type: 'mark-seen', id: 'q-1' },
+  { type: 'add-compare', id: 'q-2', words: ['fable', 'parable'], cached: comparison(['fable', 'parable']) },
+  add('q-3', 'impasse'), fail('q-3', { notAWord: true, retryable: false }),
+  scan('q-4'), { type: 'scan-done', id: 'q-4', found: 1, at: 2 },
+  add('q-5', 'tenuous'), start('q-5'),
+]);
+
+test('Clear all drops exactly the finished entries: results, failures and finished scans', () => {
+  const queue = trayBeforeClearAll();
+  assert.deepEqual(finishedEntries(queue).map(item => item.id), ['q-1', 'q-2', 'q-3', 'q-4']);
+  const cleared = searchQueueReducer(queue, { type: 'clear-finished' });
+  assert.deepEqual([...finishedEntries(queue), ...cleared].map(item => item.id).sort(), queue.map(item => item.id).sort());
+  assert.deepEqual(finishedEntries(cleared), []);
+});
+
+test('undoing Clear all puts the entries back as they were, in the order they were asked for, ahead of the running ones', () => {
+  const queue = trayBeforeClearAll();
+  const removed = finishedEntries(queue);
+  const restored = run([{ type: 'clear-finished' }, { type: 'restore', entries: removed }], queue);
+  assert.deepEqual(restored.map(item => item.id), ['q-1', 'q-2', 'q-3', 'q-5'], 'the finished scan stays out');
+  assert.deepEqual(restored.slice(0, 3), queue.slice(0, 3), 'seen flags, results and failures included');
+  assert.equal(summarizeFailures(restored, 1_000)?.newest.id, 'q-3');
+  assert.equal(unseenReadyCount(restored), 1);
+});
+
+test('entries put back go ahead of the entries asked for since Clear all', () => {
+  const queue = run(ready('q-1', 'gamut'));
+  const restored = run([{ type: 'clear-finished' }, ...ready('q-2', 'impasse'), { type: 'restore', entries: finishedEntries(queue) }], queue);
+  assert.deepEqual(restored.map(item => item.id), ['q-1', 'q-2']);
+});
+
+test('an entry asked for again since Clear all is not put back beside it', () => {
+  const queue = run([...ready('q-1', 'gamut'), { type: 'add-compare', id: 'q-2', words: ['fable', 'parable'], cached: comparison(['fable', 'parable']) }]);
+  const removed = finishedEntries(queue);
+  const askedAgain = run([{ type: 'clear-finished' }, add('q-3', 'Gamut'), { type: 'add-compare', id: 'q-4', words: ['parable', 'fable'], cached: null }], queue);
+  assert.deepEqual(run([{ type: 'restore', entries: removed }], askedAgain).map(item => item.id), ['q-3', 'q-4']);
+});
+
+test('a result put back replaces a failure of the same request since, but a failure never doubles one', () => {
+  const queue = run([...ready('q-1', 'gamut'), add('q-2', 'impasse'), fail('q-2')]);
+  const removed = finishedEntries(queue);
+  const failedAgain = run([{ type: 'clear-finished' }, add('q-3', 'gamut'), fail('q-3'), add('q-4', 'impasse'), fail('q-4')], queue);
+  assert.deepEqual(run([{ type: 'restore', entries: removed }], failedAgain).map(item => [item.id, item.status]), [['q-1', 'ready'], ['q-4', 'failed']]);
+});
+
+test('an entry is put back without the refresh it was showing, and restoring twice puts nothing back twice', () => {
+  const queue = run([...ready('q-1', 'gamut'), { type: 'refresh-start', id: 'q-1' }]);
+  const removed = finishedEntries(queue);
+  const restored = run([{ type: 'clear-finished' }, { type: 'restore', entries: removed }], queue);
+  assert.equal('refreshing' in restored[0], false);
+  assert.equal(searchQueueReducer(restored, { type: 'restore', entries: removed }), restored);
+  assert.deepEqual(searchQueueReducer([], { type: 'restore', entries: [] }), []);
 });

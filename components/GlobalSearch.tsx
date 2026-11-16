@@ -20,7 +20,7 @@ import {
   clampMeaning, meaningAfterRefresh, neighbourAfterDismiss, resolveViewing, type SearchMode,
 } from './search/searchViewing';
 import { searchSheetKeys, type SheetAction } from './search/searchSheetKeys';
-import { nextFailureExpiry, openIndexForResults, summarizeFailures } from './search/searchQueue';
+import { finishedEntries, nextFailureExpiry, openIndexForResults, summarizeFailures } from './search/searchQueue';
 import { SearchToasts, type SearchErrorToast } from './search/SearchToasts';
 import { SearchInputBar } from './search/SearchInputBar';
 import { SearchResultsSheet } from './search/SearchResultsSheet';
@@ -61,6 +61,8 @@ interface Props {
   aboveTabBar?: boolean;
   /** A decision dialog is open (App's useOverlays().modalOpen), so the status line stays out of its way. */
   statusHidden?: boolean;
+  /** Offers `undo` on the app's undo pill, labelled `message`: Clear all offers to put the results back. */
+  onOfferUndo?: (message: string, undo: () => void) => void;
 }
 
 /**
@@ -68,7 +70,7 @@ interface Props {
  * queue of lookups and comparisons lives in search/useSearchQueue; this component holds what's on screen (the
  * mode, the open result and meaning, the query) and the actions on it, and composes the pieces in search/.
  */
-export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence, aboveTabBar, statusHidden }) => {
+export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence, aboveTabBar, statusHidden, onOfferUndo }) => {
   const [mode, setMode] = useState<SearchMode>('idle');
   const [query, setQuery] = useState('');
   // The open result, by its queue entry's id (its position among the ready results moves as earlier lookups finish),
@@ -310,13 +312,19 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     if (word) speakSheetWord(word);
   }, [readyItems, updateQueue, stopSheetAudio, speakSheetWord]);
 
-  // Clear all completed items
+  // Clear all drops every finished entry and closes the sheet; the undo pill then offers to put the results back,
+  // failures included, without opening the sheet again.
   const clearQueue = useCallback(() => {
+    const removed = finishedEntries(queue);
     updateQueue({ type: 'clear-finished' });
     setMode('idle');
     setViewingId(null);
     setViewingVocabIdx(0);
-  }, [updateQueue]);
+    const results = removed.filter(item => item.kind !== 'scan' && item.status === 'ready').length;
+    if (results > 0 && onOfferUndo) {
+      onOfferUndo(`Cleared ${results} ${results === 1 ? 'result' : 'results'}`, () => updateQueue({ type: 'restore', entries: removed }));
+    }
+  }, [queue, updateQueue, onOfferUndo]);
 
   const handleFloatingClick = () => {
     // Always open input — lets user search more even when results are ready
