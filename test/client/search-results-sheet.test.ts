@@ -24,6 +24,7 @@ const sheet = (props: Partial<SheetProps> & Pick<SheetProps, 'viewingItem'>) => 
   meaningCount: props.viewingItem.results?.vocabs.length ?? 0,
   readyItems: [props.viewingItem],
   resultIndex: 0,
+  runningCount: 0,
   onShowResult: () => {},
   isVocabSaved: () => false,
   onClose: () => {},
@@ -62,4 +63,21 @@ test('in the strip, a result the sheet has not shown yet carries a dot', () => {
 test('the open result never carries the dot, since it is being seen', () => {
   const readyItems = [lookup('gamut', 1, true), lookup('impasse'), lookup('tangent')];
   assert.deepEqual(chipsOf(sheet({ viewingItem: readyItems[1], readyItems, resultIndex: 1 })), ['gamut', 'impasse', 'tangent •']);
+});
+
+/** The header's count of lookups still running, as its number and what it says to a screen reader, or null. */
+const runningOf = (markup: string) => {
+  const match = /<span role="status" class="flex items-center gap-1 text-xs font-medium text-indigo-500 shrink-0"><svg[^>]*class="lucide lucide-loader-circle animate-spin"[^>]*>.*?<\/svg><span aria-hidden="true">(\d+)<\/span><span class="sr-only">([^<]*)<\/span><\/span>/.exec(markup);
+  return match ? { shown: Number(match[1]), said: match[2] } : null;
+};
+
+test('while lookups run, the sheet header shows a spinner and how many', () => {
+  assert.deepEqual(runningOf(sheet({ viewingItem: lookup('gamut'), runningCount: 2 })), { shown: 2, said: '2 lookups running' });
+  assert.deepEqual(runningOf(sheet({ viewingItem: lookup('gamut'), runningCount: 1 })), { shown: 1, said: '1 lookup running' });
+});
+
+test('with nothing running, the sheet header has no spinner', () => {
+  const markup = sheet({ viewingItem: lookup('gamut') });
+  assert.equal(runningOf(markup), null);
+  assert.doesNotMatch(markup, /animate-spin|role="status"/);
 });

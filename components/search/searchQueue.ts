@@ -1,18 +1,20 @@
 import { comparisonKey, type ComparisonResult, type SearchResult, type VocabCard } from '../../types';
 
 /**
- * The search queue as data: every lookup and comparison the search button runs, and the state changes it goes
- * through. Lookups and comparisons share the queue, so every count includes both. The functions here are pure, apart
- * from the counts the refresh log keeps; useSearchQueue runs the requests and applies their outcomes through
- * searchQueueReducer.
+ * The search queue as data: every lookup, comparison and sentence scan the search button runs, and the state changes
+ * it goes through. Lookups and comparisons share the queue, so every count of results includes both; a scan only
+ * finds the expressions it queues as lookups, so it shows no result and counts only towards being busy. The
+ * functions here are pure, apart from the counts the refresh log keeps; useSearchQueue runs the requests and applies
+ * their outcomes through searchQueueReducer.
  */
 
-/** One entry of the search queue: a lookup or a comparison, from the moment it's asked for until it's dismissed. */
+/** One entry of the search queue: a lookup, a comparison or a scan, from the moment it's asked for until it's dismissed. */
 export interface QueueItem {
   id: string;
-  kind: 'lookup' | 'compare';            // 'lookup' = analyze a word; 'compare' = compare 2+ words
-  query: string;                         // search: the query; compare: "a vs b" for display
-  status: 'pending' | 'searching' | 'ready' | 'failed';
+  kind: 'lookup' | 'compare' | 'scan';   // 'lookup' = analyze a word; 'compare' = compare 2+ words; 'scan' = find a
+                                         // sentence's uncommon expressions and look each one up
+  query: string;                         // lookup: the query; compare: "a vs b" for display; scan: the sentence
+  status: 'pending' | 'searching' | 'ready' | 'failed'; // a scan is 'ready' once it has finished
   results: SearchResult | null;          // search result
   words?: string[];                      // compare: the words being compared
   comparison?: ComparisonResult | null;  // compare result
@@ -26,18 +28,30 @@ export interface QueueItem {
   repeatAt?: number;
   /** Whether the sheet has shown the result. The search button and the results pill count only the others. */
   seen: boolean;
+  /** lookup: the scan that found this expression in a sentence. */
+  scanId?: string;
+  /** scan, once finished: how many expressions it found, and the sentence in English when it was written in Chinese. */
+  found?: number;
+  translation?: string;
+  /** scan: when it finished. */
+  finishedAt?: number;
 }
 
 export type QueueAction =
   /** A lookup of `query` (trimmed). A refresh (forceAI) replaces every entry for the same query; otherwise a
-   *  duplicate that hasn't failed leaves the queue as it is, and a failed lookup of the query gives way to it. */
-  | { type: 'add-search'; id: string; query: string; forceAI: boolean; analyzeMode?: 'batch' }
+   *  duplicate that hasn't failed leaves the queue as it is, and a failed lookup of the query gives way to it. An
+   *  expression a scan found carries the scan's id. Scans are never duplicates of a lookup, nor replaced by one. */
+  | { type: 'add-search'; id: string; query: string; forceAI: boolean; analyzeMode?: 'batch'; scanId?: string }
   /** A comparison of `words` (trimmed, two or more): ready at once when it was saved before. */
   | { type: 'add-compare'; id: string; words: string[]; cached: ComparisonResult | null }
+  /** A scan of the sentence `query` (trimmed): nothing while a scan of it is still running; a failed one gives way. */
+  | { type: 'add-scan'; id: string; query: string }
   /** The request went out, at `at`. */
   | { type: 'start'; id: string; at: number }
   | { type: 'search-ready'; id: string; results: SearchResult }
   | { type: 'compare-ready'; id: string; comparison: ComparisonResult }
+  /** The scan finished at `at`, finding `found` expressions; `translation` is the sentence in English, if it was Chinese. */
+  | { type: 'scan-done'; id: string; found: number; translation?: string; at: number }
   | { type: 'fail'; id: string }
   /** An in-place refresh of a ready lookup: it keeps showing the old result until the fresh one arrives. */
   | { type: 'refresh-start'; id: string }
@@ -58,21 +72,24 @@ const sameQuery = (a: string, b: string): boolean => queryKey(a) === queryKey(b)
 const patch = (queue: QueueItem[], id: string, fields: Partial<QueueItem>): QueueItem[] =>
   queue.map(item => item.id === id ? { ...item, ...fields } : item);
 
-/** Whether a lookup of `query` would duplicate an entry still running or ready (case-insensitively). */
+/** Queued, or waiting on its answer. */
+const isRunning = (item: QueueItem): boolean => item.status === 'pending' || item.status === 'searching';
+
+/** Whether a lookup of `query` would duplicate a lookup or comparison still running or ready (case-insensitively). */
 export const hasLiveDuplicate = (queue: readonly QueueItem[], query: string): boolean =>
-  queue.some(item => sameQuery(item.query, query) && item.status !== 'failed');
+  queue.some(item => item.kind !== 'scan' && sameQuery(item.query, query) && item.status !== 'failed');
 
 export function searchQueueReducer(queue: QueueItem[], action: QueueAction): QueueItem[] {
   switch (action.type) {
     case 'add-search': {
-      const { id, query, forceAI, analyzeMode } = action;
+      const { id, query, forceAI, analyzeMode, scanId } = action;
       if (!forceAI && hasLiveDuplicate(queue, query)) return queue;
       const replaces = forceAI
-        ? (item: QueueItem) => sameQuery(item.query, query)
+        ? (item: QueueItem) => item.kind !== 'scan' && sameQuery(item.query, query)
         : (item: QueueItem) => item.kind === 'lookup' && item.status === 'failed' && sameQuery(item.query, query);
       return [
         ...queue.filter(item => !replaces(item)),
-        { id, kind: 'lookup', query, status: 'pending', results: null, seen: false, forceAI, analyzeMode },
+        { id, kind: 'lookup', query, status: 'pending', results: null, seen: false, forceAI, analyzeMode, ...(scanId ? { scanId } : {}) },
       ];
     }
     case 'add-compare': {
@@ -82,12 +99,25 @@ export function searchQueueReducer(queue: QueueItem[], action: QueueAction): Que
         status: cached ? 'ready' : 'pending', results: null, comparison: cached, seen: false,
       }];
     }
+    case 'add-scan': {
+      const { id, query } = action;
+      const scanOf = (item: QueueItem) => item.kind === 'scan' && sameQuery(item.query, query);
+      if (queue.some(item => scanOf(item) && isRunning(item))) return queue;
+      return [
+        ...queue.filter(item => !(scanOf(item) && item.status === 'failed')),
+        { id, kind: 'scan', query, status: 'pending', results: null, seen: false },
+      ];
+    }
     case 'start':
       return patch(queue, action.id, { status: 'searching', startedAt: action.at });
     case 'search-ready':
       return patch(queue, action.id, { status: 'ready', results: action.results });
     case 'compare-ready':
       return patch(queue, action.id, { status: 'ready', comparison: action.comparison });
+    case 'scan-done': {
+      const { found, translation, at } = action;
+      return patch(queue, action.id, { status: 'ready', found, ...(translation ? { translation } : {}), finishedAt: at });
+    }
     case 'fail':
       return patch(queue, action.id, { status: 'failed' });
     case 'refresh-start':
@@ -100,7 +130,7 @@ export function searchQueueReducer(queue: QueueItem[], action: QueueAction): Que
     case 'dismiss':
       return queue.filter(item => item.id !== action.id);
     case 'clear-finished':
-      return queue.filter(item => item.status === 'pending' || item.status === 'searching');
+      return queue.filter(isRunning);
     case 'mark-seen':
       return patch(queue, action.id, { seen: true });
     case 'repeat-asked':
@@ -123,7 +153,7 @@ export const findLiveLookup = (queue: readonly QueueItem[], query: string): Queu
 
 /**
  * What asking again for `query` does: 'open' its ready result, say it's still 'running', or queue a 'new' lookup
- * when none is live (a failed one is asked for again). Only lookups count, not comparisons.
+ * when none is live (a failed one is asked for again). Only lookups count, not comparisons or sentence scans.
  */
 export function classifyEnqueue(queue: readonly QueueItem[], query: string): 'open' | 'running' | 'new' {
   const live = findLiveLookup(queue, query);
@@ -153,8 +183,9 @@ export function createRefreshLog() {
   };
 }
 
-/** The results the sheet can show, in the order they were asked for. */
-export const readyItemsOf = (queue: readonly QueueItem[]): QueueItem[] => queue.filter(item => item.status === 'ready');
+/** The results the sheet can show, in the order they were asked for: ready lookups and comparisons. */
+export const readyItemsOf = (queue: readonly QueueItem[]): QueueItem[] =>
+  queue.filter(item => item.status === 'ready' && item.kind !== 'scan');
 
 /** The ready results the sheet hasn't shown yet: what the search button and the results pill count. */
 export const unseenReadyCount = (queue: readonly QueueItem[]): number => readyItemsOf(queue).filter(item => !item.seen).length;
@@ -165,9 +196,12 @@ export function openIndexForResults(readyItems: readonly QueueItem[]): number {
   return unseen >= 0 ? unseen : Math.max(0, readyItems.length - 1);
 }
 
-/** Lookups and comparisons waiting for their request or waiting on it. */
-export const busyCountOf = (queue: readonly QueueItem[]): number =>
-  queue.filter(item => item.status === 'searching' || item.status === 'pending').length;
+/** Lookups and comparisons waiting for their request or waiting on it: the count the button and the sheet show. */
+export const runningCountOf = (queue: readonly QueueItem[]): number =>
+  queue.filter(item => item.kind !== 'scan' && isRunning(item)).length;
+
+/** Whether anything is still running, sentence scans included: the button spins until each one has finished. */
+export const isBusyOf = (queue: readonly QueueItem[]): boolean => queue.some(isRunning);
 
 /** The comparison of the word set `key` (a comparisonKey) that's queued, running or ready, if any. */
 export const findLiveComparison = (queue: readonly QueueItem[], key: string): QueueItem | undefined =>

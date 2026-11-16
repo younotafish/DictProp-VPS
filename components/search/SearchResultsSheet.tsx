@@ -15,6 +15,8 @@ interface Props {
   /** Every ready result, and the open one's position among them. */
   readyItems: QueueItem[];
   resultIndex: number;
+  /** Lookups and comparisons still running, such as words looked up from the open card. */
+  runningCount: number;
   /** Opens another result at its first meaning. */
   onShowResult: (index: number) => void;
   isVocabSaved: (vocab: VocabCard) => boolean;
@@ -32,7 +34,7 @@ interface Props {
  * buttons; the open comparison or meaning; and a strip of every ready result, with Save all and Clear all.
  */
 export const SearchResultsSheet: React.FC<Props> = ({
-  dialogRef, viewingItem, meaningIndex, meaningCount, readyItems, resultIndex, onShowResult,
+  dialogRef, viewingItem, meaningIndex, meaningCount, readyItems, resultIndex, runningCount, onShowResult,
   isVocabSaved, onClose, onSaveWord, onDismiss, onSaveAll, onClearAll, children,
 }) => (
   <>
@@ -61,6 +63,14 @@ export const SearchResultsSheet: React.FC<Props> = ({
             {viewingItem.refreshing && (
               <span className="flex items-center gap-1 text-xs font-medium text-indigo-500 shrink-0">
                 <Loader2 size={12} className="animate-spin" /> Refreshing…
+              </span>
+            )}
+            {/* The search button is hidden under the sheet, so the sheet shows the lookups still running itself. */}
+            {runningCount > 0 && (
+              <span role="status" className="flex items-center gap-1 text-xs font-medium text-indigo-500 shrink-0">
+                <Loader2 size={12} className="animate-spin" />
+                <span aria-hidden="true">{runningCount}</span>
+                <span className="sr-only">{`${runningCount} ${runningCount === 1 ? 'lookup' : 'lookups'} running`}</span>
               </span>
             )}
             {meaningCount > 1 && (

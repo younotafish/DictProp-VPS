@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  busyCountOf, classifyEnqueue, createRefreshLog, findLiveComparison, findLiveLookup, hasLiveDuplicate, isQueued,
-  openIndexForResults, queueUpdate, readyItemsOf, savedCardsResult, searchQueueReducer, unseenReadyCount,
+  classifyEnqueue, createRefreshLog, findLiveComparison, findLiveLookup, hasLiveDuplicate, isBusyOf, isQueued,
+  openIndexForResults, queueUpdate, readyItemsOf, runningCountOf, savedCardsResult, searchQueueReducer, unseenReadyCount,
   type QueueAction, type QueueItem,
 } from '../../components/search/searchQueue.ts';
 import { comparisonKey, type ComparisonResult, type SearchResult, type VocabCard } from '../../types.ts';
@@ -137,14 +137,16 @@ test('ready results keep the order they were asked for, not the order they finis
   assert.deepEqual(readyItemsOf(queue).map(item => item.id), ['q-1', 'q-2']);
 });
 
-test('the busy count covers queued and running lookups and comparisons', () => {
+test('the running count covers queued and running lookups and comparisons', () => {
   const queue = run([
     add('q-1', 'a'), add('q-2', 'b'), start('q-2'),
     { type: 'add-compare', id: 'q-3', words: ['x', 'y'], cached: null },
     add('q-4', 'c'), { type: 'search-ready', id: 'q-4', results: result('c') },
     add('q-5', 'd'), { type: 'fail', id: 'q-5' },
   ]);
-  assert.equal(busyCountOf(queue), 3);
+  assert.equal(runningCountOf(queue), 3);
+  assert.equal(isBusyOf(queue), true);
+  assert.equal(isBusyOf(run([{ type: 'fail', id: 'q-1' }, { type: 'fail', id: 'q-2' }, { type: 'fail', id: 'q-3' }], queue)), false);
 });
 
 test('a comparison is found by its word set in any order, unless it failed', () => {
@@ -266,4 +268,71 @@ test('opening the results starts at the first one not seen yet, in the order the
   const allSeen = run([{ type: 'mark-seen', id: 'q-2' }, { type: 'mark-seen', id: 'q-3' }], queue);
   assert.equal(openIndexForResults(readyItemsOf(allSeen)), 2, 'the newest request');
   assert.equal(openIndexForResults([]), 0);
+});
+
+const SENTENCE = 'The gamut of emotions ran wild at the impasse.';
+const scan = (id: string, query = SENTENCE): QueueAction => ({ type: 'add-scan', id, query });
+
+test('a sentence scan joins the queue as pending, and records what it found once it finishes', () => {
+  assert.deepEqual(run([scan('q-1')]), [{ id: 'q-1', kind: 'scan', query: SENTENCE, status: 'pending', results: null, seen: false }]);
+  const finished = run([scan('q-1'), start('q-1', 1_000), { type: 'scan-done', id: 'q-1', found: 2, at: 4_000 }]);
+  assert.deepEqual(finished, [{
+    id: 'q-1', kind: 'scan', query: SENTENCE, status: 'ready', results: null, seen: false, startedAt: 1_000, found: 2, finishedAt: 4_000,
+  }]);
+  const chinese = run([scan('q-1', '今天天气很好，我们去公园散步吧。'), { type: 'scan-done', id: 'q-1', found: 1, translation: 'The weather is nice.', at: 2 }]);
+  assert.equal(chinese[0].translation, 'The weather is nice.');
+  assert.equal(run([scan('q-1'), { type: 'fail', id: 'q-1' }])[0].status, 'failed');
+});
+
+test('overlapping scans keep the search busy until every one of them has finished', () => {
+  const both = run([scan('q-1'), scan('q-2', 'Another sentence entirely, with its own words.'), start('q-1'), start('q-2')]);
+  assert.equal(isBusyOf(both), true);
+  const oneLeft = run([{ type: 'scan-done', id: 'q-1', found: 0, at: 2 }], both);
+  assert.equal(isBusyOf(oneLeft), true, 'the first scan finishing leaves the second running');
+  assert.equal(isBusyOf(run([{ type: 'fail', id: 'q-2' }], oneLeft)), false);
+});
+
+test('a scan is never a result, a lookup running, or something to open', () => {
+  const queue = run([
+    scan('q-1'), start('q-1'), { type: 'scan-done', id: 'q-1', found: 1, at: 2 },
+    scan('q-2', 'A second sentence that is still being scanned.'),
+    ...ready('q-3', 'gamut'),
+  ]);
+  assert.deepEqual(readyItemsOf(queue).map(item => item.id), ['q-3']);
+  assert.equal(unseenReadyCount(queue), 1);
+  assert.equal(runningCountOf(queue), 0, 'the scan still running only keeps the search busy');
+  assert.equal(isBusyOf(queue), true);
+});
+
+test('the expressions a scan finds carry its id, and nothing else does', () => {
+  const queue = run([scan('q-1'), add('q-2', 'gamut', { analyzeMode: 'batch', scanId: 'q-1' }), add('q-3', 'impasse')]);
+  assert.equal(queue[1].scanId, 'q-1');
+  assert.equal('scanId' in queue[2], false);
+});
+
+test('scanning a sentence that is still being scanned adds nothing, and a failed scan of it gives way to the new one', () => {
+  const running = run([scan('q-1'), start('q-1')]);
+  assert.equal(searchQueueReducer(running, scan('q-2', 'the GAMUT of emotions ran wild at the impasse.')), running, 'whatever its case');
+  assert.deepEqual(run([{ type: 'fail', id: 'q-1' }, scan('q-2')], running).map(item => [item.id, item.status]), [['q-2', 'pending']]);
+  const finished = run([{ type: 'scan-done', id: 'q-1', found: 1, at: 2 }, scan('q-2')], running);
+  assert.deepEqual(finished.map(item => [item.id, item.status]), [['q-1', 'ready'], ['q-2', 'pending']], 'a finished scan can be run again');
+});
+
+test('clear all drops finished and failed scans and keeps the ones still running', () => {
+  const queue = run([
+    scan('q-1'), { type: 'scan-done', id: 'q-1', found: 0, at: 2 },
+    scan('q-2', 'A sentence still being scanned, a long one.'), start('q-2'),
+    scan('q-3', 'A sentence whose scan failed, sadly enough.'), { type: 'fail', id: 'q-3' },
+    ...ready('q-4', 'gamut'),
+  ]);
+  assert.deepEqual(searchQueueReducer(queue, { type: 'clear-finished' }).map(item => item.id), ['q-2']);
+});
+
+test('a lookup never takes a scan of the same text for a duplicate, and a refresh leaves it running', () => {
+  const queue = run([scan('q-1'), start('q-1')]);
+  assert.equal(hasLiveDuplicate(queue, SENTENCE), false);
+  assert.equal(classifyEnqueue(queue, SENTENCE), 'new');
+  assert.equal(findLiveLookup(queue, SENTENCE), undefined);
+  assert.deepEqual(run([add('q-2', SENTENCE)], queue).map(item => [item.id, item.kind]), [['q-1', 'scan'], ['q-2', 'lookup']]);
+  assert.deepEqual(run([add('q-2', SENTENCE, { forceAI: true })], queue).map(item => [item.id, item.kind]), [['q-1', 'scan'], ['q-2', 'lookup']]);
 });

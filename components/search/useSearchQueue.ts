@@ -9,8 +9,8 @@ import { looksLikeSentence } from '../../services/queryMode';
 import { useLatest } from '../../hooks/useStableValue';
 import { runLookup } from './runLookup';
 import {
-  busyCountOf, createRefreshLog, findLiveComparison, findLiveLookup, isQueued, queueUpdate, readyItemsOf, savedCardsResult,
-  searchQueueReducer, unseenReadyCount, type QueueAction, type QueueItem,
+  createRefreshLog, findLiveComparison, findLiveLookup, isBusyOf, isQueued, queueUpdate, readyItemsOf, runningCountOf,
+  savedCardsResult, searchQueueReducer, unseenReadyCount, type QueueAction, type QueueItem,
 } from './searchQueue';
 
 let queueIdCounter = 0;
@@ -30,10 +30,10 @@ interface Options {
 }
 
 /**
- * The search queue's lifecycle. Lookups and comparisons join it from the search box, from the window's
- * 'global-search' and 'global-compare' events, and from a resume after signing in again; every pending entry
- * starts at once and runs once; each settles as ready, opening in the sheet when that was asked for, or as
- * failed, with the error toast.
+ * The search queue's lifecycle. Lookups, comparisons and sentence scans join it from the search box, from the
+ * window's 'global-search' and 'global-compare' events, and from a resume after signing in again; every pending
+ * entry starts at once and runs once; each settles as ready, opening in the sheet when that was asked for, or as
+ * failed, with the error toast. A finished scan queues a lookup of each expression it found.
  */
 export function useSearchQueue({
   findSavedByWord, onRefreshReplace, onCompareReady, openWhenReady, showError, clearError, showStatus,
@@ -41,14 +41,13 @@ export function useSearchQueue({
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const processingIdsRef = useRef<Set<string>>(new Set()); // prevents a re-render from starting an item twice
   const queueRef = useLatest(queue); // the latest queue, for checks outside a render (asking again, a superseded request)
-  const [scanning, setScanning] = useState(false); // sentence → expression scan in flight (pre-enqueue)
   const [refreshLog] = useState(createRefreshLog); // the forced lookups asked for, so an in-place refresh knows it was replaced
 
   // Add a query to the queue. forceAI = a refresh: re-run the AI even if the word is saved, and
   // replace any existing queue entry for it so the fresh result supersedes the old/reused one.
   // Asking again for a word whose result is ready opens it, and for one still running says so instead of sending it
   // again. An expression found in a sentence never opens by itself, so its repeat is only skipped.
-  const enqueue = useCallback((q: string, opts?: { forceAI?: boolean; analyzeMode?: 'batch' }) => {
+  const enqueue = useCallback((q: string, opts?: { forceAI?: boolean; analyzeMode?: 'batch'; scanId?: string }) => {
     const trimmed = q.trim();
     if (!trimmed) return;
     const forceAI = !!opts?.forceAI;
@@ -68,7 +67,7 @@ export function useSearchQueue({
     const id = `q-${++queueIdCounter}`;
     if (forceAI) refreshLog.note(trimmed);
     setQueue(prev => {
-      const next = searchQueueReducer(prev, { type: 'add-search', id, query: trimmed, forceAI, analyzeMode });
+      const next = searchQueueReducer(prev, { type: 'add-search', id, query: trimmed, forceAI, analyzeMode, scanId: opts?.scanId });
       if (next === prev) log('🔍 Queue: skipping duplicate "' + trimmed + '"');
       else log('🔍 Queue: adding "' + trimmed + '"' + (forceAI ? ' (force refresh)' : '') + (analyzeMode ? ' (' + analyzeMode + ')' : ''));
       return next;
@@ -102,36 +101,21 @@ export function useSearchQueue({
   // is first scanned for its uncommon expressions, and each is then queued for its OWN full analysis
   // (batch mode), so they show up in the popup exactly like manually-searched words — to browse and save.
   // Chinese is translated to English inside the scan; a Chinese word/short phrase still analyzes directly.
-  const submitQuery = useCallback(async (raw: string) => {
+  // The scan is a queue entry of its own (see processItem), so overlapping scans each keep the button busy.
+  const submitQuery = useCallback((raw: string) => {
     const q = raw.trim();
     if (!q) return;
     if (!looksLikeSentence(q)) {
       enqueue(q); // word / short phrase → current direct path (one card set)
       return;
     }
-    setScanning(true);
-    try {
-      const { words, translation, sourceLang } = await detectVocabulary(q);
-      if (words.length === 0) {
-        showStatus('No advanced expressions found in that sentence.');
-        return;
-      }
-      const n = words.length;
-      const noun = n === 1 ? 'expression' : 'expressions';
-      showStatus(
-        sourceLang === 'zh' && translation
-          ? `“${translation}” — analyzing ${n} ${noun}…`
-          : `Found ${n} ${noun} — analyzing…`
-      );
-      for (const w of words) enqueue(w.word, { analyzeMode: 'batch' });
-    } catch (err) {
-      warn('🔍 Sentence scan failed "' + q + '":', (err as Error | undefined)?.message);
-      if (isAuthenticationError(err)) rememberSearchRetry({ query: q });
-      showError(describeSearchError(q, err), isRetryableSearchError(err) ? q : undefined);
-    } finally {
-      setScanning(false);
-    }
-  }, [enqueue, showError, showStatus]);
+    const id = `q-${++queueIdCounter}`;
+    setQueue(prev => {
+      const next = searchQueueReducer(prev, { type: 'add-scan', id, query: q });
+      log(next === prev ? '🔍 Queue: already scanning "' + q + '"' : '🔍 Queue: scanning "' + q + '"');
+      return next;
+    });
+  }, [enqueue]);
 
   // What every AI lookup reads and changes beyond its own queue entry (see runLookup). The library is read through a
   // ref, as it is when a request settles, not as it was when the request started. The audio is generated if it
@@ -150,6 +134,30 @@ export function useSearchQueue({
   const processItem = useCallback((item: QueueItem) => {
     const itemId = item.id;
     const done = () => { processingIdsRef.current.delete(itemId); };
+
+    // A sentence scan finds the sentence's uncommon expressions and queues a lookup of each.
+    if (item.kind === 'scan') {
+      const q = item.query;
+      setQueue(queueUpdate({ type: 'start', id: itemId, at: Date.now() }));
+      detectVocabulary(q).then(({ words, translation, sourceLang }) => {
+        const english = sourceLang === 'zh' && translation ? translation : undefined;
+        setQueue(queueUpdate({ type: 'scan-done', id: itemId, found: words.length, translation: english, at: Date.now() }));
+        if (words.length === 0) {
+          showStatus('No advanced expressions found in that sentence.');
+          return;
+        }
+        const n = words.length;
+        const noun = n === 1 ? 'expression' : 'expressions';
+        showStatus(english ? `“${english}” — analyzing ${n} ${noun}…` : `Found ${n} ${noun} — analyzing…`);
+        for (const w of words) enqueue(w.word, { analyzeMode: 'batch', scanId: itemId });
+      }).catch(err => {
+        warn('🔍 Sentence scan failed "' + q + '":', (err as Error | undefined)?.message);
+        setQueue(queueUpdate({ type: 'fail', id: itemId }));
+        if (isAuthenticationError(err)) rememberSearchRetry({ query: q });
+        showError(describeSearchError(q, err), isRetryableSearchError(err) ? q : undefined);
+      }).finally(done);
+      return;
+    }
 
     // Comparison items run compareWords and persist on success.
     if (item.kind === 'compare') {
@@ -194,7 +202,7 @@ export function useSearchQueue({
       },
       showFailure: () => setQueue(queueUpdate({ type: 'fail', id: itemId })),
     }).finally(done);
-  }, [findSavedByWord, lookupEffects, showError, onCompareReady, openWhenReady, clearError, queueRef]);
+  }, [findSavedByWord, lookupEffects, showError, showStatus, enqueue, onCompareReady, openWhenReady, clearError, queueRef]);
 
   // The results sheet's refresh button: re-run the AI for `word` and swap the fresh result into `item` in place,
   // keeping its current result on screen (with a spinner) meanwhile, rather than clearing the entry, which blanked
@@ -254,12 +262,14 @@ export function useSearchQueue({
     return () => window.removeEventListener('global-compare', handleCompareTrigger);
   }, [enqueueCompare]);
 
-  // Derived state — searches AND comparisons are both queue items, so all counts include both.
+  // Derived state — searches AND comparisons are both queue items, so every count of results includes both; a scan
+  // running keeps the search busy without adding to the count.
   const readyItems = useMemo(() => readyItemsOf(queue), [queue]);
   const unseenCount = unseenReadyCount(queue);
-  const busyCount = busyCountOf(queue);
+  const runningCount = runningCountOf(queue);
+  const isBusy = isBusyOf(queue);
   // Applies a state change GlobalSearch makes itself: a dismissal, Clear all, a result shown.
   const updateQueue = useCallback((action: QueueAction) => setQueue(queueUpdate(action)), []);
 
-  return { queue, readyItems, unseenCount, busyCount, scanning, updateQueue, enqueue, submitQuery, refreshInPlace };
+  return { queue, readyItems, unseenCount, runningCount, isBusy, updateQueue, enqueue, submitQuery, refreshInPlace };
 }

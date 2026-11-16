@@ -122,12 +122,11 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   }, [suggestions, onOpenSentence]);
 
   const {
-    queue, readyItems, unseenCount, busyCount, scanning, updateQueue, enqueue, submitQuery, refreshInPlace,
+    queue, readyItems, unseenCount, runningCount, isBusy, updateQueue, enqueue, submitQuery, refreshInPlace,
   } = useSearchQueue({
     findSavedByWord, onRefreshReplace, onCompareReady, openWhenReady: setPendingOpenId, showError, clearError, showStatus,
   });
   const readyCount = readyItems.length;
-  const isBusy = busyCount > 0 || scanning; // scanning = sentence→expression scan before items are enqueued
 
   // Current viewing state: the open result stays the same one while other lookups finish around it.
   const viewing = mode === 'viewing' ? resolveViewing(readyItems, viewingId) : null;
@@ -240,7 +239,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       showError("You're offline, so only saved words can be looked up.");
       return;
     }
-    void submitQuery(q);
+    submitQuery(q);
     setQuery('');
     setMode('idle'); // Go back to idle — spinner shows on floating button
   }, [query, queue, isOnline, submitQuery, findSavedByWord, showError]);
@@ -376,7 +375,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     if (!q) return;
     // Preserve routing: a failed extracted expression re-analyzes as a unit (batch); a failed
     // user query (word or sentence) goes back through submitQuery (which re-scans if a sentence).
-    if (mode) enqueue(q, { forceAI: true, analyzeMode: mode }); else void submitQuery(q);
+    if (mode) enqueue(q, { forceAI: true, analyzeMode: mode }); else submitQuery(q);
   };
 
   return (
@@ -421,6 +420,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           meaningCount={viewingVocabCount}
           readyItems={readyItems}
           resultIndex={viewing.index}
+          runningCount={runningCount}
           onShowResult={showResult}
           isVocabSaved={isVocabSaved}
           onClose={handleClose}
@@ -455,7 +455,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         <SearchFab
           unseenCount={unseenCount}
           readyCount={readyCount}
-          runningCount={busyCount}
+          runningCount={runningCount}
           isBusy={isBusy}
           aboveTabBar={aboveTabBar}
           onClick={handleFloatingClick}
