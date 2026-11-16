@@ -2,11 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ReviewEvent, ReviewHistory } from '../types';
 import { loadReviewHistory } from '../services/api/library';
 import { warn } from '../services/logger';
+import { mergeLoadedHistory, recentSinceFor } from '../services/reviewHistory';
 import { readPendingReviewMutations } from '../services/reviewQueue';
 
-const DAY = 24 * 60 * 60 * 1000;
-/** Reviews come in full for the week the dashboard's weekly numbers cover, plus a day. */
-const RECENT_DAYS = 8;
 const EMPTY_HISTORY: ReviewHistory = { recent: [], olderTimes: [], olderCount: 0 };
 
 const byTime = (a: ReviewEvent, b: ReviewEvent) => a.reviewedAt - b.reviewedAt;
@@ -20,20 +18,12 @@ export function useReviewHistory(userId?: string) {
     const unsynced = new Map(readPendingReviewMutations(userId).map(mutation => [mutation.event.id, mutation.event]));
     setHistory({ ...EMPTY_HISTORY, recent: [...unsynced.values()].sort(byTime) });
 
-    // The recent reviews reach back to the oldest unsynced one, so a review the outbox did deliver
-    // can't come back as an older review as well.
-    let recentSince = Date.now() - RECENT_DAYS * DAY;
-    unsynced.forEach(event => { if (event.reviewedAt < recentSince) recentSince = event.reviewedAt; });
     let cancelled = false;
-    loadReviewHistory(recentSince)
+    loadReviewHistory(recentSinceFor([...unsynced.values()], Date.now()))
       .then(remote => {
         if (cancelled) return;
         // Reviews recorded while the history loaded stay.
-        setHistory(current => {
-          const recent = new Map(remote.recent.map(event => [event.id, event]));
-          current.recent.forEach(event => recent.set(event.id, event));
-          return { recent: [...recent.values()].sort(byTime), olderTimes: remote.olderTimes, olderCount: remote.olderCount };
-        });
+        setHistory(current => mergeLoadedHistory(current, remote));
       })
       .catch(error => warn('Failed to load review history:', error));
     return () => { cancelled = true; };
