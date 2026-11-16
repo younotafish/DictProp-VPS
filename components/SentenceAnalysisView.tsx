@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, AudioLines, BadgeCheck, BookOpenText, Braces, ChevronDown, Globe2, History, Languages, Search, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, AudioLines, BadgeCheck, BookOpenText, Braces, Check, ChevronDown, Globe2, History, Languages, Search, TriangleAlert, type LucideIcon } from 'lucide-react';
 import type { SentenceAnalysisTerm, SentenceData } from '../types';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { sentencePronunciation } from '../services/sentencePronunciation';
@@ -12,6 +12,8 @@ interface SentenceAnalysisViewProps {
   visible: boolean;
   onBack: () => void;
   onSearch: (term: string) => void;
+  /** Got it for the sentence, in the header's right slot; a read-only preview leaves it out and keeps the slot empty. */
+  onRemember?: () => void;
   onTouchStart: React.TouchEventHandler<HTMLDivElement>;
   onTouchEnd: React.TouchEventHandler<HTMLDivElement>;
   onClick?: React.MouseEventHandler<HTMLDivElement>;
@@ -126,6 +128,7 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
   visible,
   onBack,
   onSearch,
+  onRemember,
   onTouchStart,
   onTouchEnd,
   onClick,
@@ -182,7 +185,19 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
             <p className="truncate text-sm font-semibold text-slate-800">Sentence analysis</p>
             <p className="text-[11px] text-slate-400">{position} / {total}</p>
           </div>
-          <div className="w-[76px]" aria-hidden="true" />
+          {/* The right slot keeps its 76 px with or without Got it, so the title never moves. */}
+          {onRemember ? (
+            <button
+              type="button"
+              onClick={(event) => { event.stopPropagation(); onRemember(); }}
+              className="flex h-9 w-[76px] items-center justify-center gap-1 rounded-lg bg-emerald-500 text-sm font-bold text-white transition-colors hover:bg-emerald-600"
+              title="Remember (R)"
+            >
+              <Check size={15} /> Got it
+            </button>
+          ) : (
+            <div className="w-[76px]" aria-hidden="true" />
+          )}
         </div>
       </header>
 
