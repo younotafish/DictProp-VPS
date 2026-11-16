@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -20,11 +20,17 @@ const sentence = (text: string, hasImage = false) => poolSentence({
 });
 const analysisFor = (prompt: string) => ({ translation: `译文 ${prompt}`, imagePrompt: prompt });
 
-function prepare(sentences: Array<ReturnType<typeof sentence>>, analysis: unknown, fallback?: string, model = 'test-model') {
+// `images` are files the bundle's images/ already holds, by name, as an earlier cycle can leave them.
+function prepare(
+  sentences: Array<ReturnType<typeof sentence>>, analysis: unknown, fallback?: string, model = 'test-model',
+  images: Record<string, string> = {},
+) {
   const root = mkdtempSync(join(tmpdir(), 'dictprop-sentence-images-'));
   writeJson(join(root, 'source.json'), { version: 1, sentences });
   writeJson(join(root, 'analysis.json'), analysis);
   const output = join(root, 'bundle');
+  mkdirSync(join(output, 'images'), { recursive: true });
+  for (const [name, content] of Object.entries(images)) writeFileSync(join(output, 'images', name), content);
   const args = [script, join(root, 'source.json'), join(root, 'analysis.json'), output];
   if (model || fallback) args.push(model);
   if (fallback) args.push(fallback);
@@ -78,6 +84,35 @@ test('sentence images: targets for the sentences production lacks, and a manifes
     ],
   });
   assert.equal(readFileSync(join(output, 'images', sentenceImageFilename(reused.id)), 'utf8'), 'baseline render');
+});
+
+test('sentence images take an empty file for a missing image, in the bundle and in a fallback directory', () => {
+  const replaced = sentence('An empty file stands where this {{example}} image belongs.');
+  const removed = sentence('An empty file stands where this other {{example}} image belongs.');
+  const notLinked = sentence('The baseline file for this {{example}} is empty.');
+  const fallback = mkdtempSync(join(tmpdir(), 'dictprop-sentence-image-fallback-'));
+  writeFileSync(join(fallback, sentenceImageFilename(replaced.id)), 'baseline render');
+  writeFileSync(join(fallback, sentenceImageFilename(notLinked.id)), '');
+  const analysis = {
+    version: 1,
+    generatedAt: 1,
+    entries: [replaced, removed, notLinked].map(value => ({
+      id: value.id, textHash: value.textHash, analysis: analysisFor('Prompt'), generatedAt: 1,
+    })),
+  };
+
+  const { child, output } = prepare([replaced, removed, notLinked], analysis, fallback, 'test-model', {
+    [sentenceImageFilename(replaced.id)]: '',
+    [sentenceImageFilename(removed.id)]: '',
+  });
+
+  assert.equal(child.status, 0, child.stderr);
+  // The baseline's render replaces an empty file; with no render to take its place, the empty file goes, so
+  // the verifier and the dispatcher count the image as missing (deferred) instead of failing on it.
+  assert.equal(readFileSync(join(output, 'images', sentenceImageFilename(replaced.id)), 'utf8'), 'baseline render');
+  assert.equal(existsSync(join(output, 'images', sentenceImageFilename(removed.id))), false);
+  assert.equal(existsSync(join(output, 'images', sentenceImageFilename(notLinked.id))), false);
+  assert.equal(readFileSync(join(fallback, sentenceImageFilename(notLinked.id)), 'utf8'), '');
 });
 
 test('sentence images refuse an analysis written for different text', () => {

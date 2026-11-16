@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdirSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { fileReady } from './atomic-file.mjs';
 import { DEFAULT_IMAGE_MODEL_LABEL } from './image-model.mjs';
 import { linkOrCopy, readJson, writePrivateJson } from './offline-io.mjs';
 import { sentenceImageFilename } from './sentence-pool.mjs';
@@ -32,8 +33,11 @@ const entries = analysis.entries.filter(entry => sources.get(entry.id)?.hasImage
   if (!source || source.textHash !== entry.textHash) throw new Error(`Sentence source mismatch: ${entry.id}`);
   const filename = sentenceImageFilename(entry.id);
   const destination = join(outputImageDir, filename);
-  if (!existsSync(destination)) {
-    const fallback = fallbackImageDirs.map(directory => join(directory, filename)).find(path => existsSync(path));
+  // An empty file is no image, as in every other stage. One here goes, so the image counts as missing all the
+  // way to the verifier and the dispatcher, and an empty file in a fallback directory is never linked in.
+  if (!fileReady(destination)) {
+    rmSync(destination, { force: true });
+    const fallback = fallbackImageDirs.map(directory => join(directory, filename)).find(fileReady);
     if (fallback) linkOrCopy(fallback, destination);
   }
   targets.push({

@@ -389,8 +389,9 @@ stage_item_images() {
           "$ITEM_IMAGE_ROOT/streaming-quality/$CYCLE_ID" 1024 576 "$IMAGE_STEPS" 1 64
     fi
     # The publisher waits for every manifest entry, so deferred images leave the manifest. They are still
-    # missing in production, so a later cycle targets them again.
-    ITEM_IMAGE_READY="$("$NODE_BIN" -e 'const f=require("fs"),p=require("path"),file=p.join(process.argv[1],"manifest.json"),m=JSON.parse(f.readFileSync(file,"utf8"));m.entries=m.entries.filter(e=>f.existsSync(p.join(process.argv[1],e.imageFile)));f.writeFileSync(file,JSON.stringify(m,null,2)+"\n",{mode:0o600});console.log(m.entries.length)' \
+    # missing in production, so a later cycle targets them again. An empty file counts as missing, as it
+    # does for the judge: published, it would fail its wave's image check.
+    ITEM_IMAGE_READY="$("$NODE_BIN" -e 'const f=require("fs"),p=require("path"),file=p.join(process.argv[1],"manifest.json"),m=JSON.parse(f.readFileSync(file,"utf8")),ready=path=>{try{return f.statSync(path).size>0}catch{return false}};m.entries=m.entries.filter(e=>ready(p.join(process.argv[1],e.imageFile)));f.writeFileSync(file,JSON.stringify(m,null,2)+"\n",{mode:0o600});console.log(m.entries.length)' \
       "$ITEM_IMAGE_ROOT")"
     if [ "$ITEM_IMAGE_READY" -gt 0 ]; then
       log "publishing $ITEM_IMAGE_READY locally generated saved-word/phrase/sentence image(s)"

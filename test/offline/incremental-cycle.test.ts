@@ -301,6 +301,8 @@ const SCENARIOS: Record<string, Scenario> = {
     examples: [2],
     exampleMissing: [0],
     dispatch: { 'dispatch-staged-example-analyses.sh': 1, 'dispatch-staged-offline-images.sh': 1 },
+    // An empty file an earlier cycle left where the image the loop defers belongs.
+    seed: { 'item-images/images/item-image-1.webp': '' },
   },
   backoff: { examples: [2, 0], exampleMissing: [2], exampleEnrichStatus: 3 },
   incomplete: { examples: [1, 1], exampleMissing: [1, 1] },
@@ -519,7 +521,7 @@ test('stages that fail let the rest of the cycle run, and the cycle exits 1 nami
     'stages that did not complete this cycle: vocabulary completion, saved-sentence analysis, saved-sentence reconciliation, saved-item images, saved-item image publication, example-sentence analysis publication',
   ]);
   assert.deepEqual(result.stderr, ['Incremental saved-sentence analysis reconciliation is incomplete']);
-  // Only the accepted item image stays in the manifest the publisher reads.
+  // Only the accepted item image stays in the manifest the publisher reads: the empty file counts as missing.
   const manifest = JSON.parse(readFileSync(join(fixture.root, 'failures', 'cycle', 'item-images', 'manifest.json'), 'utf8'));
   assert.deepEqual(manifest.entries, [{ imageFile: 'images/item-image-0.webp' }]);
 });
