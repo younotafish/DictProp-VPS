@@ -5,7 +5,6 @@ import { NoticePill } from './NoticePill';
 import { noticeSlotRef } from './noticeSlots';
 import { RefusedReviewsNotice } from './RefusedReviews';
 import type { ImagePrefetchProgress, ImageRestoreProgress } from '../hooks/useOfflineImages';
-import type { SpeechBackfill } from '../hooks/useSpeechBackfill';
 
 // The app-wide notices: the stack of pills that floats at the bottom of the screen.
 
@@ -23,8 +22,8 @@ interface AppStatusPillsProps {
   imagePrefetchProgress: ImagePrefetchProgress | null;
   onStopImageDownload: () => void;
   imageRestoreProgress: ImageRestoreProgress | null;
-  ttsGenProgress: SpeechBackfill['ttsGenProgress'];
-  onStopSpeechGeneration: () => void;
+  /** The background jobs' pills (components/JobPills), which App renders, from their own chunk, only while one shows. */
+  jobPills: React.ReactNode;
   undoMessage: string | null;
   onUndo: () => void;
   /** This device couldn't save the library, so the couldn't-save alert shows, everywhere. */
@@ -48,14 +47,6 @@ interface AppStatusPillsProps {
   liftAbovePopup: boolean;
 }
 
-/** The speech sweep's progress line, with its rough time left. */
-const describeSpeechGeneration = ({ current, total }: { current: number; total: number }): string => {
-  const rem = total - current;
-  if (rem <= 0) return `Generating sentence audio · ${current}/${total}`;
-  const mins = Math.ceil((rem * 2.75) / 4 / 60);
-  return `Generating sentence audio · ${current}/${total} · ~${mins}m left`;
-};
-
 /**
  * The notice stack: the app's pills, floating above the page in one column centred at the bottom that remains
  * visible across tabs and views, so a notice arriving or leaving never moves the page. The stack grows upward and
@@ -68,9 +59,8 @@ const describeSpeechGeneration = ({ current, total }: { current: number; total: 
  * it starts where the card's floating controls end.
  */
 export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
-  userId, onViewRefusedReviews, imagePrefetchProgress, onStopImageDownload, imageRestoreProgress,
-  ttsGenProgress, onStopSpeechGeneration, undoMessage, onUndo, writeFailed, offline, offlineChip, aboveTabBar, holdUpdate,
-  liftAbovePopup,
+  userId, onViewRefusedReviews, imagePrefetchProgress, onStopImageDownload, imageRestoreProgress, jobPills, undoMessage,
+  onUndo, writeFailed, offline, offlineChip, aboveTabBar, holdUpdate, liftAbovePopup,
 }) => (
   <div className={`fixed ${aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+0.5rem)]' : 'bottom-[var(--card-float-bottom)]'} left-1/2 -translate-x-1/2 ${liftAbovePopup ? 'z-[110]' : 'z-[80]'} flex flex-col items-center gap-2 pointer-events-none`}>
     {undoMessage && (
@@ -93,16 +83,7 @@ export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
         {describeImageRestore(imageRestoreProgress)}
       </NoticePill>
     )}
-    {ttsGenProgress?.isRunning && (
-      <NoticePill
-        tone="indigo"
-        spinner
-        progress={ttsGenProgress.total > 0 ? ttsGenProgress.current / ttsGenProgress.total : 0}
-        actions={[{ label: 'Stop generating sentence audio', title: 'Stop generating', dismiss: true, onClick: onStopSpeechGeneration }]}
-      >
-        {describeSpeechGeneration(ttsGenProgress)}
-      </NoticePill>
-    )}
+    {jobPills}
 
     {writeFailed && (
       <NoticePill tone="rose" role="alert" wrap>

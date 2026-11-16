@@ -52,6 +52,8 @@ const EssaysView = lazyScreen('essays', () => import('./views/EssaysView').then(
 const DetailView = lazyScreen('detail', () => import('./views/DetailView').then(module => ({ default: React.memo(module.DetailView) })));
 const SignInScreen = lazyScreen('sign-in', () => import('./components/AppGateScreens').then(module => ({ default: module.SignInScreen })));
 const LibraryReadFailedScreen = lazyScreen('library-read-failed', () => import('./components/AppGateScreens').then(module => ({ default: module.LibraryReadFailedScreen })));
+// The background jobs' pills render only while one shows, and their code loads after the first screen with the rest.
+const JobPills = lazyScreen('job-pills', () => import('./components/JobPills').then(module => ({ default: module.JobPills })));
 const TAB_SCREENS = {
   notebook: NotebookView,
   study: StudyEnhanced,
@@ -199,8 +201,13 @@ function SignedInApp({ user }: { user: AuthUser }) {
         imagePrefetchProgress={imagePrefetchProgress}
         onStopImageDownload={stopImageDownload}
         imageRestoreProgress={imageRestoreProgress}
-        ttsGenProgress={ttsGenProgress}
-        onStopSpeechGeneration={() => { ttsGenAbortRef.current = true; }}
+        jobPills={ttsGenProgress?.isRunning && (
+          <Suspense fallback={null}>
+            <ErrorBoundary variant="overlay">
+              <JobPills ttsGenProgress={ttsGenProgress} onStopSpeechGeneration={() => { ttsGenAbortRef.current = true; }} />
+            </ErrorBoundary>
+          </Suspense>
+        )}
         undoMessage={undoMessage}
         onUndo={undoLastChange}
         writeFailed={libraryWriteFailed}
@@ -426,7 +433,7 @@ const App: React.FC = () => {
     const preloadRest = () => {
       for (const screen of [
         DetailView, ...Object.values(TAB_SCREENS), CardReviewPopup, ConfirmModal, DuplicatesModal, KeyboardHelpModal,
-        RefusedReviewsDialog, SignInScreen, LibraryReadFailedScreen,
+        RefusedReviewsDialog, SignInScreen, LibraryReadFailedScreen, JobPills,
       ]) {
         screen.preload();
       }

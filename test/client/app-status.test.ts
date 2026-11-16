@@ -4,13 +4,15 @@ import { createElement, type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as AppStatus from '../../components/AppStatus.tsx';
 import { AppStatusPills } from '../../components/AppStatus.tsx';
+import { JobPills } from '../../components/JobPills.tsx';
 import { NoticePill, type NoticeTone } from '../../components/NoticePill.tsx';
 import { announceUpdate, dismissUpdate } from '../../services/appUpdate.ts';
 import { clearRefusedReviews, recordRefusedReview } from '../../services/refusedReviews.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
-// components/AppStatus.tsx's notice stack and components/NoticePill.tsx, rendered on the server. The refused-reviews
-// notice reads this device's log from localStorage, and the update notice reads services/appUpdate.
+// components/AppStatus.tsx's notice stack, the job pills App renders into it (components/JobPills.tsx), and
+// components/NoticePill.tsx, rendered on the server. The refused-reviews notice reads this device's log from
+// localStorage, and the update notice reads services/appUpdate.
 (globalThis as unknown as { localStorage: MemoryStorage }).localStorage = new MemoryStorage();
 
 type StackProps = ComponentProps<typeof AppStatusPills>;
@@ -20,8 +22,7 @@ const quiet: StackProps = {
   imagePrefetchProgress: null,
   onStopImageDownload: () => {},
   imageRestoreProgress: null,
-  ttsGenProgress: null,
-  onStopSpeechGeneration: () => {},
+  jobPills: null,
   undoMessage: null,
   onUndo: () => {},
   writeFailed: false,
@@ -32,6 +33,15 @@ const quiet: StackProps = {
   liftAbovePopup: false,
 };
 const renderStack = (props: Partial<StackProps> = {}) => renderToStaticMarkup(createElement(AppStatusPills, { ...quiet, ...props }));
+
+type JobProps = ComponentProps<typeof JobPills>;
+const noJobs: JobProps = {
+  ttsGenProgress: null,
+  onStopSpeechGeneration: () => {},
+};
+/** The job pills as App renders them into the stack. */
+const jobPills = (props: Partial<JobProps>) => createElement(JobPills, { ...noJobs, ...props });
+const renderJobs = (props: Partial<JobProps>) => renderStack({ jobPills: jobPills(props) });
 /** The class list of the stack's own element, the first in the markup. */
 const stackClasses = (html: string) => html.match(/^<div class="([^"]*)"/)![1].split(/\s+/);
 const refuseOneReview = () => recordRefusedReview('u1', { itemId: 'i1', word: 'gamut', reviewedAt: 1, reason: 'The card isn’t on the server' });
@@ -71,7 +81,7 @@ test('the stack keeps its notices in order of how long they stay: undo, search, 
   const html = renderStack({
     undoMessage: 'Deleted “gamut”',
     imagePrefetchProgress: { done: 3, total: 40 },
-    ttsGenProgress: { isRunning: true, current: 10, total: 100 },
+    jobPills: jobPills({ ttsGenProgress: { isRunning: true, current: 10, total: 100 } }),
   });
   const order = ['Deleted “gamut”', 'data-notice-slot="search"', 'data-notice-slot="progress"', 'Offline images · 3/40',
     'Generating sentence audio · 10/100', '1 review wasn’t accepted', 'Update ready'].map(text => html.indexOf(text));
@@ -114,7 +124,7 @@ test('every pill is capped short of the search button\'s column and truncates it
     undoMessage: 'Deleted “gamut”',
     imagePrefetchProgress: { done: 3, total: 40 },
     imageRestoreProgress: { phase: 'uploading', done: 1, total: 4, failed: 0 },
-    ttsGenProgress: { isRunning: true, current: 10, total: 100 },
+    jobPills: jobPills({ ttsGenProgress: { isRunning: true, current: 10, total: 100 } }),
   });
   const pills = [...html.matchAll(/<div role="status"[^>]*class="([^"]*)"/g)].map(match => match[1]);
   assert.equal(pills.length, 6);
@@ -149,14 +159,14 @@ test('the update notice says it in two words, with the sentence as its title and
 test('the jobs keep their texts and their stop buttons', () => {
   const html = renderStack({
     imagePrefetchProgress: { done: 40, total: 40 },
-    ttsGenProgress: { isRunning: true, current: 7_000, total: 7_000 },
+    jobPills: jobPills({ ttsGenProgress: { isRunning: true, current: 7_000, total: 7_000 } }),
   });
   assert.match(html, /aria-label="Stop downloading offline images"/);
   assert.match(html, /title="Stop downloading"/);
   assert.match(html, /aria-label="Stop generating sentence audio"/);
   assert.match(html, />Generating sentence audio · 7000\/7000</, 'no time left at the end');
   assert.equal([...html.matchAll(/animate-spin/g)].length, 1, 'a finished download stops spinning; the speech sweep spins until it ends');
-  assert.match(renderStack({ ttsGenProgress: { isRunning: true, current: 0, total: 100 } }), / · ~2m left</);
+  assert.match(renderJobs({ ttsGenProgress: { isRunning: true, current: 0, total: 100 } }), / · ~2m left</);
   assert.match(renderStack({ imageRestoreProgress: { phase: 'failed', done: 0, total: 0, failed: 0 } }), /bg-rose-600/);
   assert.match(renderStack({ imageRestoreProgress: { phase: 'done', done: 4, total: 4, failed: 0 } }), /bg-emerald-600[^>]*><span class="min-w-0 truncate">Restored 4 images to the server ✓/);
 });
