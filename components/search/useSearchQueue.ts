@@ -9,13 +9,28 @@ import { looksLikeSentence } from '../../services/queryMode';
 import { useLatest } from '../../hooks/useStableValue';
 import { subscribeSearchRequests, type CompareRequest, type LookupRequest } from '../../services/searchRequests';
 import { routeLookup } from './searchRouting';
-import { runLookup } from './runLookup';
+import { runLookup, type LookupEffects } from './runLookup';
 import {
   createRefreshLog, findLiveComparison, findLiveLookup, isBusyOf, isQueued, queueUpdate, readyItemsOf, runningCountOf,
   savedCardsResult, searchQueueReducer, unseenReadyCount, type OpenPolicy, type QueueAction, type QueueItem,
 } from './searchQueue';
 
 let queueIdCounter = 0;
+
+/**
+ * An analyze effect that keeps the error its request rejected with. runLookup words a failure for its toast with the
+ * plain-query describeSearchError; the search words it from that error, with what the lookup was about.
+ */
+function keepingRejection(analyze: LookupEffects['analyze']) {
+  const kept: { error?: unknown } = {};
+  return {
+    kept,
+    analyze: (query: string, analyzeMode?: 'batch') => analyze(query, analyzeMode).catch((error: unknown) => {
+      kept.error = error;
+      throw error;
+    }),
+  };
+}
 
 /** What a lookup or a comparison that needs the network says when the device is offline. */
 const OFFLINE_LOOKUP = "You're offline, so only saved words can be looked up.";
@@ -153,8 +168,7 @@ export function useSearchQueue({
     savedCards: (word: string) => findSavedByWordRef.current(word),
     prepareAudio: ensureTTS,
     replaceSaved: onRefreshReplace,
-    showError,
-  }), [findSavedByWordRef, onRefreshReplace, showError]);
+  }), [findSavedByWordRef, onRefreshReplace]);
 
   // Process a single queue item: comparison, saved-card reuse, or a fresh analyze. The id was added to
   // processingIdsRef by the driver effect before this ran; every terminal path calls done().
@@ -181,7 +195,7 @@ export function useSearchQueue({
         warn('🔍 Sentence scan failed "' + q + '":', (err as Error | undefined)?.message);
         setQueue(queueUpdate({ type: 'fail', id: itemId }));
         if (isAuthenticationError(err)) rememberSearchRetry({ query: q });
-        showError(describeSearchError(q, err), isRetryableSearchError(err) ? q : undefined);
+        showError(describeSearchError({ kind: 'scan', label: q }, err), isRetryableSearchError(err) ? q : undefined);
       }).finally(done);
       return;
     }
@@ -197,7 +211,7 @@ export function useSearchQueue({
       }).catch(err => {
         warn('⚖️ Queue: compare failed "' + item.query + '":', err?.message);
         setQueue(queueUpdate({ type: 'fail', id: itemId }));
-        showError(describeSearchError(item.query, err), undefined);
+        showError(describeSearchError({ kind: 'comparison', label: item.query }, err), undefined);
       }).finally(done);
       return;
     }
@@ -217,8 +231,10 @@ export function useSearchQueue({
     setQueue(queueUpdate({ type: 'start', id: itemId, at: Date.now() }));
 
     log('🔍 Queue: searching "' + item.query + '"' + (item.analyzeMode ? ' (' + item.analyzeMode + ')' : ''));
+    const request = keepingRejection(lookupEffects.analyze);
     void runLookup({ query: item.query, analyzeMode: item.analyzeMode, refresh: !!item.forceAI }, {
       ...lookupEffects,
+      analyze: request.analyze,
       // A refresh of the same word replaces this entry while its request runs; the outcome then belongs to the
       // newer request, so this one changes nothing: no toast, no queue change, no saved-card write.
       isCurrent: () => isQueued(queueRef.current, itemId),
@@ -228,6 +244,8 @@ export function useSearchQueue({
         if (item.openOnReady === 'any') openWhenReady(itemId); // refresh → open the fresh result (like the reuse path auto-opens)
       },
       showFailure: () => setQueue(queueUpdate({ type: 'fail', id: itemId })),
+      showError: (_runLookupWording, retryQuery, analyzeMode) =>
+        showError(describeSearchError({ kind: 'analysis', label: item.query }, request.kept.error), retryQuery, analyzeMode),
     }).finally(done);
   }, [findSavedByWord, lookupEffects, showError, showStatus, enqueue, onCompareReady, openWhenReady, clearError, queueRef]);
 
@@ -245,16 +263,20 @@ export function useSearchQueue({
     // its result and reports its failure: the user asked for that refresh.
     const replaced = refreshLog.watch(item.query);
     // An expression taken from a sentence is refreshed as the same unit, not re-split into its words.
+    const request = keepingRejection(lookupEffects.analyze);
     void runLookup({ query, analyzeMode, refresh: true }, {
       ...lookupEffects,
+      analyze: request.analyze,
       isCurrent: () => !replaced(),
       showResult: results => {
         setQueue(queueUpdate({ type: 'refresh-ready', id, query, results }));
         onFresh();
       },
       showFailure: () => setQueue(queueUpdate({ type: 'refresh-fail', id })),
+      showError: (_runLookupWording, retryQuery, retryMode) =>
+        showError(describeSearchError({ kind: 'analysis', label: query }, request.kept.error), retryQuery, retryMode),
     });
-  }, [lookupEffects, refreshLog]);
+  }, [lookupEffects, refreshLog, showError]);
 
   // Driver: start every pending text-model job immediately. DeepInfra owns provider capacity; locally we
   // only de-duplicate starts so a re-render while a request is in flight cannot submit the same item twice.

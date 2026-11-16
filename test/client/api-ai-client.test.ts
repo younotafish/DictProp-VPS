@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { analyzeInput, compareWords } from '../../services/api/ai.ts';
+import { analyzeInput, compareWords, detectVocabulary } from '../../services/api/ai.ts';
 import { loadComparisons } from '../../services/api/comparisons.ts';
-import { HttpError } from '../../services/http.ts';
+import { HttpError, TimeoutError } from '../../services/http.ts';
 
 // The AI client functions only need fetch from the browser; each test scripts its reply and records the calls.
 const realFetch = globalThis.fetch;
@@ -97,4 +97,37 @@ test('analysis sends the batch mode and keeps statuses the search box maps to me
   respondWith(() => json({ error: 'RATE_LIMITED' }, 429));
   await assert.rejects(analyzeInput('bank'), (error: unknown) =>
     error instanceof HttpError && error.status === 429 && /rate-limited/.test(error.message));
+});
+
+/** A fetch that fails the way a stalled request does once its time runs out: modern browsers reject with the
+ *  TimeoutError the request was aborted with, older ones with an AbortError. */
+const failWith = (error: unknown) => { globalThis.fetch = (async () => { throw error; }) as typeof fetch; };
+
+test('a request that runs out of time is a TimeoutError in each route\'s own words', async () => {
+  for (const stalled of [new TimeoutError(), new DOMException('The operation was aborted.', 'AbortError')]) {
+    failWith(stalled);
+    await assert.rejects(analyzeInput('gamut'), (error: unknown) => error instanceof TimeoutError
+      && error.message === 'The model did not finish this search before the timeout. Please retry it.');
+    await assert.rejects(compareWords(['fable', 'parable']), (error: unknown) => error instanceof TimeoutError
+      && error.message === 'The model did not finish this comparison before the timeout. Please retry it.');
+    await assert.rejects(detectVocabulary('It ran the gamut of emotions.'), (error: unknown) => error instanceof TimeoutError
+      && error.message === 'The model did not finish scanning this text before the timeout. Try a shorter text.');
+  }
+});
+
+test('a request that never reached the server keeps the network\'s TypeError, so the search can say so', async () => {
+  const offline = new TypeError('Failed to fetch');
+  failWith(offline);
+  await assert.rejects(analyzeInput('gamut'), (error: unknown) => error instanceof Error && error.cause === offline);
+  await assert.rejects(compareWords(['fable', 'parable']), (error: unknown) => error instanceof Error && error.cause === offline);
+  await assert.rejects(detectVocabulary('It ran the gamut of emotions.'), (error: unknown) => error === offline);
+});
+
+test('a scan keeps the server\'s statuses and the quota token', async () => {
+  respondWith(() => json({ error: 'Text is too long.' }, 400));
+  await assert.rejects(detectVocabulary('It ran the gamut of emotions.'), (error: unknown) => error instanceof HttpError && error.status === 400);
+  respondWith(() => json({ error: 'QUOTA_EXCEEDED' }, 429));
+  await assert.rejects(detectVocabulary('It ran the gamut of emotions.'), { message: 'QUOTA_EXCEEDED' });
+  respondWith(() => json({ error: 'The model returned no usable expressions.' }, 502));
+  await assert.rejects(detectVocabulary('It ran the gamut of emotions.'), (error: unknown) => error instanceof HttpError && error.status === 502);
 });

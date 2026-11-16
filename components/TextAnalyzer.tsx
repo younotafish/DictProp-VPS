@@ -5,6 +5,7 @@ import { detectVocabulary, DetectedWord, analyzeInput } from '../services/api/ai
 import { ensureTTS } from '../services/neuralTts';
 import { modifierKeyLabel } from '../services/platform';
 import { saveNewSenses, savedSenseKeys } from '../services/senseSaving';
+import { describeSearchError, isRetryableSearchError } from '../services/searchRecovery';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -106,7 +107,8 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
   const [isScanning, setIsScanning] = useState(false);
   const [detectedWords, setDetectedWords] = useState<DetectedWord[]>([]);
   const [selectedWords, setSelectedWords] = useState<Set<string>>(new Set());
-  const [scanError, setScanError] = useState<string | null>(null);
+  // A failed scan: what went wrong, and whether scanning again could work.
+  const [scanError, setScanError] = useState<{ message: string; retryable: boolean } | null>(null);
   const [translation, setTranslation] = useState(''); // English the AI scanned, shown when Chinese was pasted
 
   // Step 2: Analysis
@@ -145,8 +147,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
       setSelectedWords(new Set(words.map(w => w.word)));
       setStep('selecting');
     } catch (err) {
-      const msg = (err as Error).message || 'Scanning failed';
-      setScanError(msg === 'QUOTA_EXCEEDED' ? 'AI quota exceeded. Please try again later.' : msg);
+      setScanError({ message: describeSearchError({ kind: 'scan', label: inputText }, err), retryable: isRetryableSearchError(err) });
     } finally {
       setIsScanning(false);
     }
@@ -216,7 +217,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
           word: detected.word,
           vocabCount: 0,
           savedCount: 0,
-          error: (err as Error).message || 'Failed',
+          error: describeSearchError({ kind: 'analysis', label: detected.word }, err),
         }]);
       }
     }
@@ -365,10 +366,12 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
             {/* Error */}
             {scanError && (
               <div className="mt-3 px-4 py-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-sm flex items-center justify-between gap-3">
-                <span>{scanError}</span>
-                <button onClick={handleScan} className="px-3 py-1.5 bg-rose-100 hover:bg-rose-200 rounded-lg text-rose-700 text-xs font-semibold transition-colors shrink-0">
-                  Retry
-                </button>
+                <span>{scanError.message}</span>
+                {scanError.retryable && (
+                  <button onClick={handleScan} className="px-3 py-1.5 bg-rose-100 hover:bg-rose-200 rounded-lg text-rose-700 text-xs font-semibold transition-colors shrink-0">
+                    Retry
+                  </button>
+                )}
               </div>
             )}
 

@@ -2,7 +2,7 @@ import { ANALYSIS_BUDGET_MS, COMPARE_BUDGET_MS, EXTRACT_BUDGET_MS, TRANSCRIBE_BU
 import { MAX_COMPARE_WORDS } from '../../server/src/shared/query-mode';
 import type { ComparisonResult, SearchResult, VocabCard } from '../../types';
 import { bytesToBase64 } from '../dataUri';
-import { HttpError, jsonRequest, requestJson } from '../http';
+import { HttpError, jsonRequest, requestJson, TimeoutError } from '../http';
 import { log, logError } from '../logger';
 import { sortVocabCardsByUsage } from '../usageAudit';
 import { sanitizeComparisonResult } from './comparisons';
@@ -18,9 +18,13 @@ const COMPARE_TIMEOUT_MS = COMPARE_BUDGET_MS + SERVER_ANSWER_MARGIN_MS;
 const EXTRACT_TIMEOUT_MS = EXTRACT_BUDGET_MS + SERVER_ANSWER_MARGIN_MS;
 const TRANSCRIBE_TIMEOUT_MS = TRANSCRIBE_BUDGET_MS + SERVER_ANSWER_MARGIN_MS;
 
-// A 429 carries a machine-readable token: QUOTA_EXCEEDED (billing — callers show a quota message) or
-// RATE_LIMITED (transient). Every other failure stays an HttpError with the server's message.
-const toAiError = (error: unknown): unknown => {
+// How a failed AI request is reported, decided once for every route. A 429 carries a machine-readable token:
+// QUOTA_EXCEEDED (billing — callers show a quota message) or RATE_LIMITED (transient). A request that ran out of time
+// (an older browser aborts it with an AbortError instead of the TimeoutError it was given) is a TimeoutError with the
+// route's own words. Everything else stays as it was thrown: an HttpError with the server's message, or the network's
+// TypeError.
+const toAiError = (error: unknown, timeoutMessage: string): unknown => {
+  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) return new TimeoutError(timeoutMessage);
   if (!(error instanceof HttpError) || error.status !== 429) return error;
   if (error.responseBody.includes('QUOTA_EXCEEDED')) return new Error('QUOTA_EXCEEDED');
   return new HttpError('The AI provider rate-limited this request. Try again shortly.', 429, error.responseBody);
@@ -51,11 +55,11 @@ interface DetectedWordReply {
   reason?: unknown;
 }
 
-const postAi = async <T>(path: string, body: unknown, label: string, timeoutMs: number): Promise<T> => {
+const postAi = async <T>(path: string, body: unknown, label: string, timeoutMs: number, timeoutMessage: string): Promise<T> => {
   try {
     return await requestJson<T>(path, jsonRequest('POST', body), label, timeoutMs);
   } catch (error) {
-    throw toAiError(error);
+    throw toAiError(error, timeoutMessage);
   }
 };
 
@@ -70,6 +74,7 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
       { text, ...(options?.mode ? { mode: options.mode } : {}) },
       'Analysis',
       ANALYZE_TIMEOUT_MS,
+      'The model did not finish this search before the timeout. Please retry it.',
     );
 
     const vocabs = sortVocabCardsByUsage((data.vocabs || [])
@@ -88,18 +93,12 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
       originalQuery: data.originalQuery,
     };
   } catch (error) {
-    // Everything the request and the reading above throw is an Error (a timeout's TimeoutError is one).
+    // Everything the request and the reading above throw is an Error. postAi has already said what a quota, a rate
+    // limit or a timeout means; the server waits a full window and retries transient upstream errors itself, so the
+    // client never retries on its own: callers show the failure, so the search never fails silently.
     const msg = (error as Error).message || '';
-    if (msg === 'QUOTA_EXCEEDED') throw error;
-    if (error instanceof HttpError) throw error;
-
+    if (msg === 'QUOTA_EXCEEDED' || error instanceof HttpError || error instanceof TimeoutError) throw error;
     logError('Analysis failed', error);
-    // The server already waits a full window and retries transient upstream errors internally, so a
-    // client-side retry would just double an already-long wait for a busy model. Surface it instead —
-    // callers must show this so the search no longer fails silently.
-    if (msg.includes('timed out') || msg.includes('504') || (error as Error).name === 'AbortError') {
-      throw new Error('The model did not finish this search before the timeout. Please retry it.', { cause: error });
-    }
     throw new Error(msg || 'Search failed. Please try again.', { cause: error });
   }
 };
@@ -124,18 +123,13 @@ export const detectVocabulary = async (text: string): Promise<VocabularyScan> =>
     throw new Error('Please provide some text to analyze.');
   }
 
-  let data: ScanReply;
-  try {
-    data = await postAi<ScanReply>('/api/extract-vocabulary', { text }, 'Vocabulary detection', EXTRACT_TIMEOUT_MS);
-  } catch (error) {
-    if ((error as Error)?.name === 'TimeoutError') {
-      throw new Error(
-        'The model did not finish scanning this text before the timeout. Try a shorter text.',
-        { cause: error },
-      );
-    }
-    throw error;
-  }
+  const data = await postAi<ScanReply>(
+    '/api/extract-vocabulary',
+    { text },
+    'Vocabulary detection',
+    EXTRACT_TIMEOUT_MS,
+    'The model did not finish scanning this text before the timeout. Try a shorter text.',
+  );
   return {
     words: (Array.isArray(data.words) ? data.words : [])
       .filter((w: DetectedWordReply | null): w is DetectedWordReply & { word: string } =>
@@ -163,6 +157,7 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
       { audio: base64, mimeType: audioBlob.type || 'audio/webm' },
       'Transcription',
       TRANSCRIBE_TIMEOUT_MS,
+      'The model did not finish transcribing this recording before the timeout.',
     );
   } catch (error) {
     if ((error as Error)?.message === 'QUOTA_EXCEEDED') throw error;
@@ -191,19 +186,19 @@ export const compareWords = async (words: string[]): Promise<ComparisonResult> =
   }
 
   try {
-    const data = await postAi<unknown>('/api/compare', { words: uniqueWords }, 'Comparison', COMPARE_TIMEOUT_MS);
+    const data = await postAi<unknown>(
+      '/api/compare',
+      { words: uniqueWords },
+      'Comparison',
+      COMPARE_TIMEOUT_MS,
+      'The model did not finish this comparison before the timeout. Please retry it.',
+    );
     return sanitizeComparisonResult(data, uniqueWords);
   } catch (error) {
-    // As in analyzeInput, everything thrown above is an Error.
+    // As in analyzeInput: everything thrown above is an Error, and postAi has mapped what needs mapping.
     const msg = (error as Error).message || '';
-    if (msg === 'QUOTA_EXCEEDED') throw error;
-    if (error instanceof HttpError) throw error;
-
+    if (msg === 'QUOTA_EXCEEDED' || error instanceof HttpError || error instanceof TimeoutError) throw error;
     logError('Word comparison failed', error);
-    // See analyzeInput: the server owns the timeout + transient-retry, so don't double the wait here.
-    if (msg.includes('timed out') || msg.includes('504') || (error as Error).name === 'AbortError') {
-      throw new Error('The model did not finish this comparison before the timeout. Please retry it.', { cause: error });
-    }
     throw new Error(msg || 'Word comparison failed. Please try again.', { cause: error });
   }
 };
