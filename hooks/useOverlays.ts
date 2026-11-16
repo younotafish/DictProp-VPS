@@ -6,8 +6,6 @@ import type { ConfirmModalProps } from '../components/ConfirmModal';
 
 /** The confirm dialog on screen: ConfirmModal's props, whose Cancel closes it. */
 export type ConfirmDialog = Omit<ConfirmModalProps, 'onCancel'>;
-/** An acknowledgement: a titled message with one OK button. */
-export type Notice = Pick<ConfirmModalProps, 'title' | 'message'> & { variant: NonNullable<ConfirmModalProps['variant']> };
 /** The card popup: the word it shows, by spelling, and the sense it opened on. */
 export interface CardPopup { spelling: string; initialId: string }
 
@@ -57,11 +55,8 @@ export function useOverlays(libraryWords: StoredItem[]) {
   // Phase 2 dedup tool: variant-duplicate clusters under review (null = modal closed).
   const [duplicateClusters, setDuplicateClusters] = useState<DuplicateClusterView[] | null>(null);
 
-  // Confirm modal state
+  // The confirm dialog, for a decision; what needs none is a pill in the notice stack.
   const [confirmModal, setConfirmModal] = useState<ConfirmDialog | null>(null);
-  const showNotice = useCallback((notice: Notice) => {
-    setConfirmModal({ ...notice, confirmText: 'OK', onConfirm: () => setConfirmModal(null), showCancel: false });
-  }, []);
 
   // The gestures and shortcuts sheet
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
@@ -73,7 +68,7 @@ export function useOverlays(libraryWords: StoredItem[]) {
 
   return {
     cardPopup, setCardPopup, openCardPopup, closeCardPopup, popupItems, duplicateClusters, setDuplicateClusters,
-    confirmModal, setConfirmModal, showNotice, showKeyboardHelp, setShowKeyboardHelp, openKeyboardHelp,
+    confirmModal, setConfirmModal, showKeyboardHelp, setShowKeyboardHelp, openKeyboardHelp,
     showRefusedReviews, setShowRefusedReviews, openRefusedReviews, modalOpen, dialogOpen,
   };
 }
