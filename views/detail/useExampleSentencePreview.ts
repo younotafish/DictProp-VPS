@@ -1,10 +1,10 @@
 import { useCallback, useRef, useState, type RefObject } from 'react';
-import { getItemSense, getItemSpelling, getItemTitle, type ItemGroup, type SentenceData, type StoredItem } from '../../types';
+import { getItemTitle, type ItemGroup, type SentenceData, type StoredItem } from '../../types';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { stopCurrent } from '../../services/neuralTts';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
 import { isCatalogProgressItem } from '../../services/catalogProgressIdentity';
-import { syntheticSourceItem } from '../../services/sentenceSource';
+import { sentenceSourceResolver, syntheticSourceItem } from '../../services/sentenceSource';
 import { SENTENCE_PREVIEW_ID_PREFIX } from './sentenceUnderReview';
 import type { SavedSentenceIndex } from './useSavedSentenceIndex';
 import type { DetailViewProps } from './types';
@@ -46,11 +46,8 @@ export function useExampleSentencePreview({
       savedAt: Date.now(),
       srs: SRSAlgorithm.createNew(previewId, 'sentence'),
     };
-    const spelling = word.toLowerCase().trim();
-    const candidates = savedItemsRef.current.filter(item =>
-      item.type === 'vocab' && getItemSpelling(item) === spelling
-    );
-    const source = (sense ? candidates.find(item => getItemSense(item) === sense) : undefined) || candidates[0] ||
+    // The source card is found as a saved sentence's lesson finds it (useDetailView's handleViewSentence).
+    const source = sentenceSourceResolver(savedItemsRef.current)(word, sense) ??
       syntheticSourceItem(sentence.data.id, word, sense, text);
     stopAutoPlay();
     stopCurrent();
