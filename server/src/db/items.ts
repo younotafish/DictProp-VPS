@@ -1,5 +1,5 @@
 import { ConflictError } from '../errors.js';
-import { serverImageMarker } from '../shared/image-markers.js';
+import { imageVersionFromContentHash, serverImageMarker } from '../shared/image-markers.js';
 import { keepServerOwnedData } from '../shared/server-owned-data.js';
 import type { ItemType } from '../validation-helpers.js';
 import { db, writeTransaction } from './connection.js';
@@ -95,7 +95,10 @@ function rowsToItems(rows: ItemRow[], userId: string) {
       updated_at: number;
     }>;
     for (const image of images) {
-      versions.set(image.id, (image.content_hash || `legacy-${image.updated_at}`).slice(0, 20));
+      // A row from before image_blobs has no content hash, so its time stands in for one.
+      versions.set(image.id, image.content_hash
+        ? imageVersionFromContentHash(image.content_hash)
+        : `legacy-${image.updated_at}`.slice(0, 20));
     }
   }
   const markerFor = (id: unknown): string | null => {

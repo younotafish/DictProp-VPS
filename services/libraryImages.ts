@@ -1,3 +1,4 @@
+import { getServerImageVersion, imageVersionFromContentHash, SERVER_IMAGE_MARKER } from '../server/src/shared/image-markers';
 import { isPhraseItem, isVocabItem, type SearchResult, type StoredItem, type VocabCard } from '../types';
 import { loadItemImage } from './api/images';
 import type { Offload } from './imagePipeline';
@@ -108,15 +109,8 @@ export const lazyLoadImage = (itemId: string, imageVersion?: string): Promise<st
 
 // Sentinel value replacing base64 in React state — tells OfflineImage to load from IDB
 export const IMAGE_IDB_MARKER = 'idb:stored';
-const SERVER_IMAGE_MARKER = 'server:has_image';
-export const getServerImageVersion = (url: string | undefined): string | undefined =>
-  url?.startsWith(`${SERVER_IMAGE_MARKER}:`)
-    ? url.slice(SERVER_IMAGE_MARKER.length + 1)
-    : undefined;
-
-// The server versions a picture by its bytes: the first 20 hex digits of their SHA-256 are the version in its
-// 'server:has_image:<version>' marker (server/src/db.ts).
-export const imageVersionFromContentHash = (sha256Hex: string): string => sha256Hex.slice(0, 20);
+// The server's 'server:has_image:<version>' markers and the content versions they name, which the server shares.
+export { getServerImageVersion, imageVersionFromContentHash };
 
 // Check if an imageUrl is a marker (not real base64 data)
 export const isImageMarker = (url: string | undefined): boolean =>
