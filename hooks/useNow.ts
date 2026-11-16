@@ -25,7 +25,8 @@ const getResumedAt = () => resumedAt;
  * doesn't shuffle under the reader.
  */
 export function useNow(key: unknown): number {
-  const resumed = useSyncExternalStore(subscribe, getResumedAt);
+  // The third argument stands in outside a browser, where the screens' tests render them to markup.
+  const resumed = useSyncExternalStore(subscribe, getResumedAt, getResumedAt);
   // A tab hidden by its <Activity> loses its effects, this subscription among them, so it doesn't hear the page
   // come back into view. Its layout effects run again when it's shown, before paint, and count the showing,
   // which takes the time again.

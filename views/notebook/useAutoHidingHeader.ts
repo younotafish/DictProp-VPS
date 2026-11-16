@@ -30,5 +30,8 @@ export function useAutoHidingHeader(onScroll: (e: React.UIEvent<HTMLDivElement>)
     onScroll(e);
   }, [onScroll]);
 
-  return { headerRef, handleScroll };
+  /** Brings the header back, for a screen left with nothing to scroll it back with. */
+  const showHeader = useCallback(() => headerRef.current?.classList.remove('-translate-y-full'), []);
+
+  return { headerRef, handleScroll, showHeader };
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { getItemTitle, type AppUser, type ItemGroup, type StoredItem, type SyncStatus, type VocabCard } from '../types';
 import { TextAnalyzer } from '../components/TextAnalyzer';
@@ -77,7 +77,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   const [filterMode, setFilterMode] = useState<NotebookFilter>('vocab'); // Default to vocab only
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const [showArchived, setShowArchived] = useState(false);
-  const { headerRef, handleScroll } = useAutoHidingHeader(onScroll);
+  const { headerRef, handleScroll, showHeader } = useAutoHidingHeader(onScroll);
 
   // AI Search state
   const { isSearching, searchResults, searchError, setSearchError, performAISearch, clearAISearch } = useNotebookAISearch(isOnline);
@@ -172,6 +172,11 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   const savedCount = searching ? savedWhileSearching : list.groups.length;
   // The empty-notebook screen is for a notebook with nothing in it, not one the filter or the archive hides.
   const hasSavedItems = useMemo(() => items.some(item => !!item?.data?.id && !item.isDeleted), [items]);
+  // Its header holds the tools and the account menu. The list's scrolling may have slid it away, and an empty
+  // notebook has nothing to scroll it back with.
+  useLayoutEffect(() => {
+    if (!hasSavedItems) showHeader();
+  }, [hasSavedItems, showHeader]);
 
   // With nothing listed above the due and archived sections, the list says why and offers the way out.
   const canLookUp = isOnline && !searchResults && !isSearching && !isTranscribing && !!localSearchQuery.trim();
@@ -271,15 +276,13 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     if (element) setScrollParent(element);
   }, []);
 
-  // Typing stays on this screen, in the same box: its search opens the search sheet, where the first word is saved.
-  if (!hasSavedItems) {
-    return <EmptyNotebook query={localSearchQuery} onQueryChange={changeQuery} onSearch={onSearch} />;
-  }
-
+  // An empty notebook keeps its header, with the tools and the account menu, over an invitation in place of the
+  // list. The header and the sheets keep their place when the first word arrives, so an open menu or sheet
+  // carries on.
   return (
     <div
       ref={attachScrollParent}
-      className="h-full overflow-y-auto overflow-x-hidden bg-slate-50"
+      className={`h-full overflow-y-auto overflow-x-hidden bg-slate-50${hasSavedItems ? '' : ' flex flex-col'}`}
       onScroll={handleScroll}
     >
       <NotebookHeader
@@ -304,6 +307,7 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
             onFindDuplicates={onFindDuplicates}
           />
         }
+        empty={!hasSavedItems}
         compareMode={compareMode}
         onToggleCompare={() => {
           setCompareMode(prev => !prev);
@@ -317,56 +321,66 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
         onSignIn={onSignIn}
         onSignOut={onSignOut}
       >
-        {/* Search Bar - swipe right to clear */}
-        <NotebookSearchBar
-          query={localSearchQuery}
-          onQueryChange={changeQuery}
-          onKeyDown={handleSearchKeyDown}
-          onTouchStart={clearSwipe.onTouchStart}
-          onTouchEnd={clearSwipe.onTouchEnd}
-          isOnline={isOnline}
-          isRecording={isRecording}
-          isTranscribing={isTranscribing}
-          isSearching={isSearching}
-          onToggleRecording={toggleRecording}
-          onSearchWithAI={() => performAISearch(localSearchQuery)}
-          onClear={() => changeQuery('')}
-        />
+        {/* Search Bar - swipe right to clear. An empty notebook's box is in its invitation instead. */}
+        {hasSavedItems && (
+          <NotebookSearchBar
+            query={localSearchQuery}
+            onQueryChange={changeQuery}
+            onKeyDown={handleSearchKeyDown}
+            onTouchStart={clearSwipe.onTouchStart}
+            onTouchEnd={clearSwipe.onTouchEnd}
+            isOnline={isOnline}
+            isRecording={isRecording}
+            isTranscribing={isTranscribing}
+            isSearching={isSearching}
+            onToggleRecording={toggleRecording}
+            onSearchWithAI={() => performAISearch(localSearchQuery)}
+            onClear={() => changeQuery('')}
+          />
+        )}
         {/* Batch Import Progress Banner, part of the header so it hides and shows with it */}
         {batchImportProgress?.isRunning && <BatchImportBanner progress={batchImportProgress} />}
       </NotebookHeader>
 
-      {/* AI Search Results */}
-      {searchError && (
-        <SearchErrorBanner
-          message={searchError}
-          onRetry={localSearchQuery.trim() ? () => performAISearch(localSearchQuery) : undefined}
-        />
-      )}
-      
-      {searchResults && searchResults.vocabs && searchResults.vocabs.length > 0 && (
-        <SearchResultsCarousel
-          vocabs={searchResults.vocabs}
-          onSave={handleSaveVocab}
-          isVocabSaved={isVocabSaved}
-          onSearch={onSearch}
-          onSaveSentence={onSaveSentence}
-          isSentenceSaved={isSentenceSaved}
-          keyboardEnabled={!hasOverlay}
-        />
-      )}
+      {hasSavedItems ? (
+        <>
+          {/* AI Search Results */}
+          {searchError && (
+            <SearchErrorBanner
+              message={searchError}
+              onRetry={localSearchQuery.trim() ? () => performAISearch(localSearchQuery) : undefined}
+            />
+          )}
 
-      <div className="w-full max-w-screen-md lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mx-auto pb-[calc(5rem+env(safe-area-inset-bottom))]">
-        {scrollParent && (
-          <Virtuoso
-            customScrollParent={scrollParent}
-            data={virtualRows}
-            overscan={400}
-            computeItemKey={virtualRowKey}
-            itemContent={renderVirtualRow}
-          />
-        )}
-      </div>
+          {searchResults && searchResults.vocabs && searchResults.vocabs.length > 0 && (
+            <SearchResultsCarousel
+              vocabs={searchResults.vocabs}
+              onSave={handleSaveVocab}
+              isVocabSaved={isVocabSaved}
+              onSearch={onSearch}
+              onSaveSentence={onSaveSentence}
+              isSentenceSaved={isSentenceSaved}
+              keyboardEnabled={!hasOverlay}
+            />
+          )}
+
+          <div className="w-full max-w-screen-md lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl mx-auto pb-[calc(5rem+env(safe-area-inset-bottom))]">
+            {scrollParent && (
+              <Virtuoso
+                customScrollParent={scrollParent}
+                data={virtualRows}
+                overscan={400}
+                computeItemKey={virtualRowKey}
+                itemContent={renderVirtualRow}
+              />
+            )}
+          </div>
+        </>
+      ) : (
+        // Typing stays on this screen, in the same box: its search opens the search sheet, where the first word
+        // is saved.
+        <EmptyNotebook query={localSearchQuery} onQueryChange={changeQuery} onSearch={onSearch} />
+      )}
 
       {/* Text Analyzer Modal */}
       <TextAnalyzer
