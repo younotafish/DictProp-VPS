@@ -1,6 +1,6 @@
-import { isVocabItem, savedVocabKey, type StoredItem, type VocabCard } from '../types';
-import { makeVocabStoredItem } from './items';
+import { isVocabItem, type StoredItem, type VocabCard } from '../types';
 import { log, warn } from './logger';
+import { saveNewSenses, savedSenseKeys } from './senseSaving';
 
 /** How far a batch import has got. */
 export interface BatchImportProgress { current: number; total: number; skipped: number; failed: number; saved: number; isRunning: boolean }
@@ -43,14 +43,13 @@ export async function runBatchImport(
   { items, analyze, save, report, sleep = wait }: BatchImportJob,
 ): Promise<BatchImportOutcome> {
   // The saved words and senses, looked up once rather than scanned per word, and kept current as this import
-  // saves more, so a sense that two listed words both produce is saved once.
+  // saves more, so a sense that two listed words both produce is saved once (services/senseSaving).
+  const library = items();
   const savedWords = new Set<string>();
-  const savedSenses = new Set<string>();
-  for (const item of items()) {
-    if (item.isDeleted || !isVocabItem(item)) continue;
-    savedWords.add((item.data.word || '').toLowerCase().trim());
-    savedSenses.add(savedVocabKey(item.data));
+  for (const item of library) {
+    if (!item.isDeleted && isVocabItem(item)) savedWords.add((item.data.word || '').toLowerCase().trim());
   }
+  const savedSenses = savedSenseKeys(library);
   const listed = new Set<string>();
   const newWords: string[] = [];
   let skipped = 0;
@@ -88,16 +87,10 @@ export async function runBatchImport(
 
           const result = await analyze(word);
 
-          for (const vocab of result.vocabs || []) {
-            const senseKey = savedVocabKey(vocab);
-            if (!savedSenses.has(senseKey)) {
-              savedSenses.add(senseKey);
-              save(makeVocabStoredItem(vocab));
-              saved++;
-              importedIds.push(vocab.id);
-
-              // Advanced metadata and images are added by the Mac-local enrichment cycle.
-            }
+          // Advanced metadata and images are added by the Mac-local enrichment cycle.
+          for (const vocab of saveNewSenses(result.vocabs || [], savedSenses, save)) {
+            saved++;
+            importedIds.push(vocab.id);
           }
           lastError = null;
           break; // success — exit retry loop
