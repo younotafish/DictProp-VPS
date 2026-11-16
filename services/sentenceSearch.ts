@@ -1,6 +1,7 @@
 import { useMemo, useCallback } from 'react';
 import Fuse from 'fuse.js';
 import { type StoredItem, isSentenceItem } from '../types';
+import { normalizeSearchText } from './searchText';
 import { stripSentenceMarkers } from './sentenceMarkers';
 
 /**
@@ -16,11 +17,6 @@ import { stripSentenceMarkers } from './sentenceMarkers';
  * that pure fuzzy produces at a 0.3 threshold. Fuse also handles CJK poorly, which the literal passes
  * sidestep entirely.
  */
-
-/** Lowercase + strip diacritics so "saute" matches "sauté"/"sautéed" and "cafe" matches "café", and
- *  straighten curly apostrophes, which phone keyboards type, so "don’t" matches "don't". */
-const normalize = (s: string): string =>
-  s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[\u2018\u2019]/g, "'");
 
 const isWordChar = (ch: string | undefined): boolean => ch !== undefined && /[\p{L}\p{N}]/u.test(ch);
 // Scripts written without spaces between words, where a word can start at any character.
@@ -62,7 +58,7 @@ function wordStartIndex(hay: string, token: QueryToken): number {
 interface SentenceRecord {
   stored: StoredItem;
   text: string;   // stripSentenceMarkers(data.text) — no {{…}} / [[…]] markup (used for length tiebreak)
-  norm: string;   // normalize(text + '\n' + sourceWord)
+  norm: string;   // normalizeSearchText(text + '\n' + sourceWord)
 }
 
 export interface SentenceIndex {
@@ -95,7 +91,7 @@ export function buildSentenceIndex(sentenceItems: readonly StoredItem[]): Senten
       for (const item of sentenceItems) {
         if (!isSentenceItem(item)) continue;
         const text = stripSentenceMarkers(item.data.text || '');
-        records.push({ stored: item, text, norm: normalize(`${text}\n${item.data.sourceWord || ''}`) });
+        records.push({ stored: item, text, norm: normalizeSearchText(`${text}\n${item.data.sourceWord || ''}`) });
       }
     }
     return records;
@@ -106,7 +102,7 @@ export function buildSentenceIndex(sentenceItems: readonly StoredItem[]): Senten
   };
 }
 
-const normalizeQuery = (query: string): string => normalize(query.trim()).replace(/\s+/g, ' ');
+const normalizeQuery = (query: string): string => normalizeSearchText(query.trim()).replace(/\s+/g, ' ');
 
 const capped = (out: StoredItem[], limit?: number) => (typeof limit === 'number' ? out.slice(0, limit) : out);
 
