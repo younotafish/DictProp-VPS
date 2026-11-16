@@ -32,11 +32,11 @@ import { useBatchImport } from './hooks/useBatchImport';
 import { useSenseLookup } from './hooks/useSenseLookup';
 
 // The signed-in app re-renders on every library change and progress tick, so the screens, the search sheet,
-// the card popup and the navigation are memoized and re-render only when their own props change (NotebookView
-// memoizes itself); the dialogs render only while open. Their code loads on first use, and the ones a tap can
-// open are fetched once the first screen is up (see the preload effect in App). So do the screens that stand in
-// for the app when it can't open: the sign-in screen and the one for a library this device can't read.
-const NotebookView = lazyScreen('notebook', () => import('./views/Notebook').then(module => ({ default: module.NotebookView })));
+// the card popup and the navigation are memoized here and re-render only when their own props change; the dialogs
+// render only while open. Their code loads on first use, and the ones a tap can open are fetched once the first
+// screen is up (see the preload effect in App). So do the screens that stand in for the app when it can't open:
+// the sign-in screen and the one for a library this device can't read.
+const NotebookView = lazyScreen('notebook', () => import('./views/Notebook').then(module => ({ default: React.memo(module.NotebookView) })));
 const GlobalSearch = lazyScreen('global-search', () => import('./components/GlobalSearch').then(module => ({ default: React.memo(module.GlobalSearch) })));
 const ConfirmModal = lazyScreen('confirm-modal', () => import('./components/ConfirmModal').then(module => ({ default: module.ConfirmModal })));
 const DuplicatesModal = lazyScreen('duplicates-modal', () => import('./components/DuplicatesModal').then(module => ({ default: module.DuplicatesModal })));

@@ -76,7 +76,7 @@ interface NotebookProps {
   onDownloadOfflineImages: () => void;
 }
 
-export const NotebookView: React.FC<NotebookProps> = React.memo(({
+export const NotebookView: React.FC<NotebookProps> = ({
     items, onDelete, onSearch, onViewDetail,
     user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline,
     isVocabSaved, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
@@ -549,4 +549,4 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
       )}
     </div>
   );
-});
+};
