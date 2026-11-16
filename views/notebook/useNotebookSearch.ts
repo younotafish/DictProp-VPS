@@ -28,8 +28,9 @@ export function useNotebookSearch(items: StoredItem[], query: string, sortMode: 
   );
   const fuzzyReady = !!searchQuery && !literalMatches && pausedQuery === searchQuery;
   // The time the list counts what's due from (list.now), which the header's counts and the rows' Due badges share.
-  // It's read again whenever the list is rebuilt from new input, and when the page comes back into view, so what
-  // fell due while the app sat in the background shows as due. It doesn't tick while the list is read.
+  // It's read again whenever the list is rebuilt from new input, when the tab is shown again and when the page
+  // comes back into view, so what fell due while the list was out of sight shows as due. It doesn't tick while
+  // the list is read.
   const listInputs = useMemo(
     () => ({ items, searchQuery, literalMatches, fuzzyReady, sortMode, filterMode }),
     [items, searchQuery, literalMatches, fuzzyReady, sortMode, filterMode],
