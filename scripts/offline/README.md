@@ -155,7 +155,7 @@ Each dispatcher splits its stage's results into waves. Its wave preparer leaves 
 
 The repository is public, so everything that crosses it is encrypted. `sentence-backfill.yml` and `offsite-backup.yml` run these scripts on a GitHub runner, because the Mac can't reach the VPS.
 
-- `bridge-crypto.mjs` — Encrypts and decrypts bridge bundles with AES-256-GCM, under a key derived from `SENTENCE_BRIDGE_KEY`. Each bundle is bound to the operation it was made for. Both the workflow and the Mac's dispatchers and fetcher use it. `verify` checks a blob that stays encrypted, such as an off-site backup: it authenticates every byte, decompresses with `--gunzip` only after that, writes nothing, and prints `{"verified":true,"bytes":N}` with the plaintext's size.
+- `bridge-crypto.mjs` — Encrypts and decrypts bridge bundles with AES-256-GCM, under a key derived from `SENTENCE_BRIDGE_KEY`. Each bundle is bound to the operation it was made for. Both the workflow and the Mac's dispatchers and fetcher use it. `verify` checks a blob that stays encrypted, such as an off-site backup: it decompresses with `--gunzip` only after a first pass has authenticated every byte, writes nothing, and prints `{"verified":true,"bytes":N}` with the plaintext's size.
   `node scripts/offline/bridge-crypto.mjs <encrypt|decrypt> --purpose <label> --out <file> [--in <file>] [--key-file <file>] [--gunzip]`
   `node scripts/offline/bridge-crypto.mjs verify --purpose <label> --in <file> [--key-file <file>] [--gunzip]`
 - `bridge-export.sh` — Runs on the runner. It streams an export from the VPS through `vps-ssh.sh` straight into the cipher, so no plaintext reaches the log or the disk.

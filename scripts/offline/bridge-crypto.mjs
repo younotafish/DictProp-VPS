@@ -210,10 +210,11 @@ export async function decryptFile({ input, output, passphrase, purpose, gunzip =
 }
 
 // Checks a kept blob, such as an off-site database backup, without writing a byte of plaintext anywhere, and
-// returns how many bytes it decrypts to, decompressed with gunzip. The first pass authenticates every chunk and the
-// final tag. Only then does a second pass decrypt the file again into the decompressor, as decryptFile does, so
-// nothing unauthenticated is decompressed; the second pass authenticates again, so a file that changed in between
-// fails too.
+// returns how many bytes it decrypts to, decompressed with gunzip. The first pass checks the GCM tag over the whole
+// blob before anything is decompressed. With gunzip, a second pass then decrypts the file again straight into the
+// decompressor, unlike decryptFile, which decompresses the temp file it has already authenticated. That pass's input
+// is authenticated only when its own tag verifies at the end, so a file rewritten between the passes reaches the
+// decompressor but still fails, and nothing is written either way.
 export async function verifyFile({ path, passphrase, purpose, gunzip = false }) {
   checkPurpose(purpose);
   const decrypt = source => decryptChunks(source, { passphrase, purpose });
