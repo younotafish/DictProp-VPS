@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { AiError, createChatClient } from '../src/ai-client.js';
@@ -237,6 +238,66 @@ test('a run reports itself over only once its final status is published and its 
   assert.equal(existsSync(LOCK_PATH), false);
   assert.equal(JSON.parse(readFileSync(BACKFILL_STATUS_PATH, 'utf8')).running, false);
   await run.finished;
+});
+
+test('a heartbeat still writing when the run ends lands before the final status, never after it', async (t) => {
+  // The status file is written through fs/promises (writeFileAtomic): count the status writes in flight at once, and
+  // hold the next one at its rename until the test lets it go.
+  const fsp = createRequire(import.meta.url)('node:fs/promises') as typeof import('node:fs/promises');
+  const { writeFile, rename } = fsp;
+  t.after(() => {
+    Object.assign(fsp, { writeFile, rename });
+    syncBuiltinESMExports();
+  });
+  let inFlight = 0;
+  let mostInFlight = 0;
+  let hold: { reached: () => void; released: Promise<void> } | null = null;
+  Object.assign(fsp, {
+    writeFile: (...args: Parameters<typeof writeFile>) => {
+      if (String(args[0]).startsWith(`${BACKFILL_STATUS_PATH}.`)) mostInFlight = Math.max(mostInFlight, ++inFlight);
+      return writeFile(...args);
+    },
+    rename: async (from: string, to: string) => {
+      if (to !== BACKFILL_STATUS_PATH) return rename(from, to);
+      const held = hold;
+      hold = null;
+      if (held) {
+        held.reached();
+        await held.released;
+      }
+      try {
+        await rename(from, to);
+      } finally {
+        inFlight--;
+      }
+    },
+  });
+  syncBuiltinESMExports();
+  // The heartbeat beats when the test says, not every 30 seconds.
+  let heartbeat = () => {};
+  const startInterval = setInterval;
+  t.mock.method(globalThis, 'setInterval', (beat: () => void, ms: number) => {
+    heartbeat = beat;
+    return startInterval(() => {}, ms).unref();
+  });
+
+  const gate = deferred();
+  const { backfill } = harness({ catalog: ['Its last heartbeat was still writing.'], library: [] }, {
+    deps: { align: async () => { await gate.promise; return TIMING; } },
+  });
+  const run = await backfill.start();
+  assert.ok(run);
+  const reached = deferred();
+  const released = deferred();
+  hold = { reached: reached.release, released: released.promise };
+  heartbeat();
+  await reached.promise; // the heartbeat's status is written, not yet renamed into place
+  gate.release();
+  while (backfill.status().finishedAt === 0) await new Promise(resolve => setImmediate(resolve));
+  released.release(); // the run has ended and asked for its final status
+  await run.finished;
+  assert.equal(mostInFlight, 1);
+  assert.equal(JSON.parse(readFileSync(BACKFILL_STATUS_PATH, 'utf8')).running, false);
 });
 
 test('a second backfill in the same process never takes over the lock the first one holds', async () => {

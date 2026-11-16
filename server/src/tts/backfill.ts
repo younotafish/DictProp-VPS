@@ -209,11 +209,15 @@ export function createBackfill({
     }
   }
 
-  const persist = (status: BackfillStatus = backfill) => writeFileAtomic(
-    BACKFILL_STATUS_PATH,
-    `${JSON.stringify({ ...status, owner, pid: process.pid, heartbeatAt: Date.now() }, null, 2)}\n`,
-    { mode: 0o600 },
-  );
+  // Status writes land in the order they were made, so a heartbeat's write still in flight when the run ends can't
+  // replace its final status.
+  let statusWrites: Promise<unknown> = Promise.resolve();
+  const persist = (status: BackfillStatus = backfill): Promise<void> => {
+    const json = `${JSON.stringify({ ...status, owner, pid: process.pid, heartbeatAt: Date.now() }, null, 2)}\n`;
+    const write = statusWrites.then(() => writeFileAtomic(BACKFILL_STATUS_PATH, json, { mode: 0o600 }));
+    statusWrites = write.catch(() => {});
+    return write;
+  };
   const warn = (what: string) => (e: unknown) => console.warn(`[tts] backfill ${what}:`, (e as Error | undefined)?.message);
 
   async function begin(): Promise<BackfillRun | null> {
