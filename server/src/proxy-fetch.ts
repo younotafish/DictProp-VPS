@@ -154,14 +154,22 @@ export interface DirectConnectOptions {
   lookup?: LookupFunction;
 }
 
+/** How proxyFetch sends a request: through curl, through undici's ProxyAgent, or over a direct undici Agent. */
+export type Transport = 'curl' | 'proxy' | 'direct';
+
+/**
+ * The transport for a request with this body, where `proxied` says a proxy is configured. undici's ProxyAgent can
+ * stall on the large JSON/base64 request bodies used by comparison and word alignment, so through a proxy a string
+ * body of CURL_BODY_THRESHOLD bytes or more goes through curl. Keep that transport detail inside this one outbound
+ * HTTP boundary.
+ */
+export function chooseTransport(proxied: boolean, body: RequestInit['body']): Transport {
+  if (!proxied) return 'direct';
+  return typeof body === 'string' && Buffer.byteLength(body) >= CURL_BODY_THRESHOLD ? 'curl' : 'proxy';
+}
+
 export async function proxyFetch(url: string, options: RequestInit = {}, direct: DirectConnectOptions = {}): Promise<Response> {
-  if (dispatcher) {
-    // undici's ProxyAgent can stall on the large JSON/base64 request bodies used by comparison
-    // and word alignment. Keep that transport detail inside this one outbound HTTP boundary.
-    if (typeof options.body === 'string' && Buffer.byteLength(options.body) >= CURL_BODY_THRESHOLD) {
-      return curlFetch(url, options);
-    }
-  }
+  if (chooseTransport(dispatcher !== undefined, options.body) === 'curl') return curlFetch(url, options);
   return undiciFetchAsGlobal(url, await encodeFormDataBody(options), dispatcher ?? getDirectAgent(direct.lookup));
 }
 
