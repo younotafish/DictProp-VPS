@@ -55,3 +55,29 @@ test('a push that stops partway still reports what the earlier batches saved', a
   serve(() => json({ error: 'Server unavailable' }, 503));
   await assert.rejects(saveItems(many), (error: unknown) => error instanceof HttpError && error.status === 503);
 });
+
+test('the server-owned fields the server kept come back by id from every batch, and malformed entries are left out', async () => {
+  const audit = { status: 'current_general' };
+  const replyFor = (batch: StoredItem[], kept: unknown) => json({
+    revisions: Object.fromEntries(batch.map(entry => [entry.data.id, 7])),
+    canonical: [],
+    kept,
+  });
+  serve(batch => replyFor(batch, { a: { usageAudit: audit }, b: null, c: ['usageAudit'], d: 'usageAudit' }));
+  let result = await saveItems(['a', 'b', 'c', 'd'].map(item));
+  assert.deepEqual([...result.kept], [['a', { usageAudit: audit }]]);
+
+  // Each batch's reply adds its own.
+  const many = Array.from({ length: 250 }, (_, index) => item(`item-${index}`));
+  serve(batch => replyFor(batch, { [batch[0].data.id]: { usageAudit: audit } }));
+  result = await saveItems(many);
+  assert.deepEqual([...result.kept.keys()], ['item-0', 'item-200']);
+
+  // A reply from a server that sends none, or something other than an object of objects, keeps nothing.
+  for (const kept of [undefined, null, [{ usageAudit: audit }], 'a']) {
+    serve(batch => replyFor(batch, kept));
+    result = await saveItems([item('a')]);
+    assert.equal(result.kept.size, 0, JSON.stringify(kept));
+    assert.equal(result.revisions.get('a'), 7);
+  }
+});

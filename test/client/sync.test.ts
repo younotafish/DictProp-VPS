@@ -4,7 +4,7 @@ import { getItemContentHash, isItemDirty } from '../../services/itemHash.ts';
 import { applyServerSave, dropExpiredTombstones, mergeDatasets, trackServerContent } from '../../services/sync.ts';
 import type { SaveItemsResult } from '../../services/api/library.ts';
 import { saveOverExisting } from '../../services/items.ts';
-import type { StoredItem, VocabCard } from '../../types.ts';
+import type { AdvancedEnrichmentMarker, SearchResult, SentenceData, StoredItem, UsageAudit, VocabCard } from '../../types.ts';
 
 function vocab(id: string, imageUrl?: string): VocabCard {
   return {
@@ -333,6 +333,103 @@ test('an outdated push acknowledgement changes nothing', () => {
   const recorded = { ...sent, serverRevision: 5, lastSyncedHash: getItemContentHash(sent) };
   const repeated = [recorded];
   assert.equal(applyServerSave(repeated, [sent], stale), repeated);
+});
+
+const keptAudit: UsageAudit = { status: 'current_general', reason: 'Common.', confidence: 'high', auditedAt: 1 };
+const keptEnrichment: AdvancedEnrichmentMarker = {
+  version: 1, provider: 'claude-code', model: 'test-model', generatedAt: 2, contentHash: 'a'.repeat(64),
+};
+/** A phrase saved here from a fresh AI result: no usage audit, and its second vocab without its enrichment. */
+const refreshed = (): StoredItem => ({ ...phrase([vocab('alpha'), vocab('beta')], 1), serverRevision: 4 });
+/** The reply to its push: the server kept both fields, at revision 5. */
+const keptReply = () => ({
+  revisions: new Map([['phrase', 5]]),
+  canonical: new Map<string, StoredItem>(),
+  kept: new Map([['phrase', { usageAudit: keptAudit, vocabs: [{ id: 'beta', advancedEnrichment: keptEnrichment }] }]]),
+});
+const phraseData = (item: StoredItem) => item.data as SearchResult;
+
+test('a push acknowledgement fills in the server-owned fields the server kept, so the copy is clean before any pull', () => {
+  const sent = refreshed();
+  const [clean] = applyServerSave([sent], [sent], keptReply());
+  assert.deepEqual(phraseData(clean).usageAudit, keptAudit);
+  assert.deepEqual(phraseData(clean).vocabs[1].advancedEnrichment, keptEnrichment);
+  assert.equal(phraseData(clean).vocabs[0].advancedEnrichment, undefined);
+  assert.equal(clean.serverRevision, 5);
+  assert.equal(isItemDirty(clean), false);
+  // The synced content is the server's row: the copy that was sent, with the fields the server kept.
+  const row: StoredItem = structuredClone(sent);
+  Object.assign(row.data, { usageAudit: keptAudit });
+  Object.assign(phraseData(row).vocabs[1], { advancedEnrichment: keptEnrichment });
+  assert.equal(clean.lastSyncedHash, getItemContentHash(row));
+  // The copy that was sent is untouched.
+  assert.equal(phraseData(sent).usageAudit, undefined);
+});
+
+test('an edit made while the push was in flight stays, gains the kept fields, and is still to be pushed', () => {
+  const sent = refreshed();
+  const editedMeanwhile: StoredItem = { ...sent, updatedAt: 2, data: { ...phraseData(sent), translation: 'edited later' } };
+  const [dirty] = applyServerSave([editedMeanwhile], [sent], keptReply());
+  assert.equal(phraseData(dirty).translation, 'edited later');
+  assert.deepEqual(phraseData(dirty).usageAudit, keptAudit);
+  assert.deepEqual(phraseData(dirty).vocabs[1].advancedEnrichment, keptEnrichment);
+  assert.equal(dirty.serverRevision, 5);
+  assert.equal(isItemDirty(dirty), true);
+
+  // A value the copy has of its own stays, and a copy deleted meanwhile takes nothing, as the server keeps nothing
+  // for a deletion.
+  const ownAudit: UsageAudit = { status: 'modern_american', reason: 'Common in the US.', confidence: 'high', auditedAt: 3 };
+  const reaudited: StoredItem = { ...sent, data: { ...phraseData(sent), usageAudit: ownAudit } };
+  assert.deepEqual(phraseData(applyServerSave([reaudited], [sent], keptReply())[0]).usageAudit, ownAudit);
+  const deleted: StoredItem = { ...sent, isDeleted: true, updatedAt: 2 };
+  const [tombstone] = applyServerSave([deleted], [sent], keptReply());
+  assert.equal(phraseData(tombstone).usageAudit, undefined);
+  assert.equal(tombstone.serverRevision, 5);
+  assert.equal(isItemDirty(tombstone), true);
+});
+
+test('kept fields apply when the save changed nothing else, so the revision stayed, and once applied change nothing', () => {
+  const sent: StoredItem = { ...refreshed(), serverRevision: 5 };
+  // An earlier acknowledgement of the same copy, from before replies carried kept fields, recorded it as synced.
+  const recorded: StoredItem = { ...sent, lastSyncedHash: getItemContentHash(sent) };
+  const [filled] = applyServerSave([recorded], [sent], keptReply());
+  assert.deepEqual(phraseData(filled).usageAudit, keptAudit);
+  assert.equal(filled.serverRevision, 5);
+  assert.equal(isItemDirty(filled), false);
+  const items = [filled];
+  assert.equal(applyServerSave(items, [sent], keptReply()), items);
+});
+
+test('kept fields are ignored by an outdated acknowledgement, and a canonical copy goes first', () => {
+  const sent = refreshed();
+  // A review response recorded revision 7 while the push was in flight.
+  const items = [{ ...sent, serverRevision: 7, lastSyncedHash: 'from-review' }];
+  assert.equal(applyServerSave(items, [sent], keptReply()), items);
+
+  const server: StoredItem = { ...sent, serverRevision: 6, data: { ...phraseData(sent), translation: 'server copy' } };
+  const [adopted] = applyServerSave([sent], [sent], { ...keptReply(), canonical: new Map([['phrase', server]]) });
+  assert.equal(phraseData(adopted).translation, 'server copy');
+  assert.equal(phraseData(adopted).usageAudit, undefined);
+  assert.equal(adopted.serverRevision, 6);
+  assert.equal(isItemDirty(adopted), false);
+});
+
+test('a sentence edited while its push was in flight takes no analysis of the text it had', () => {
+  const sentence = (text: string): StoredItem => ({
+    type: 'sentence', data: { id: 'sentence', text, sourceWord: 'lucid' }, savedAt: 1, updatedAt: 1, serverRevision: 4,
+    srs: srs('sentence', 0, 0),
+  });
+  const analysis = { translation: 'translated' };
+  const reply = {
+    revisions: new Map([['sentence', 5]]),
+    canonical: new Map<string, StoredItem>(),
+    kept: new Map([['sentence', { text: 'A lucid account.', analysis, analysisGeneratedAt: 7 }]]),
+  };
+  const sent = sentence('A lucid account.');
+  assert.deepEqual((applyServerSave([sent], [sent], reply)[0].data as SentenceData).analysis, analysis);
+  const [edited] = applyServerSave([{ ...sentence('A lucid, calm account.'), updatedAt: 2 }], [sent], reply);
+  assert.equal((edited.data as SentenceData).analysis, undefined);
+  assert.equal(isItemDirty(edited), true);
 });
 
 test('an edit saved from a copy older than the saved one never overwrites newer server content', () => {

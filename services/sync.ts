@@ -387,13 +387,13 @@ export const reconcileReviewedItem = (
 export const applyServerSave = (
   items: StoredItem[],
   pushed: readonly StoredItem[],
-  result: Pick<SaveItemsResult, 'revisions' | 'canonical'>,
+  result: Pick<SaveItemsResult, 'revisions' | 'canonical'> & Partial<Pick<SaveItemsResult, 'kept'>>,
 ): StoredItem[] => {
-  const pushedHashes = new Map(pushed.map(item => [item.data.id, getItemContentHash(item)]));
+  const sentCopies = new Map(pushed.map(item => [item.data.id, item]));
   let changed = false;
   const next = items.map(item => {
-    const pushedHash = pushedHashes.get(item.data.id);
-    if (pushedHash === undefined) return item;
+    const sent = sentCopies.get(item.data.id);
+    if (!sent) return item;
     // Review responses apply outside the sync lane and may already have recorded a newer server copy.
     const localRevision = item.serverRevision ?? 0;
     const canonical = result.canonical.get(item.data.id);
@@ -404,12 +404,18 @@ export const applyServerSave = (
       return { ...mergeItem(item, canonical), lastSyncedHash: getItemContentHash(canonical) };
     }
     const revision = result.revisions.get(item.data.id);
-    if (revision === undefined || revision < localRevision ||
-        (revision === localRevision && item.lastSyncedHash === pushedHash)) {
-      return item;
-    }
+    if (revision === undefined || revision < localRevision) return item;
+    // When the server kept server-owned fields the push left out, it holds the sent copy with them. They're filled in
+    // here by the rule it applied, so the copy matches the row without waiting for a pull. They fill only what a copy
+    // lacks, and only server jobs write them, so an edit made while the push was in flight stays, and keeps the item
+    // dirty. A copy deleted meanwhile takes none, as the server keeps none for a deletion.
+    const kept = result.kept?.get(item.data.id);
+    const synced = kept ? { ...sent, data: keepServerOwnedData(sent.data, sent.type, kept, sent.type) } : sent;
+    const syncedHash = getItemContentHash(synced);
+    const data = kept && !item.isDeleted ? keepServerOwnedData(item.data, item.type, kept, sent.type) : item.data;
+    if (data === item.data && revision === localRevision && item.lastSyncedHash === syncedHash) return item;
     changed = true;
-    return { ...item, serverRevision: revision, lastSyncedHash: pushedHash };
+    return { ...item, data, serverRevision: revision, lastSyncedHash: syncedHash };
   });
   return changed ? next : items;
 };

@@ -66,6 +66,12 @@ export const loadAllItems = async (): Promise<{ items: StoredItem[]; cursor: Rev
 export interface SaveItemsResult {
   revisions: Map<string, number>;
   canonical: Map<string, StoredItem>;
+  /**
+   * For an item whose push left out server-owned fields the server kept from its stored copy: that copy's
+   * server-owned part (serverOwnedPart in server/src/shared/server-owned-data.ts), which applyServerSave fills in.
+   * Older servers send none.
+   */
+  kept: Map<string, Record<string, unknown>>;
   /** Items the server refuses (invalid, or too large to send), with its reason. The others still save. */
   rejected: Map<string, string>;
   /** Why the push stopped early. The batches before it saved; it and the rest didn't. */
@@ -74,10 +80,13 @@ export interface SaveItemsResult {
 
 const SAVE_BATCH_SIZE = 200;
 
+const isJsonObject = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
 export const saveItems = async (items: readonly StoredItem[]): Promise<SaveItemsResult> => {
-  const saved: SaveItemsResult = { revisions: new Map(), canonical: new Map(), rejected: new Map() };
+  const saved: SaveItemsResult = { revisions: new Map(), canonical: new Map(), kept: new Map(), rejected: new Map() };
   const send = async (batch: readonly StoredItem[]): Promise<void> => {
-    let result: { revisions?: Record<string, number>; canonical?: StoredItem[] };
+    let result: { revisions?: Record<string, number>; canonical?: StoredItem[]; kept?: unknown };
     try {
       result = await requestJson('/api/items', jsonRequest('PUT', batch), 'Save items');
     } catch (error) {
@@ -97,6 +106,9 @@ export const saveItems = async (items: readonly StoredItem[]): Promise<SaveItems
       if (typeof revision === 'number') saved.revisions.set(id, revision);
     }
     for (const item of result.canonical ?? []) saved.canonical.set(item.data.id, item);
+    if (isJsonObject(result.kept)) {
+      for (const [id, part] of Object.entries(result.kept)) if (isJsonObject(part)) saved.kept.set(id, part);
+    }
   };
   try {
     for (let start = 0; start < items.length; start += SAVE_BATCH_SIZE) {

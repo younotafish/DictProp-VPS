@@ -8,7 +8,7 @@ const { applyServerSave, mergeDatasets, reconcileReviewedItem, trackServerConten
 const { isItemDirty } = await import('../../services/itemHash.ts');
 const { SRSAlgorithm } = await import('../../services/srsAlgorithm.ts');
 const { updateAfterRating } = await import('../../services/fsrsScheduler.ts');
-import type { StoredItem } from '../../types.ts';
+import type { StoredItem, VocabCard } from '../../types.ts';
 
 const USER = 'srs-sync-user';
 const DAY = 86_400_000;
@@ -31,10 +31,11 @@ function pull(device: Device): void {
 function push(device: Device): number {
   const dirty = device.items.filter(isItemDirty);
   if (dirty.length === 0) return 0;
-  const result = upsertMany(wire(dirty), USER);
+  const result = wire(upsertMany(wire(dirty), USER));
   device.items = applyServerSave(device.items, dirty, {
     revisions: new Map(Object.entries(result.revisions)),
     canonical: new Map(),
+    kept: new Map(Object.entries(result.kept)),
   });
   return dirty.length;
 }
@@ -116,6 +117,53 @@ test('an undo reaches a device that pulled the review before it', () => {
   assert.equal(find(other.items, 'undo-me').srs.totalReviews, 0);
   assert.equal(push(other), 0);
   assert.equal(serverCopy('undo-me').srs.totalReviews, 0);
+});
+
+test('a card refreshed without the fields only server jobs write holds them once its push returns, before any pull', () => {
+  const audit = { status: 'current_general', reason: 'Normal in current American English.', confidence: 'high', auditedAt: 1 };
+  const marker = { version: 1, provider: 'claude-code', model: 'test-model', generatedAt: 2, contentHash: 'a'.repeat(64) };
+  const card = vocabItem('refreshed');
+  upsertMany([{ ...card, data: { ...card.data, usageAudit: audit, advancedEnrichment: marker } }], USER);
+  const device = newDevice();
+  pull(device);
+
+  // Refreshing replaces the card's content with a fresh result, which has neither field.
+  device.items = device.items.map(item => item.data.id === 'refreshed'
+    ? { ...item, data: { ...card.data, definition: 'refreshed definition' }, updatedAt: Date.now() }
+    : item);
+  assert.equal(push(device), 1);
+  const saved = find(device.items, 'refreshed');
+  const data = saved.data as VocabCard;
+  assert.equal(data.definition, 'refreshed definition');
+  assert.deepEqual(data.usageAudit, audit);
+  assert.deepEqual(data.advancedEnrichment, marker);
+  assert.equal(saved.serverRevision, serverCopy('refreshed').serverRevision);
+  assert.equal(isItemDirty(saved), false);
+
+  // The next pull brings the push's own revision back and changes nothing.
+  pull(device);
+  assert.equal(find(device.items, 'refreshed'), saved);
+  assert.equal(push(device), 0);
+});
+
+test('a save that only left out those fields, which the server keeps at the same revision, gets them back all the same', () => {
+  const audit = { status: 'modern_american', reason: 'Common in the US.', confidence: 'high', auditedAt: 1 };
+  const card = vocabItem('only-left-out');
+  upsertMany([{ ...card, data: { ...card.data, usageAudit: audit } }], USER);
+  const device = newDevice();
+  pull(device);
+  const revision = serverCopy('only-left-out').serverRevision;
+
+  // The same content without the audit: the server has nothing to change, so no pull would ever bring the audit back.
+  device.items = device.items.map(item => item.data.id === 'only-left-out' ? { ...item, data: card.data } : item);
+  assert.equal(push(device), 1);
+  assert.equal(serverCopy('only-left-out').serverRevision, revision);
+  const saved = find(device.items, 'only-left-out');
+  assert.deepEqual((saved.data as VocabCard).usageAudit, audit);
+  assert.equal(isItemDirty(saved), false);
+  assert.equal(push(device), 0);
+  pull(device);
+  assert.equal(find(device.items, 'only-left-out'), saved);
 });
 
 // A vocab card with independent content and review clocks, as the round trips below store it.
