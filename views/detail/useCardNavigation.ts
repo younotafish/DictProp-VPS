@@ -74,7 +74,7 @@ export function useCardNavigation(
     if (navigationKeyRef.current === navigationKey) return;
     navigationKeyRef.current = navigationKey;
     if (initialGroupIndex !== currentGroupIndex) pendingItemIndexRef.current = initialItemIndex;
-    else if (scrollContainerRef?.current) scrollContainerRef.current.scrollTop = 0;
+    else if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
     setCurrentGroupIndex(initialGroupIndex);
     setCurrentItemIndex(initialItemIndex);
   }, [navigationKey, initialGroupIndex, initialItemIndex, currentGroupIndex, scrollContainerRef]);
@@ -84,7 +84,7 @@ export function useCardNavigation(
   const placeRef = useRef<CardInPlace>({ groupIndex: currentGroupIndex, itemIndex: currentItemIndex, cardId });
   useLayoutEffect(() => {
     const place = { groupIndex: currentGroupIndex, itemIndex: currentItemIndex, cardId };
-    if (isNewCardInPlace(placeRef.current, place) && scrollContainerRef?.current) scrollContainerRef.current.scrollTop = 0;
+    if (isNewCardInPlace(placeRef.current, place) && scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
     placeRef.current = place;
   }, [currentGroupIndex, currentItemIndex, cardId, scrollContainerRef]);
 
