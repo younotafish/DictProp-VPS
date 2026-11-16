@@ -10,7 +10,6 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { StoredItem, type ReviewHistory, type ReviewRating, type ReviewTaskType } from '../types';
 import { BrainCircuit } from 'lucide-react';
 import {
-  RATINGS,
   advanceSession,
   findSessionCard,
   gradeSessionCard,
@@ -20,11 +19,13 @@ import {
   type SessionGrade,
   type StudySession,
 } from '../services/studySession';
+import { resolveStudyKey } from '../services/studyKeys';
 import { StudyDashboard } from '../components/StudyDashboard';
 import { StudyCard } from '../components/study/StudyCard';
 import { StudySummary } from '../components/study/StudySummary';
 import { useEscapeLayer } from '../components/escapeStack';
 import { isDialogOpenOutside, isKeyboardFocusedControl, isTypingTarget } from '../components/keyboardTarget';
+import { useLatest } from '../hooks/useStableValue';
 import { warn } from '../services/logger';
 
 interface StudyEnhancedProps {
@@ -45,10 +46,6 @@ interface LastGrade extends SessionGrade {
   /** An undo of this grade is under way. */
   undoing: boolean;
 }
-
-const keyboardRatings: Partial<Record<string, ReviewRating>> = Object.fromEntries(
-  RATINGS.map((rating, i) => [String(i + 1), rating]),
-);
 
 const revealAnswer = (current: StudySession | null): StudySession | null => current ? { ...current, revealed: true } : null;
 
@@ -133,39 +130,36 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     else closeSession();
   }, 0, !!session && !interactionLocked);
 
+  // The session's keys (services/studyKeys.ts). One listener while the session has the keys, reading the
+  // session and the handlers as they are now, so typing an answer doesn't register it again.
+  const keyContext = useLatest({ session, currentItem, lastGrade, gradeCurrent, undoLastGrade });
+  const keysActive = !!session && !interactionLocked;
   useEffect(() => {
-    if (!session || interactionLocked) return;
+    if (!keysActive) return;
     // In the capture phase the session gets its keys before the window-level shortcuts (1-3 also switch
     // tabs), and stops the ones it uses so no other shortcut reacts to them.
     const handleSessionKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (isTypingTarget(event.target) || isDialogOpenOutside(rootRef.current)) return;
-      const rating = keyboardRatings[event.key];
-      if (rating) {
-        // The session owns 1-4 even before the answer shows: an early press does nothing rather than
-        // switch tabs mid-session.
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        if (session.revealed) gradeCurrent(rating);
-        return;
-      }
-      if (event.key.toLowerCase() === 'u' && lastGrade && !lastGrade.undoing) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        void undoLastGrade();
-        return;
-      }
-      // Space and Enter reveal the answer, unless the keyboard has focused a button they should press.
-      if ((event.key === ' ' || event.key === 'Enter') && currentItem && !session.revealed && !isKeyboardFocusedControl(event.target)) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        setSession(revealAnswer);
-      }
+      const { session, currentItem, lastGrade, gradeCurrent, undoLastGrade } = keyContext.current;
+      if (!session) return;
+      const action = resolveStudyKey(event, {
+        phase: currentItem ? 'card' : 'summary',
+        revealed: session.revealed,
+        canUndo: !!lastGrade,
+        undoing: lastGrade?.undoing ?? false,
+        typing: isTypingTarget(event.target),
+        onControl: isKeyboardFocusedControl(event.target),
+        dialogOutside: isDialogOpenOutside(rootRef.current),
+      });
+      if (!action) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (action.type === 'grade') gradeCurrent(action.rating);
+      else if (action.type === 'undo') void undoLastGrade();
+      else if (action.type === 'reveal') setSession(revealAnswer);
     };
     window.addEventListener('keydown', handleSessionKey, true);
     return () => window.removeEventListener('keydown', handleSessionKey, true);
-  }, [session, currentItem, lastGrade, interactionLocked]);
-
+  }, [keysActive, keyContext]);
 
   if (items.length === 0) {
     return (
