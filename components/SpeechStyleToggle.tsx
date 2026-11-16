@@ -1,15 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import { getTtsStyle, setTtsStyle, subscribeTtsStyle, type TtsStyle } from '../services/ttsSettings';
+import { getPlaybackState, type PlaybackState } from '../services/neuralTts';
 
 /**
  * Shared Clear ⇄ Casual speech-style switch. The global fallback lives in the TTS engine (persisted),
  * and every play site routes through it. Sentence review can also use `onChange` to retain a choice
  * on the sentence itself. Render it anywhere; all instances stay in sync via subscribeTtsStyle.
+ * `onStyleClicked` hears a click that changes the style, with what was playing before it, still inside the click so a
+ * replay may start there (iOS plays only from a gesture); the engine itself just stops what was playing.
  */
 export const SpeechStyleToggle: React.FC<{
   className?: string;
   onChange?: (style: TtsStyle) => void;
-}> = ({ className = '', onChange }) => {
+  onStyleClicked?: (style: TtsStyle, before: PlaybackState) => void;
+}> = ({ className = '', onChange, onStyleClicked }) => {
   const [style, setStyle] = useState<TtsStyle>(getTtsStyle());
   useEffect(() => subscribeTtsStyle(setStyle), []);
 
@@ -18,8 +22,11 @@ export const SpeechStyleToggle: React.FC<{
       type="button"
       onClick={(e) => {
         e.stopPropagation();
+        const before = getPlaybackState();
+        const changed = value !== getTtsStyle();
         setTtsStyle(value);
         onChange?.(value);
+        if (changed) onStyleClicked?.(value, before);
       }}
       aria-pressed={style === value}
       title={title}

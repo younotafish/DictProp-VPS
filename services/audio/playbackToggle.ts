@@ -35,3 +35,42 @@ export const toggleActionFor = (state: PlaybackState, text: string, progress: nu
     case 'idle': return 'start';
   }
 };
+
+/**
+ * What tapping Clear or Casual does to the sentence it found playing or loading: read it again from its start in the
+ * new voice ('replay'); a paused or idle one stays as it is ('none'), so nothing starts by itself.
+ */
+export const styleChangeReplay = (status: PlaybackStatus): 'replay' | 'none' =>
+  status === 'playing' || status === 'loading' ? 'replay' : 'none';
+
+export type SentenceSpaceAction = 'toggle-autoplay-pause' | 'pause' | 'resume' | 'ignore' | 'start-autoplay';
+
+/**
+ * Space in sentence review: while auto-play runs, paused or not, it pauses or resumes auto-play; otherwise it pauses or
+ * resumes what's playing, waits for a sentence still loading, or with nothing playing starts auto-play.
+ */
+export const sentenceSpaceAction = ({ autoPlay, status }: { autoPlay: 'off' | 'running' | 'paused'; status: PlaybackStatus }): SentenceSpaceAction => {
+  if (autoPlay !== 'off') return 'toggle-autoplay-pause';
+  switch (status) {
+    case 'playing': return 'pause';
+    case 'paused': return 'resume';
+    case 'loading': return 'ignore';
+    case 'idle': return 'start-autoplay';
+  }
+};
+
+export type WordCardSpaceAction = 'stop-examples' | 'pause' | 'resume' | 'ignore' | 'toggle-slideshow';
+
+/**
+ * Space on a word card: during example auto-play it stops it, as the auto-play button does; otherwise it pauses or
+ * resumes the sentence playing, waits for one still loading, or starts or stops the slideshow.
+ */
+export const wordCardSpaceAction = ({ examplesRunning, status }: { examplesRunning: boolean; status: PlaybackStatus }): WordCardSpaceAction => {
+  if (examplesRunning) return 'stop-examples';
+  switch (status) {
+    case 'playing': return 'pause';
+    case 'paused': return 'resume';
+    case 'loading': return 'ignore';
+    case 'idle': return 'toggle-slideshow';
+  }
+};
