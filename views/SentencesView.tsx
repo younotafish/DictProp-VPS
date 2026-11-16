@@ -17,6 +17,7 @@ import { useLatest } from '../hooks/useStableValue';
 import { useListClock } from '../hooks/useNow';
 import { useSentenceSearch } from '../hooks/useSentenceSearch';
 import { onTabReselect } from '../services/navReselect';
+import { requestLookup } from '../services/searchRequests';
 import { formatDueLabel } from './reading/dueLabel';
 
 const sentenceKey = (_index: number, item: StoredItem) => item.data.id;
@@ -175,9 +176,9 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
 
   const [filter, setFilter] = useState<SentenceReviewFilter>('all');
 
-  // Fuzzy search: narrows the list live as you type; Enter runs a real AI search of the typed text. A query nothing
-  // matches literally waits for the fuzzy matches, which come once typing pauses: pending until then. A trailing
-  // space changes neither the search nor the clock.
+  // Fuzzy search: narrows the list live as you type; Enter looks the typed text up as the search sheet does, a sentence
+  // scanned for its expressions. A query nothing matches literally waits for the fuzzy matches, which come once typing
+  // pauses: pending until then. A trailing space changes neither the search nor the clock.
   const [searchQuery, setSearchQuery] = useState('');
   const deferredQuery = useDeferredValue(searchQuery);
   const settledQuery = deferredQuery.trim();
@@ -272,7 +273,10 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
               onKeyDown={(e) => {
                 // Mid-composition, Enter (picking a pinyin candidate) and Escape belong to the input method.
                 if (isImeKey(e.nativeEvent)) return;
-                if (e.key === 'Enter' && searchQuery.trim()) { e.preventDefault(); onSearch(searchQuery.trim()); }
+                if (e.key === 'Enter' && searchQuery.trim()) {
+                  e.preventDefault();
+                  requestLookup({ query: searchQuery.trim(), source: 'text' });
+                }
                 if (e.key === 'Escape') setSearchQuery('');
               }}
               placeholder="Search saved sentences…"
