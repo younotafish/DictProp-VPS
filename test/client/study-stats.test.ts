@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReviewEvent, ReviewHistory, ReviewRating, StoredItem } from '../../types.ts';
 import { computeStudyStats, countDueSpellings } from '../../services/studyStats.ts';
+import { LibraryCounts } from '../../views/detail/LibraryCounts.tsx';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -69,6 +72,23 @@ test('the due count takes each spelling once, reviewed and due, leaving out new,
   assert.equal(countDueSpellings(items, NOW), 2);
   assert.equal(computeStudyStats(items, recentOnly([]), NOW).due, 2);
   assert.equal(countDueSpellings([], NOW), 0);
+});
+
+test('the card header\'s clock shows the dashboard\'s due count, and says it counts reviewed cards', t => {
+  t.mock.method(Date, 'now', () => NOW);
+  const items = [
+    vocab('run', 'run', { strength: 80, reviews: 4, due: NOW - HOUR }),
+    vocab('walk', 'walk', { strength: 40, reviews: 1, due: NOW - DAY }),
+    vocab('fresh-1', 'fresh', { due: NOW - DAY }),
+    vocab('fresh-2', 'new', { due: NOW }),
+    { ...vocab('kept', 'kept', { strength: 90, reviews: 2, due: NOW - HOUR }), isArchived: true },
+  ];
+  const markup = renderToStaticMarkup(createElement(LibraryCounts, { savedItems: items }));
+  const due = computeStudyStats(items.filter(item => !item.isArchived), recentOnly([]), NOW).due;
+  assert.equal(due, 2);
+  assert.match(markup, new RegExp(`<span class="text-amber-600 flex items-center gap-0\\.5" role="img" aria-label="${due} due \\(reviewed cards\\)" title="${due} due \\(reviewed cards\\)"><svg[^]*?</svg>${due}</span>$`));
+  // The memorized count is as before: strength 70 or more, archived cards left out.
+  assert.match(markup, /<span class="text-emerald-600 flex items-center gap-0\.5"><svg[^]*?<\/svg>1<\/span>/);
 });
 
 test('reviewed items band from each minimum strength down to struggling, and New counts the never reviewed', () => {
