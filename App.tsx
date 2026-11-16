@@ -447,7 +447,7 @@ const App: React.FC = () => {
   if (!authState.user) {
     return (
       <Suspense fallback={<LoadingScreen />}>
-        <SignInScreen onSignIn={loginRedirect} />
+        <SignInScreen onSignIn={loginRedirect} expired={authState.expired} />
       </Suspense>
     );
   }

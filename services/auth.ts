@@ -13,6 +13,9 @@ export interface AuthState {
   loading: boolean;
 }
 
+/** The session App gates on, and whether one the app had has ended on its own. */
+export type AuthGate = AuthState & { expired: boolean };
+
 // Last-known session, cached so the app can render offline (see checkAuth).
 const AUTH_USER_KEY = 'vps_auth_user';
 const AUTH_CHECK_TIMEOUT_MS = 10_000;
@@ -95,6 +98,16 @@ export function initialAuthState(): AuthState {
 export function isSameAuthUser(a: AuthUser | null, b: AuthUser | null): boolean {
   return a === b || (!!a && !!b && a.id === b.id && a.email === b.email && a.displayName === b.displayName &&
     a.photoUrl === b.photoUrl && a.isAdmin === b.isAdmin);
+}
+
+/**
+ * The gate once a session check answers `user`. The same account changes nothing. A session the app had, whether
+ * confirmed or the cached one it opened with, that comes back as none has expired: the server turned it away. A
+ * deliberate sign-out reloads the page with no cached session, so it never reads as expired.
+ */
+export function nextAuthGate(current: AuthGate, user: AuthUser | null): AuthGate {
+  if (!current.loading && isSameAuthUser(current.user, user)) return current;
+  return { user, loading: false, expired: user === null && (current.expired || current.user !== null) };
 }
 
 export function loginRedirect(): void {
