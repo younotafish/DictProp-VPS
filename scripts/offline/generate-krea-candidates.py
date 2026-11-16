@@ -11,7 +11,6 @@ from PIL import Image
 from mflux.models.common.config import ModelConfig
 from mflux.models.ernie_image import ErnieImage
 from mflux.models.krea2.variants.txt2img.krea2 import Krea2
-from mflux.models.qwen.variants.edit.qwen_image_edit import QwenImageEdit
 from mflux.models.qwen.variants.txt2img.qwen_image import QwenImage
 from mflux.models.z_image import ZImage
 from mflux.utils.exceptions import StopImageGenerationException
@@ -55,7 +54,6 @@ def main() -> None:
             "ernie-image",
             "ernie-image-turbo",
             "qwen-image",
-            "qwen-image-edit",
             "z-image-turbo",
         ),
         default="krea2",
@@ -63,10 +61,6 @@ def main() -> None:
     parser.add_argument("--quantize", type=int, choices=(4, 8), default=None)
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--seed-round", type=int, default=0)
-    parser.add_argument("--image-source-candidate", type=int, default=None)
-    parser.add_argument("--image-strength", type=float, default=None)
-    parser.add_argument("--shard-count", type=int, default=1)
-    parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument(
         "--accepted-directory",
         help="Skip targets that already have a complete accepted image in this directory",
@@ -80,25 +74,10 @@ def main() -> None:
     if not targets:
         print("No image targets remain", flush=True)
         return
-    if args.shard_count < 1 or args.shard_index < 0 or args.shard_index >= args.shard_count:
-        raise ValueError("Invalid shard index/count")
     if args.steps < 4 or args.steps > 60:
         raise ValueError("Inference steps must be between 4 and 60")
     if args.candidate_start < 1 or args.candidate_start > args.candidates:
         raise ValueError("Candidate start must be between 1 and --candidates")
-    if args.model == "qwen-image-edit":
-        if args.image_source_candidate is None:
-            raise ValueError("Qwen image editing requires --image-source-candidate")
-        if args.image_strength is not None:
-            raise ValueError("Qwen image editing does not use --image-strength")
-    elif (args.image_source_candidate is None) != (args.image_strength is None):
-        raise ValueError("--image-source-candidate and --image-strength must be provided together")
-    if args.image_source_candidate is not None:
-        if args.image_source_candidate < 1 or args.image_source_candidate > 99:
-            raise ValueError("Image source candidate must be between 1 and 99")
-    if args.image_strength is not None:
-        if not 0.0 < args.image_strength <= 1.0:
-            raise ValueError("Image strength must be greater than 0 and at most 1")
     if args.accepted_directory:
         accepted_directory = Path(args.accepted_directory)
         targets = [
@@ -106,10 +85,9 @@ def main() -> None:
             for target in targets
             if not is_complete_image(accepted_directory / target["filename"], args.width, args.height)
         ]
-    targets = [target for index, target in enumerate(targets) if index % args.shard_count == args.shard_index]
-    if not targets:
-        print("No targets assigned to this shard", flush=True)
-        return
+        if not targets:
+            print("Every target already has an accepted image", flush=True)
+            return
 
     output = Path(args.output_directory)
     output.mkdir(parents=True, exist_ok=True)
@@ -129,7 +107,7 @@ def main() -> None:
 
     targets = [target for target in targets if target_needs_generation(target)]
     if not targets:
-        print("All candidates assigned to this shard are already complete", flush=True)
+        print("All candidates are already complete", flush=True)
         return
 
     if args.model == "ernie-image-turbo":
@@ -138,8 +116,6 @@ def main() -> None:
         model = ErnieImage(model_config=ModelConfig.ernie_image(), quantize=args.quantize)
     elif args.model == "qwen-image":
         model = QwenImage(model_config=ModelConfig.qwen_image(), quantize=args.quantize)
-    elif args.model == "qwen-image-edit":
-        model = QwenImageEdit(model_config=ModelConfig.qwen_image_edit(), quantize=args.quantize)
     elif args.model == "z-image-turbo":
         model = ZImage(model_config=ModelConfig.z_image_turbo(), quantize=args.quantize)
     else:
@@ -167,49 +143,20 @@ def main() -> None:
                 continue
             path.unlink(missing_ok=True)
             try:
-                source_path = None
-                if args.image_source_candidate is not None:
-                    possible_source = output / f"{stem}-{args.image_source_candidate}{suffix}"
-                    if is_complete_image(possible_source, args.width, args.height):
-                        source_path = possible_source
-                prompt = target["prompt"].strip() + quality_suffix
-                if args.model == "qwen-image-edit":
-                    if source_path is None:
-                        raise FileNotFoundError(
-                            f"Missing source candidate {args.image_source_candidate} for {target['imageId']}"
-                        )
-                    generated = model.generate_image(
-                        seed=seed_for(target["imageId"], candidate_index, seed_round),
-                        prompt=(
-                            "Edit the source photograph to teach the exact learning target at a glance. "
-                            f"Correct this prior failure: {target.get('rejectionReason', 'the meaning was unclear')} "
-                            f"The finished image must match this brief: {prompt}"
-                        ),
-                        image_paths=[str(source_path)],
-                        num_inference_steps=args.steps,
-                        height=args.height,
-                        width=args.width,
-                        guidance=4.0,
-                        scheduler="linear",
-                        negative_prompt=None,
-                    )
-                else:
-                    generated = model.generate_image(
-                        seed=seed_for(target["imageId"], candidate_index, seed_round),
-                        prompt=prompt,
-                        num_inference_steps=args.steps,
-                        height=args.height,
-                        width=args.width,
-                        guidance=4.0 if args.model in ("ernie-image", "qwen-image") else 1.0,
-                        scheduler=(
-                            "linear"
-                            if args.model == "qwen-image"
-                            else (("euler" if source_path else "er_sde") if args.model == "krea2" else None)
-                        ),
-                        negative_prompt=None,
-                        image_path=source_path,
-                        image_strength=args.image_strength if source_path else None,
-                    )
+                generated = model.generate_image(
+                    seed=seed_for(target["imageId"], candidate_index, seed_round),
+                    prompt=target["prompt"].strip() + quality_suffix,
+                    num_inference_steps=args.steps,
+                    height=args.height,
+                    width=args.width,
+                    guidance=4.0 if args.model in ("ernie-image", "qwen-image") else 1.0,
+                    scheduler=(
+                        "linear"
+                        if args.model == "qwen-image"
+                        else ("er_sde" if args.model == "krea2" else None)
+                    ),
+                    negative_prompt=None,
+                )
                 image = getattr(generated, "image", generated)
                 temporary_path = output / f".{path.name}.tmp"
                 if suffix == ".webp":
