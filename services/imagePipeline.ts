@@ -66,10 +66,10 @@ export interface Offload {
 
 /**
  * Optimizes pictures, stores them on this device and starts their upload, resolving as soon as they are stored or
- * couldn't be, never waiting on the network. With a user id, a picture stored here whose upload fails is listed for
- * uploadPendingImages; one this device couldn't store is the caller's to keep inline.
+ * couldn't be, never waiting on the network. A picture stored here whose upload fails is listed under the account
+ * for uploadPendingImages; one this device couldn't store is the caller's to keep inline.
  */
-export async function offloadAndUpload(images: InlineImage[], userId?: string): Promise<Offload> {
+export async function offloadAndUpload(images: InlineImage[], userId: string): Promise<Offload> {
   if (images.length === 0) return { stored: true, uploaded: Promise.resolve([]) };
   // One file per picture: the device stores the same bytes the server receives, under the version it will give them.
   const pictures: Picture[] = await Promise.all((await optimizeImages(images)).map(async ({ id, base64 }) => {
@@ -78,7 +78,7 @@ export async function offloadAndUpload(images: InlineImage[], userId?: string): 
   }));
   const stored = await saveImagesBatch(pictures.map(({ id, blob, version }) => ({ id, image: blob, version })));
   const uploaded = uploadEach(pictures.map(({ id, blob }) => ({ id, image: blob }))).then(failed => {
-    if (stored && userId) addPendingImageUploads(userId, failed);
+    if (stored) addPendingImageUploads(userId, failed);
     return failed;
   });
   return { stored, uploaded };

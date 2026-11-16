@@ -194,7 +194,7 @@ export function useLibrary(userId: string) {
   }, [storeItemUpdates, pushDirtyItems]);
 
   return {
-    savedItems, latestItemsRef, updateItems, replaceItem, userSaveData, storeItemUpdates, adoptStoredLibrary,
+    userId, savedItems, latestItemsRef, updateItems, replaceItem, userSaveData, storeItemUpdates, adoptStoredLibrary,
     holdFromPush, hasUnsentChanges, inSyncLane, pushNow, pushDirtyItems, syncFullSnapshot, syncWithServer, persistChangedItems,
   };
 }

@@ -1,30 +1,32 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import { IDBDatabase as FakeIDBDatabase, IDBKeyRange, indexedDB } from 'fake-indexeddb';
 import type { SearchResult, StoredItem, VocabCard } from '../../types.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
 Object.assign(globalThis, { indexedDB, IDBKeyRange, localStorage: new MemoryStorage() });
 
-// The server, as far as pictures go: downloads answer per id, and every upload succeeds, so the upload retry
-// never waits. In Node createImageBitmap is missing, so the optimizer hands each picture back as it came.
+// The server, as far as pictures go: downloads answer per id, and uploads succeed unless their id is in
+// `failingUploads`. In Node createImageBitmap is missing, so the optimizer hands each picture back as it came.
 const realFetch = globalThis.fetch;
 test.after(() => { globalThis.fetch = realFetch; });
 const downloads: Record<string, () => Response | Promise<Response>> = {};
+const failingUploads = new Set<string>();
 const requests: string[] = [];
 globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
   const method = init.method ?? 'GET';
   requests.push(`${method} ${url}`);
-  if (method === 'PUT') return Response.json({ ok: true });
   const id = decodeURIComponent(url.split('/')[3]);
+  if (method === 'PUT') return failingUploads.has(id) ? new Response('', { status: 503 }) : Response.json({ ok: true });
   return downloads[id]?.() ?? new Response('', { status: 404 });
 }) as typeof fetch;
 
 const {
-  IMAGE_IDB_MARKER, extractInlineImages, getServerImageVersion, isImageMarker, isLazyImageMarker, lazyLoadImage,
-  picturesOf, restoreInlineImages, retryPendingImageUploads, stripAndStoreImages,
+  IMAGE_IDB_MARKER, attachImage, createImageUploadRetry, extractInlineImages, getServerImageVersion, isImageMarker,
+  isLazyImageMarker, lazyLoadImage, picturesOf, restoreInlineImages, retryPendingImageUploads, stripAndStoreImages,
+  unsavedImages,
 } = await import('../../services/libraryImages.ts');
-const { getStoredImageIds, peekImage } = await import('../../services/imageStore.ts');
+const { getStoredImageIds, loadImage, peekImage, saveImagesBatch } = await import('../../services/imageStore.ts');
 const { addPendingImageUploads, readPendingImageUploads } = await import('../../services/imageUploadQueue.ts');
 
 const PNG = 'data:image/png;base64,iVBORw0KGgo=';
@@ -54,6 +56,31 @@ async function eventually(check: () => boolean | Promise<boolean>): Promise<void
     await new Promise(resolve => setTimeout(resolve, 5));
   }
   assert.fail('never happened');
+}
+
+/** Moves the mocked clock on in 100 ms steps, letting the event loop (not timers) run between them, until `check` holds. */
+async function advanceUntil(t: TestContext, check: () => boolean): Promise<void> {
+  for (let elapsed = 0; elapsed <= 10_000; elapsed += 100) {
+    for (let turn = 0; turn < 50; turn++) await new Promise(resolve => setImmediate(resolve));
+    if (check()) return;
+    t.mock.timers.tick(100);
+  }
+  assert.fail('never happened');
+}
+
+/** Runs `run` with writes to the picture store failing, as a full or broken IndexedDB does. */
+async function withFailingImageWrites(run: () => Promise<void>): Promise<void> {
+  const prototype = FakeIDBDatabase.prototype as unknown as IDBDatabase;
+  const original = prototype.transaction;
+  prototype.transaction = function (this: IDBDatabase, stores: string | string[], mode?: IDBTransactionMode, ...rest: unknown[]) {
+    if ([stores].flat().includes('images') && mode === 'readwrite') throw new DOMException('Full', 'QuotaExceededError');
+    return (original as (...args: unknown[]) => IDBTransaction).call(this, stores, mode, ...rest);
+  } as IDBDatabase['transaction'];
+  try {
+    await run();
+  } finally {
+    prototype.transaction = original;
+  }
 }
 
 test('markers: a versioned server marker names its version, and idb:stored and versioned markers load by id', () => {
@@ -105,7 +132,7 @@ test('inline pictures are swapped for markers under the ids they are stored by, 
 test('launch stores inline pictures on the device, uploads them, and leaves other items as they were', async () => {
   const plain = vocabItem('plain', MARKER);
   const items = [vocabItem('launch-v', PNG), plain, phraseItem('launch-p', undefined, [card('launch-a', PNG)])];
-  const stripped = await stripAndStoreImages(items);
+  const stripped = await stripAndStoreImages(items, 'user');
   assert.equal(stripped[1], plain);
   assert.equal((stripped[0].data as VocabCard).imageUrl, IMAGE_IDB_MARKER);
   assert.equal((stripped[2].data as SearchResult).vocabs[0].imageUrl, IMAGE_IDB_MARKER);
@@ -113,7 +140,7 @@ test('launch stores inline pictures on the device, uploads them, and leaves othe
   await eventually(() => ['launch-v', 'launch-a'].every(id => requests.includes(`PUT /api/items/${id}/image`)));
 
   const untouched = [plain];
-  assert.deepEqual(await stripAndStoreImages(untouched), untouched);
+  assert.deepEqual(await stripAndStoreImages(untouched, 'user'), untouched);
 });
 
 test('a picture missing on the device downloads once however many views ask for it', async () => {
@@ -167,18 +194,41 @@ test('a failed offload puts back only the pictures it was given, on cards still 
 });
 
 test('launch keeps the pictures inline when this device cannot store them, so no marker points at nothing', async () => {
-  const prototype = FakeIDBDatabase.prototype as unknown as IDBDatabase;
-  const original = prototype.transaction;
-  prototype.transaction = function (this: IDBDatabase, stores: string | string[], mode?: IDBTransactionMode, ...rest: unknown[]) {
-    if ([stores].flat().includes('images') && mode === 'readwrite') throw new DOMException('Full', 'QuotaExceededError');
-    return (original as (...args: unknown[]) => IDBTransaction).call(this, stores, mode, ...rest);
-  } as IDBDatabase['transaction'];
-  try {
+  await withFailingImageWrites(async () => {
     await assert.rejects(stripAndStoreImages([vocabItem('unstorable', PNG)], 'user'), /could not be stored on this device/);
-  } finally {
-    prototype.transaction = original;
-  }
+  });
   assert.deepEqual(readPendingImageUploads('user'), [], 'a picture not stored here is never listed for a retry');
+});
+
+test('the pictures an offload saved nowhere are those this device could not store whose upload failed as well', async () => {
+  const images = [{ id: 'a', base64: PNG }, { id: 'b', base64: PNG }];
+  const neverUploaded = new Promise<string[]>(() => {});
+  assert.deepEqual(await unsavedImages(images, { stored: true, uploaded: neverUploaded }), [], 'stored ones never wait on their upload');
+  assert.deepEqual(await unsavedImages(images, { stored: false, uploaded: Promise.resolve(['b']) }), [images[1]]);
+  assert.deepEqual(await unsavedImages(images, { stored: false, uploaded: Promise.resolve([]) }), [], 'uploaded ones load from the server');
+});
+
+test('an attached picture is in place once stored here, or else once uploaded; one saved nowhere is refused and forgotten', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  // Stored here, the card can show it at once; its failed upload is listed under the account for a retry.
+  failingUploads.add('attach-stored');
+  await attachImage('attach-stored', PNG, 'attacher');
+  assert.ok(peekImage('attach-stored'));
+  await advanceUntil(t, () => readPendingImageUploads('attacher').includes('attach-stored'));
+
+  // The card had a picture of its own, stored on this device.
+  await saveImagesBatch([{ id: 'attach-nowhere', image: new Blob(['old'], { type: 'image/png' }) }]);
+  failingUploads.add('attach-nowhere');
+  let refusal: unknown;
+  await withFailingImageWrites(async () => {
+    await attachImage('attach-uploaded', PNG, 'attacher');
+    void attachImage('attach-nowhere', PNG, 'attacher').catch(error => { refusal = error; });
+    await advanceUntil(t, () => refusal !== undefined);
+  });
+  assert.match(String(refusal), /could not be saved/);
+  assert.equal(peekImage('attach-nowhere'), null, 'the refused picture is not left in memory');
+  assert.ok(await loadImage('attach-nowhere'), 'so the card shows the one it had, read from the device');
+  assert.deepEqual(readPendingImageUploads('attacher'), ['attach-stored'], 'pictures not stored here are never listed');
 });
 
 test('listed uploads are retried one run at a time, and nothing loads when nothing waits', async () => {
@@ -191,4 +241,34 @@ test('listed uploads are retried one run at a time, and nothing loads when nothi
   await run;
   assert.equal(requests.filter(request => request === 'PUT /api/items/launch-v/image').length, before + 1);
   assert.deepEqual(readPendingImageUploads('user'), []);
+});
+
+test("each account's listed uploads run on their own: a call never joins another account's run", async () => {
+  await saveImagesBatch([
+    { id: 'mine', image: new Blob(['m'], { type: 'image/png' }) },
+    { id: 'theirs', image: new Blob(['t'], { type: 'image/png' }) },
+  ]);
+  addPendingImageUploads('me', ['mine']);
+  addPendingImageUploads('them', ['theirs']);
+  const mine = retryPendingImageUploads('me');
+  const theirs = retryPendingImageUploads('them');
+  assert.notEqual(theirs, mine);
+  await Promise.all([mine, theirs]);
+  assert.deepEqual([readPendingImageUploads('me'), readPendingImageUploads('them')], [[], []]);
+  assert.ok(requests.includes('PUT /api/items/mine/image') && requests.includes('PUT /api/items/theirs/image'));
+});
+
+test('listed uploads go up after the first sync that gets through, and again once the connection comes back or a sync fails', () => {
+  const retried: string[] = [];
+  const retry = createImageUploadRetry('user', async userId => { retried.push(userId); });
+  retry.synced();
+  assert.deepEqual(retried, ['user'], 'opening the app makes a retry due');
+  retry.synced();
+  assert.deepEqual(retried, ['user'], 'not every sync retries');
+  retry.retryAfterNextSync();
+  retry.retryAfterNextSync();
+  assert.deepEqual(retried, ['user'], 'nothing goes up before a sync gets through');
+  retry.synced();
+  retry.synced();
+  assert.deepEqual(retried, ['user', 'user']);
 });

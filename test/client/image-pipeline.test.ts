@@ -84,7 +84,7 @@ async function withFailingImageStore(mode: IDBTransactionMode, run: () => Promis
 }
 
 test('a picture is stored under the version the server will give the bytes it uploads', async () => {
-  const { stored, uploaded } = await offloadAndUpload([{ id: 'attached', base64: PNG }]);
+  const { stored, uploaded } = await offloadAndUpload([{ id: 'attached', base64: PNG }], 'user');
   assert.equal(stored, true);
   assert.deepEqual(await uploaded, []);
   const version = serverVersion(uploads.get('attached')!);
@@ -122,11 +122,12 @@ test('each picture is retried once on its own, and those that fail again are lis
   assert.equal(attempts.get('b'), 1, 'b went up the first time and was never sent again');
   assert.deepEqual(readPendingImageUploads('user'), ['a']);
 
-  // Without a user id nothing is listed: the caller handles the failure.
+  // Another account's failure goes on that account's list.
   failures.set('d', 2);
-  const unlisted = await offloadAndUpload([{ id: 'd', base64: PNG }]);
+  const elsewhere = await offloadAndUpload([{ id: 'd', base64: PNG }], 'another-user');
   await advanceUntil(t, () => attempts.get('d') === 2);
-  assert.deepEqual(await unlisted.uploaded, ['d']);
+  assert.deepEqual(await elsewhere.uploaded, ['d']);
+  assert.deepEqual(readPendingImageUploads('another-user'), ['d']);
   assert.deepEqual(readPendingImageUploads('user'), ['a']);
 });
 

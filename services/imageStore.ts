@@ -39,6 +39,12 @@ const rememberImage = (itemId: string, url: string, version?: string) => {
   }
 };
 
+/** Drops an item's picture from memory, so the next look at it reads the stored copy. */
+export const forgetImage = (itemId: string): void => {
+  releaseImage(imageCache.get(itemId));
+  imageCache.delete(itemId);
+};
+
 /** The item's picture if it's already in memory, so a view can show it on its first frame. */
 export const peekImage = (itemId: string, expectedVersion?: string): string | null => {
   const cached = imageCache.get(itemId);

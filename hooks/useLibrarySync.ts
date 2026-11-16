@@ -4,7 +4,7 @@ import { logout } from '../services/auth';
 import { deleteItemRecords, loadData, saveData, storeMissingItemHashes, subscribeLibraryWriteFailures } from '../services/storage';
 import { dropExpiredTombstones } from '../services/sync';
 import { isItemDirty } from '../services/itemHash';
-import { stripAndStoreImages } from '../services/libraryImages';
+import { createImageUploadRetry, stripAndStoreImages } from '../services/libraryImages';
 import { setReloadGuard } from '../services/appUpdate';
 import { EXTERNAL_NAV_EVENT } from '../services/externalNavigation';
 import { readPendingReviewMutations } from '../services/reviewQueue';
@@ -177,7 +177,7 @@ export function useLibrarySync(
 
             // Strip images from items → IDB (keep ~143MB out of React state). If they can't be stored,
             // they stay inline for now and the next launch tries again.
-            let processedItems = await stripAndStoreImages(prepared.items).catch(error => {
+            let processedItems = await stripAndStoreImages(prepared.items, userId).catch(error => {
                 warn('Inline images stay in memory until the next launch:', error);
                 return prepared.items;
             });
@@ -203,6 +203,8 @@ export function useLibrarySync(
 
   // 2. SERVER SYNC — once local data is loaded, pull what changed since it was stored
   const initialServerSyncDoneRef = useRef(false);
+  // Pictures stored here whose upload failed go up again once a sync gets through (services/libraryImages).
+  const [imageUploadRetry] = useState(() => createImageUploadRetry(userId));
   // A launch whose first sync failed (offline, say) leaves the push of changes made before it, and the
   // image download, to the first background pull that gets through.
   const initialSyncIncompleteRef = useRef(false);
@@ -218,6 +220,7 @@ export function useLibrarySync(
           if (pushed > 0) log(`Server: uploaded ${pushed} items that differed from the server`);
         });
         void prefetchImages(latestItemsRef.current);
+        imageUploadRetry.synced();
       } catch (error) {
         logError("Initial server sync failed:", error);
         initialSyncIncompleteRef.current = true;
@@ -228,7 +231,7 @@ export function useLibrarySync(
         .catch(error => warn('Storing item hashes will retry on the next launch:', error));
     };
     void syncFromServer();
-  }, [isLoaded, userId, flushPendingReviews, inSyncLane, syncWithServer, pushNow, prefetchImages]);
+  }, [isLoaded, userId, flushPendingReviews, inSyncLane, syncWithServer, pushNow, prefetchImages, imageUploadRetry]);
 
   const deltaPullInProgressRef = useRef(false);
   const pullServerChanges = useCallback(async () => {
@@ -244,12 +247,14 @@ export function useLibrarySync(
         initialSyncIncompleteRef.current = false;
         void prefetchImages(latestItemsRef.current);
       });
+      imageUploadRetry.synced();
     } catch (error) {
       warn('Background sync will retry:', error);
+      imageUploadRetry.retryAfterNextSync();
     } finally {
       deltaPullInProgressRef.current = false;
     }
-  }, [flushPendingReviews, inSyncLane, syncWithServer, pushNow, prefetchImages]);
+  }, [flushPendingReviews, inSyncLane, syncWithServer, pushNow, prefetchImages, imageUploadRetry]);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -257,20 +262,24 @@ export function useLibrarySync(
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') tick();
     };
+    const handleOnline = () => {
+      imageUploadRetry.retryAfterNextSync();
+      tick();
+    };
     const timer = window.setInterval(tick, 8_000);
     const unsubscribe = subscribeToServerMutations(tick);
-    window.addEventListener('online', tick);
+    window.addEventListener('online', handleOnline);
     window.addEventListener('focus', tick);
     document.addEventListener('visibilitychange', handleVisibility);
     tick();
     return () => {
       window.clearInterval(timer);
       unsubscribe();
-      window.removeEventListener('online', tick);
+      window.removeEventListener('online', handleOnline);
       window.removeEventListener('focus', tick);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [isLoaded, pullServerChanges]);
+  }, [isLoaded, pullServerChanges, imageUploadRetry]);
 
   // 3. SAVE EFFECTS (Persistence + Server Sync)
   // Changes reach this device's storage a moment after they settle, so closing the page, a crash or the OS

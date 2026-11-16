@@ -1,7 +1,7 @@
 import { isPhraseItem, isVocabItem, type SearchResult, type StoredItem, type VocabCard } from '../types';
 import { loadItemImage } from './api/images';
 import type { Offload } from './imagePipeline';
-import { saveImage } from './imageStore';
+import { forgetImage, saveImage } from './imageStore';
 import { readPendingImageUploads } from './imageUploadQueue';
 import { log, warn } from './logger';
 
@@ -16,28 +16,74 @@ export interface InlineImage {
 
 /**
  * Stores pictures on this device and starts their upload (imagePipeline.offloadAndUpload, loaded on first use).
- * With a user id, pictures stored here whose upload fails are retried by retryPendingImageUploads.
+ * Pictures stored here whose upload fails are listed under the account, for retryPendingImageUploads.
  */
-export const offloadImages = async (images: InlineImage[], userId?: string): Promise<Offload> => {
+export const offloadImages = async (images: InlineImage[], userId: string): Promise<Offload> => {
   const { offloadAndUpload } = await import('./imagePipeline');
   return offloadAndUpload(images, userId);
 };
 
-let pendingUploadRun: Promise<void> | null = null;
+/**
+ * The pictures an offload saved nowhere: this device couldn't store them, and their upload failed too. Waits for the
+ * upload only when they weren't stored.
+ */
+export async function unsavedImages(images: readonly InlineImage[], { stored, uploaded }: Offload): Promise<InlineImage[]> {
+  if (stored) return [];
+  const failed = new Set(await uploaded);
+  return images.filter(image => failed.has(image.id));
+}
 
 /**
- * Uploads the pictures whose upload failed after offloadImages stored them, one run at a time. Costs a storage read
- * when nothing waits: the upload code loads only when something does.
+ * Stores a picture for the card `id` and starts its upload, resolving once the card can show it: as soon as it is
+ * stored here, else once it is uploaded. Rejects when it was saved nowhere, dropping it from memory as well, so the
+ * card keeps the picture it had.
+ */
+export async function attachImage(id: string, base64: string, userId: string): Promise<void> {
+  const images = [{ id, base64 }];
+  if ((await unsavedImages(images, await offloadImages(images, userId))).length === 0) return;
+  forgetImage(id);
+  throw new Error('The picture could not be saved');
+}
+
+// The runs under way, by account: a call joins its own account's run, never another's.
+const pendingUploadRuns = new Map<string, Promise<void>>();
+
+/**
+ * Uploads the pictures whose upload failed after offloadImages stored them, one run per account at a time. Costs a
+ * storage read when nothing waits: the upload code loads only when something does.
  */
 export const retryPendingImageUploads = (userId: string): Promise<void> => {
-  if (pendingUploadRun) return pendingUploadRun;
+  const running = pendingUploadRuns.get(userId);
+  if (running) return running;
   if (readPendingImageUploads(userId).length === 0) return Promise.resolve();
-  pendingUploadRun = import('./imagePipeline')
+  const run = import('./imagePipeline')
     .then(({ uploadPendingImages }) => uploadPendingImages(userId))
     .catch(error => warn('Pending image uploads wait for the next try:', error))
-    .finally(() => { pendingUploadRun = null; });
-  return pendingUploadRun;
+    .finally(() => pendingUploadRuns.delete(userId));
+  pendingUploadRuns.set(userId, run);
+  return run;
 };
+
+/**
+ * When the pictures whose upload failed go up again: after the first sync that gets through once the app opens, the
+ * connection comes back or a sync fails, so they follow the server back within reach. Not after every sync, which
+ * would send a picture the server keeps refusing twice every few seconds.
+ */
+export function createImageUploadRetry(userId: string, retry: (userId: string) => Promise<void> = retryPendingImageUploads) {
+  let due = true;
+  return {
+    /** The connection came back, or a sync failed: the next sync that gets through retries. */
+    retryAfterNextSync(): void {
+      due = true;
+    },
+    /** A sync got through. */
+    synced(): void {
+      if (!due) return;
+      due = false;
+      void retry(userId);
+    },
+  };
+}
 
 // A picture already downloading is shared, so a card and the warm-up around it fetch it once, and a
 // second copy can't replace (and revoke) the URL the card is about to show.
@@ -148,7 +194,7 @@ export function extractInlineImages(
  * Waits for the device's copy, never the network. Throws when the pictures couldn't be stored, since markers would
  * then point at nothing here: the caller keeps the items inline and the next launch tries again.
  */
-export async function stripAndStoreImages(items: StoredItem[], userId?: string): Promise<StoredItem[]> {
+export async function stripAndStoreImages(items: StoredItem[], userId: string): Promise<StoredItem[]> {
   const imagesToSave: InlineImage[] = [];
 
   const stripped = items.map(item => {

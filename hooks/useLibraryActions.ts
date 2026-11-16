@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { getItemSpelling, getItemTitle, isPhraseItem, isVocabItem, type SearchResult, type SentenceData, type StoredItem, type VocabCard } from '../types';
-import { IMAGE_IDB_MARKER, extractInlineImages, offloadImages, restoreInlineImages } from '../services/libraryImages';
+import { IMAGE_IDB_MARKER, attachImage, extractInlineImages, offloadImages, restoreInlineImages, unsavedImages } from '../services/libraryImages';
 import { makeVocabStoredItem, saveOverExisting } from '../services/items';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { log, warn, error as logError } from '../services/logger';
@@ -10,7 +10,8 @@ import type { UndoOfferState } from './useUndoOffer';
 
 /** Saving, deleting, archiving and resetting cards. Each change lands in the library, on this device and on the server. */
 export function useLibraryActions(
-  { latestItemsRef, updateItems, replaceItem, persistChangedItems }: Pick<Library, 'latestItemsRef' | 'updateItems' | 'replaceItem' | 'persistChangedItems'>,
+  { userId, latestItemsRef, updateItems, replaceItem, persistChangedItems }:
+    Pick<Library, 'userId' | 'latestItemsRef' | 'updateItems' | 'replaceItem' | 'persistChangedItems'>,
   { removeFromDetailView, removeItemFromDetailContext, removeSentenceFromDetailContext }: Pick<DetailViewState,
     'removeFromDetailView' | 'removeItemFromDetailContext' | 'removeSentenceFromDetailContext'>,
   { offerUndo }: Pick<UndoOfferState, 'offerUndo'>,
@@ -45,15 +46,21 @@ export function useLibraryActions(
       };
       const canonicalItemId = latestItemsRef.current[findExistingIndex(latestItemsRef.current)]?.data.id || item.data.id;
 
-      // Offload any base64 images to IDB before putting into state
+      // Offload any base64 images to IDB before putting into state. Pictures saved nowhere, neither on this
+      // device nor on the server, go back inline, where the next push carries them to the server, instead of
+      // leaving markers that point at nothing.
       const { item: stripped, images: imagesToSave } = extractInlineImages(item, canonicalItemId);
       if (imagesToSave.length > 0) {
-        offloadImages(imagesToSave).catch(error => {
-          // The images never reached this device's store. Put them back inline, where the next push
-          // carries them to the server, instead of leaving markers that point at nothing.
-          logError('Image offload failed; keeping the image inline:', error);
-          replaceItem(canonicalItemId, current => restoreInlineImages(current, new Map(imagesToSave.map(image => [image.id, image.base64]))));
-        });
+        void offloadImages(imagesToSave, userId)
+          .then(offload => unsavedImages(imagesToSave, offload))
+          .catch(error => {
+            logError('Image offload failed; keeping the image inline:', error);
+            return imagesToSave;
+          })
+          .then(unsaved => {
+            if (unsaved.length === 0) return;
+            replaceItem(canonicalItemId, current => restoreInlineImages(current, new Map(unsaved.map(image => [image.id, image.base64]))));
+          });
       }
 
       const now = Date.now();
@@ -81,20 +88,22 @@ export function useLibraryActions(
     } catch (err) {
       logError("Error during save operation:", err);
     }
-  }, [updateItems, replaceItem]);
+  }, [updateItems, replaceItem, userId]);
 
   // Attach a user-pasted/picked image to a sentence under review. Mirrors the vocab/phrase image path:
   // offload the base64 to IDB (awaited, for instant offline display) + upload to the server, then mark
   // the item's imageUrl and persist it. handleSave's own offload block only covers vocab/phrase, so the
   // offload is done explicitly here and the item is saved with the marker (never raw base64 in state).
+  // A picture saved nowhere (not stored here, and its upload failed) rejects instead, which the view
+  // reports, and the sentence keeps the picture it had.
   const handleAttachSentenceImage = useCallback(async (item: StoredItem, base64: string) => {
     if (!item?.data?.id || !base64.startsWith('data:image/')) return;
-    await offloadImages([{ id: item.data.id, base64 }]);
+    await attachImage(item.data.id, base64, userId);
     // A review or a sync can have replaced the sentence during the upload, so mark the current copy.
     const current = latestItemsRef.current.find(saved => saved.data.id === item.data.id) ?? item;
     if (current.isDeleted) return;
     handleSave({ ...current, data: { ...current.data, imageUrl: IMAGE_IDB_MARKER } });
-  }, [handleSave]);
+  }, [handleSave, userId]);
 
   const handleDelete = useCallback(async (id: string) => {
     log('🗑️ App: Deleting item', id);
