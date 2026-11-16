@@ -24,10 +24,10 @@ export function isProcessRunning(pid: number): boolean {
 }
 
 // The locks this process holds. A process never takes over its own lock: from outside, a lock it holds looks like one
-// a server with its pid left before a restart.
+// an earlier process with its pid left.
 const heldPaths = new Set<string>();
 
-async function readHolder(path: string): Promise<{ owner?: unknown; pid?: unknown } | null> {
+async function readHolder(path: string): Promise<{ pid?: unknown } | null> {
   try {
     return JSON.parse(await readFile(path, 'utf8'));
   } catch {
@@ -35,10 +35,11 @@ async function readHolder(path: string): Promise<{ owner?: unknown; pid?: unknow
   }
 }
 
-// Whether a lock this process doesn't hold may be taken over: its holder stopped touching it, or a server finds a
-// server's lock. Only one web server runs, so that lock was left by one a restart or deploy ended (in the container,
-// often under the same pid), unless its process is still alive (two development servers sharing a data folder).
-async function isAbandoned(path: string, owner: LockOwner, staleAfterMs: number): Promise<boolean> {
+// Whether a lock this process doesn't hold may be taken over: its holder stopped touching it, or its holder's process
+// is gone. The web server and the detached worker run in the same container, so each sees the other's pid; a lock under
+// this process's own pid was left by an earlier process (a restarted container's server is PID 1 again). A lock whose
+// holder can't be read, such as one from before holders were recorded, waits until it goes stale.
+async function isAbandoned(path: string, staleAfterMs: number): Promise<boolean> {
   if (heldPaths.has(path)) return false;
   let modifiedAt: number;
   try {
@@ -48,14 +49,12 @@ async function isAbandoned(path: string, owner: LockOwner, staleAfterMs: number)
     throw error;
   }
   if (Date.now() - modifiedAt >= staleAfterMs) return true;
-  if (owner !== 'server') return false;
-  const holder = await readHolder(path);
-  return holder?.owner === 'server' && typeof holder.pid === 'number' &&
-    (holder.pid === process.pid || !isProcessRunning(holder.pid));
+  const pid = (await readHolder(path))?.pid;
+  return typeof pid === 'number' && Number.isInteger(pid) && pid > 0 && (pid === process.pid || !isProcessRunning(pid));
 }
 
 async function hold(path: string, handle: FileHandle, owner: LockOwner): Promise<HeldLock> {
-  // Who holds it, for a server deciding whether a lock it finds was left by a server that is gone.
+  // Who holds it, for a process deciding whether a lock it finds was left by one that is gone.
   await handle.writeFile(`${JSON.stringify({ owner, pid: process.pid, startedAt: Date.now() })}\n`).catch(() => {});
   const { ino } = await handle.stat();
   heldPaths.add(path);
@@ -82,7 +81,7 @@ export async function acquireLock(path: string, owner: LockOwner, staleAfterMs: 
       handle = await open(path, 'wx', 0o600);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      if (attempt > 0 || !(await isAbandoned(path, owner, staleAfterMs))) return null;
+      if (attempt > 0 || !(await isAbandoned(path, staleAfterMs))) return null;
       // Move an abandoned lock aside instead of deleting it: of several processes taking it over at once, one
       // rename succeeds and the others find it gone.
       const aside = `${path}.stale-${process.pid}-${Date.now()}`;

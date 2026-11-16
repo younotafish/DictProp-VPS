@@ -236,14 +236,25 @@ test('a lock untouched for five minutes is taken over', async () => {
   assert.deepEqual(readdirSync(DATA_DIR).filter(name => name.startsWith('tts-backfill.lock')), []);
 });
 
-test('the web server takes over a lock that a server gone since left; the worker waits for it to go stale', async () => {
+test('a lock whose holder is gone is taken over at once, by the web server or the worker', async () => {
+  // A worker a deploy killed, then a server gone since: both run in the app container, so their pids are visible.
+  writeLock({ owner: 'worker', pid: deadPid() });
+  const server = harness({ catalog: ['After the worker was killed.'], library: [] });
+  await runToEnd(server.backfill);
+  assert.equal(server.events.length, 2);
   writeLock({ owner: 'server', pid: deadPid() });
+  const worker = harness({ catalog: ['After the server was restarted.'], library: [] }, { owner: 'worker' });
+  await runToEnd(worker.backfill);
+  assert.equal(worker.events.length, 2);
+  assert.equal(existsSync(LOCK_PATH), false);
+});
+
+test('a lock that names no holder, as one from before holders were recorded, waits until it goes stale', async () => {
+  writeFileSync(LOCK_PATH, JSON.stringify({ running: true, total: 10, workerPid: deadPid(), heartbeatAt: Date.now() }));
   try {
-    const worker = harness({ catalog: ['After a restart.'], library: [] }, { owner: 'worker' });
-    assert.equal(await worker.backfill.start(), null);
-    const server = harness({ catalog: ['After a restart.'], library: [] });
-    await runToEnd(server.backfill);
-    assert.equal(server.events.length, 2);
+    const { backfill, events } = harness({ catalog: ['Blocked by an old-style lock.'], library: [] });
+    assert.equal(await backfill.start(), null);
+    assert.deepEqual(events, []);
   } finally {
     rmSync(LOCK_PATH, { force: true });
   }
