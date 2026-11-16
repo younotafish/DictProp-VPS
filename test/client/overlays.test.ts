@@ -13,7 +13,7 @@ const sense = (id: string): StoredItem => ({
 });
 const popup: CardPopup = { spelling: 'gamut', initialId: 's1' };
 const closed = {
-  cardPopup: null, popupItems: [], confirmModal: null, showKeyboardHelp: false, showRefusedReviews: false, duplicateClusters: null,
+  cardPopup: null, popupItems: [], showKeyboardHelp: false, showRefusedReviews: false, duplicateClusters: null,
 };
 
 test('the popup is empty once every sense it showed is gone, and a closed popup never is', () => {
@@ -25,7 +25,6 @@ test('the popup is empty once every sense it showed is gone, and a closed popup 
 
 test('each decision dialog is modal and covers the page', () => {
   const dialogs = {
-    confirmModal: { confirmText: 'OK', onConfirm: () => {}, title: 'Delete?', message: 'Gone for good.' },
     showKeyboardHelp: true,
     showRefusedReviews: true,
     duplicateClusters: [],

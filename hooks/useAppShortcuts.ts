@@ -18,8 +18,8 @@ export const TAB_KEYS: ReadonlyMap<string, ViewState> = new Map([['1', 'notebook
 export function useAppShortcuts(
   navigate: (view: ViewState) => void,
   { detailContext, updateDetailContext }: Pick<DetailViewState, 'detailContext' | 'updateDetailContext'>,
-  { cardPopup, setCardPopup, confirmModal, setConfirmModal, showKeyboardHelp, setShowKeyboardHelp, dialogOpen }: Pick<Overlays,
-    'cardPopup' | 'setCardPopup' | 'confirmModal' | 'setConfirmModal' | 'showKeyboardHelp' | 'setShowKeyboardHelp' | 'dialogOpen'>,
+  { cardPopup, setCardPopup, showKeyboardHelp, setShowKeyboardHelp, dialogOpen }: Pick<Overlays,
+    'cardPopup' | 'setCardPopup' | 'showKeyboardHelp' | 'setShowKeyboardHelp' | 'dialogOpen'>,
   { undoMessage, undoLastChange, modalOpen }: Pick<UndoOfferState, 'undoMessage' | 'undoLastChange'> & Pick<Overlays, 'modalOpen'>,
 ) {
   // 1, 2 and 3 switch tabs, while nothing covers them.
@@ -68,8 +68,6 @@ export function useAppShortcuts(
           setShowKeyboardHelp(false);
         } else if (cardPopup) {
           setCardPopup(null);
-        } else if (confirmModal) {
-          setConfirmModal(null);
         } else if (detailContext) {
           updateDetailContext(null);
         }
@@ -86,5 +84,5 @@ export function useAppShortcuts(
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [detailContext, confirmModal, showKeyboardHelp, cardPopup, updateDetailContext, setShowKeyboardHelp, setCardPopup, setConfirmModal]);
+  }, [detailContext, showKeyboardHelp, cardPopup, updateDetailContext, setShowKeyboardHelp, setCardPopup]);
 }

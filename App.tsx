@@ -42,7 +42,6 @@ import { useSenseLookup } from './hooks/useSenseLookup';
 // the sign-in screen and the one for a library this device can't read.
 const NotebookView = lazyScreen('notebook', () => import('./views/Notebook').then(module => ({ default: React.memo(module.NotebookView) })));
 const GlobalSearch = lazyScreen('global-search', () => import('./components/GlobalSearch').then(module => ({ default: React.memo(module.GlobalSearch) })));
-const ConfirmModal = lazyScreen('confirm-modal', () => import('./components/ConfirmModal').then(module => ({ default: module.ConfirmModal })));
 const DuplicatesModal = lazyScreen('duplicates-modal', () => import('./components/DuplicatesModal').then(module => ({ default: module.DuplicatesModal })));
 const CardReviewPopup = lazyScreen('card-review-popup', () => import('./components/CardReviewPopup').then(module => ({ default: React.memo(module.CardReviewPopup) })));
 const KeyboardHelpModal = lazyScreen('keyboard-help', () => import('./components/KeyboardHelpModal').then(module => ({ default: module.KeyboardHelpModal })));
@@ -116,7 +115,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
   const mainRef = useRef<HTMLElement>(null);
   const overlays = useOverlays(libraryWords);
   const {
-    cardPopup, openCardPopup, closeCardPopup, popupItems, duplicateClusters, setDuplicateClusters, confirmModal, setConfirmModal,
+    cardPopup, openCardPopup, closeCardPopup, popupItems, duplicateClusters, setDuplicateClusters,
     showKeyboardHelp, setShowKeyboardHelp, openKeyboardHelp, showRefusedReviews, setShowRefusedReviews, openRefusedReviews, dialogOpen, modalOpen,
   } = overlays;
   // The background jobs' result pill (services/jobNotices).
@@ -206,12 +205,6 @@ function SignedInApp({ user }: { user: AuthUser }) {
     <div className="fixed inset-0 bg-white flex flex-col">
       {/* Each lazy overlay has a boundary of its own, so one whose code is still arriving doesn't hide the
           card or the progress pills already on screen. */}
-      {confirmModal && (
-        <Suspense fallback={null}>
-        <ConfirmModal {...confirmModal} onCancel={() => setConfirmModal(null)} />
-        </Suspense>
-      )}
-
       {duplicateClusters && (
         <Suspense fallback={null}>
         <DuplicatesModal
@@ -482,7 +475,7 @@ const App: React.FC = () => {
     for (const screen of [TAB_SCREENS[readSavedView()], AppNavigation, GlobalSearch]) screen.preload();
     const preloadRest = () => {
       for (const screen of [
-        DetailView, ...Object.values(TAB_SCREENS), CardReviewPopup, ConfirmModal, DuplicatesModal, KeyboardHelpModal,
+        DetailView, ...Object.values(TAB_SCREENS), CardReviewPopup, DuplicatesModal, KeyboardHelpModal,
         RefusedReviewsDialog, SignInScreen, LibraryReadFailedScreen, JobPills, StuckSyncPill,
       ]) {
         screen.preload();
