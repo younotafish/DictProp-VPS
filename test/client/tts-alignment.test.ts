@@ -56,8 +56,52 @@ test('a token matches only whole words, though punctuation at its edges needs no
   assert.deepEqual(anchors('Thinking in the bin', 'in', 'bin'), [9, 16], '"in" skips the two inside "Thinking"');
   assert.deepEqual(anchors("Don't stop", 'don', "'t", 'stop'), [0, 3, 6]);
   assert.deepEqual(anchors('A well-known fact', 'a', 'well', '-known', 'fact'), [0, 2, 6, 13]);
-  // The trade-off: a token that is only part of a word anchors nothing, so a click there starts a word early.
-  assert.deepEqual(anchors('She walks home', 'she', 'walk', 'home'), [0, 10]);
+});
+
+test('a misheard word that recurs later anchors nothing, rather than jumping past the words in between', () => {
+  // 'the' was heard as 'a', and the sentence has an 'a' of its own further on.
+  const aligned = alignWordsToStripped('Put the hat in a box.', words(['Put', 0], ['a', 0.25], ['hat', 0.45], ['in', 0.65], ['a', 0.8], ['box', 0.9]));
+  assert.deepEqual(aligned, [
+    { charOffset: 0, startTime: 0 },
+    { charOffset: 8, startTime: 0.45 },
+    { charOffset: 12, startTime: 0.65 },
+    { charOffset: 15, startTime: 0.8 },
+    { charOffset: 17, startTime: 0.9 },
+  ]);
+  assert.equal(seekTimeForOffset(aligned, 12), 0.65, 'a click on "in" starts at "in"');
+  assert.equal(seekTimeForOffset(aligned, 15), 0.8, 'a click on "a" starts at "a"');
+  assert.equal(seekTimeForOffset(aligned, 4), 0, 'a click on the misheard word starts at the word before');
+});
+
+test('a word heard as two anchors at its first part, and the words after it keep their own anchors', () => {
+  const aligned = alignWordsToStripped('I cannot say if you can.', words(
+    ['I', 0], ['can', 0.2], ['not', 0.4], ['say', 0.6], ['if', 0.85], ['you', 1.05], ['can', 1.25],
+  ));
+  assert.deepEqual(aligned.map(anchor => [anchor.charOffset, anchor.startTime]), [[0, 0], [2, 0.2], [9, 0.6], [13, 0.85], [16, 1.05], [20, 1.25]]);
+  assert.equal(seekTimeForOffset(aligned, 9), 0.6, 'a click on "say" starts at "say"');
+  assert.equal(seekTimeForOffset(aligned, 20), 1.25, 'a click on the last "can" starts there');
+});
+
+test('a short word that begins the next word anchors at that word, even when the short word occurs later as well', () => {
+  const anchors = (sentence: string, ...tokens: string[]) =>
+    alignWordsToStripped(sentence, words(...tokens.map((token, index): [string, number] => [token, index]))).map(anchor => anchor.charOffset);
+  // 'and' heard as 'an', in a sentence with an 'an' further on.
+  assert.deepEqual(anchors('She sat down and ate an apple.', 'she', 'sat', 'down', 'an', 'ate', 'an', 'apple'), [0, 4, 8, 13, 17, 21, 24]);
+  // The casual voice's respelling, as the server's word builder passes it on.
+  assert.deepEqual(anchors('She was running late.', 'she', 'was', "runnin'", 'late'), [0, 4, 8, 16]);
+  assert.deepEqual(anchors('She walks home', 'she', 'walk', 'home'), [0, 4, 10]);
+  // Only the word that comes next counts, and one letter is too little to go on.
+  assert.deepEqual(anchors('Put the cannon down', 'put', 'can', 'down'), [0, 15]);
+  assert.deepEqual(anchors('Put all hats away', 'put', 'a', 'hats', 'away'), [0, 8, 13]);
+});
+
+test('merged or dropped words cost only their own anchors', () => {
+  const anchors = (sentence: string, ...tokens: string[]) =>
+    alignWordsToStripped(sentence, words(...tokens.map((token, index): [string, number] => [token, index]))).map(anchor => anchor.charOffset);
+  assert.deepEqual(anchors("I'm going to put the hat in a box.", "I'm", 'gonna', 'put', 'the', 'hat', 'in', 'a', 'box'), [0, 13, 17, 21, 25, 28, 30]);
+  assert.deepEqual(anchors('It is one of the best films I have seen', 'it', 'is', 'one', 'best', 'films', 'i', 'have', 'seen'), [0, 3, 6, 17, 22, 28, 30, 35]);
+  // A word heard twice anchors once, at its nearest place, and doesn't take a later repeat from the words between.
+  assert.deepEqual(anchors('We went home and then we slept', 'we', 'we', 'went', 'home', 'and', 'then', 'slept'), [0, 3, 8, 13, 17, 25]);
 });
 
 test('playback skips the quiet lead-in, starting 30 ms before the first word, and from 0 without timings', () => {
