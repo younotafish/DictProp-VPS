@@ -1,9 +1,11 @@
-import { useRef, type Dispatch, type MouseEvent as ReactMouseEvent, type RefObject, type SetStateAction, type TouchEvent as ReactTouchEvent, type UIEvent as ReactUIEvent } from 'react';
+import { useEffect, useRef, type Dispatch, type MouseEvent as ReactMouseEvent, type RefObject, type SetStateAction, type TouchEvent as ReactTouchEvent, type UIEvent as ReactUIEvent } from 'react';
 import type { ItemGroup, SearchResult, StoredItem, VocabCard } from '../../types';
 import { useZoneFlash } from '../../components/EyesFreeZones';
 import { getPlaybackState, pauseCurrent, resumeCurrent, speakWord, stopCurrent } from '../../services/neuralTts';
 import { log } from '../../services/logger';
-import { doubleTapControlSelector, zoneDoubleTapUndo, zoneTapEffect, type ZoneTapEffect } from '../../services/reviewGestures';
+import {
+  doubleTapControlSelector, isFlingStopTap, zoneDoubleTapUndo, zoneTapEffect, type ZoneTapEffect,
+} from '../../services/reviewGestures';
 import { zoneText } from './cardReading';
 import { touchFacts, wordTouchAction } from './touchGestures';
 
@@ -32,7 +34,8 @@ interface WordGesturesOptions {
  * The word card's taps and swipes: eyes-free zone taps read the card's parts (see wordTouchAction), a short pull
  * down shows the header, ↑/↓ swipes move between words and ←/→ between meanings, a swipe right past the first
  * meaning closes the view, and a double click off the controls marks the card remembered; a double tap in the read
- * bands leaves playback as it found it. Scrolling down hides the header again.
+ * bands leaves playback as it found it, and a tap that stops a fling only stops it. Scrolling down hides the header
+ * again.
  */
 export function useWordGestures({
   scrollContainerRef, showHeader, setShowHeader, currentGroup, currentItem, hasNextGroup, hasPrevGroup, hasPrevItem,
@@ -61,11 +64,24 @@ export function useWordGestures({
   // where it landed and what it did, so the second tap can undo it (zoneDoubleTapUndo).
   const firstZoneTapRef = useRef<{ at: number; x: number; y: number; before: ZoneTapEffect } | null>(null);
 
+  // When the card's page last scrolled, and whether the touch in progress landed while a fling still moved it.
+  const lastScrollAtRef = useRef(-Infinity);
+  const touchStoppedFlingRef = useRef(false);
+  useEffect(() => {
+    const scroller = scrollContainerRef.current;
+    if (!scroller) return;
+    const noteScroll = (e: Event) => { lastScrollAtRef.current = e.timeStamp; };
+    // Scroll events don't bubble; capturing them hears the page and anything that scrolls inside it.
+    scroller.addEventListener('scroll', noteScroll, { capture: true, passive: true });
+    return () => scroller.removeEventListener('scroll', noteScroll, { capture: true });
+  }, [scrollContainerRef]);
+
   const onContentTouchStart = (e: ReactTouchEvent) => {
     const touch = e.touches[0];
     if (!touch) return;
     touchStartX.current = touch.clientX;
     touchStartY.current = touch.clientY;
+    touchStoppedFlingRef.current = isFlingStopTap(lastScrollAtRef.current, e.timeStamp);
   };
   
   const onContentTouchEnd = (e: ReactTouchEvent) => {
@@ -85,6 +101,12 @@ export function useWordGestures({
     const diffY = touch.clientY - touchStartY.current;
     // Edges are measured on the card's scroller, the page the touch moved.
     const facts = touchFacts(diffX, diffY, scrollContainerRef.current);
+    // A still tap that stopped a fling only stopped the page: it reads nothing and starts no double tap.
+    if (facts.isStillTap && touchStoppedFlingRef.current) {
+      touchStartX.current = null;
+      touchStartY.current = null;
+      return;
+    }
     // Controls keep their own handlers, so taps on them aren't gestures.
     const tapTarget = e.target as HTMLElement | null;
     const onControl = !!tapTarget?.closest(CARD_CONTROLS);

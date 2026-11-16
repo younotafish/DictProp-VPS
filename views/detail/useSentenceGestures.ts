@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, type Dispatch, type MouseEvent as ReactMouseEvent, type RefObject, type SetStateAction, type TouchEvent as ReactTouchEvent } from 'react';
 import { log } from '../../services/logger';
-import { TAP_CONTROL_SELECTOR, doubleTapControlSelector } from '../../services/reviewGestures';
+import { TAP_CONTROL_SELECTOR, doubleTapControlSelector, isFlingStopTap } from '../../services/reviewGestures';
 import { sentenceTouchAction, touchFacts } from './touchGestures';
 
 interface SentenceGesturesOptions {
+  /** The view's root: a scroll anywhere in it (the sentence's page or the analysis) means a fling may be under way. */
+  rootRef: RefObject<HTMLElement | null>;
   /** Phones and tablets: two-finger word chords, and word clicks that arrive as taps. */
   isMobile: boolean;
   sentencePage: 'sentence' | 'analysis';
@@ -20,12 +22,13 @@ interface SentenceGesturesOptions {
 
 /**
  * Sentence review's taps, clicks and swipes, eyes-free like the word card: a still tap on blank space plays,
- * pauses or resumes the sentence and a double tap off the controls (on the sentence's words too) marks it
- * remembered; ←/→ swipes switch between the sentence and its analysis, ↑/↓ swipes between sentences. A tap or
- * click on a word plays from it; a two-finger chord on a word (⌘-click on a laptop) runs the word's lookup.
+ * pauses or resumes the sentence (unless it only stops a fling) and a double tap off the controls (on the sentence's
+ * words too) marks it remembered; ←/→ swipes switch between the sentence and its analysis, ↑/↓ swipes between
+ * sentences. A tap or click on a word plays from it; a two-finger chord on a word (⌘-click on a laptop) runs the
+ * word's lookup.
  */
 export function useSentenceGestures({
-  isMobile, sentencePage, setSentencePage, isSentenceAutoPlayingRef, setShowSentenceAutoPlayPanel, onClose,
+  rootRef, isMobile, sentencePage, setSentencePage, isSentenceAutoPlayingRef, setShowSentenceAutoPlayPanel, onClose,
   currentGroupIndexRef, goToSentence, handleRemember, toggleSentencePlayback, playFromWordOffset,
 }: SentenceGesturesOptions) {
   // Touch Handling for swipe navigation
@@ -82,11 +85,24 @@ export function useSentenceGestures({
   };
   useEffect(() => () => cancelPendingSentenceSingleTap(), [cancelPendingSentenceSingleTap]);
 
+  // When the view last scrolled, and whether the touch in progress landed while a fling still moved a page.
+  const lastScrollAtRef = useRef(-Infinity);
+  const touchStoppedFlingRef = useRef(false);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const noteScroll = (e: Event) => { lastScrollAtRef.current = e.timeStamp; };
+    // Scroll events don't bubble; capturing them on the root hears every page in the view.
+    root.addEventListener('scroll', noteScroll, { capture: true, passive: true });
+    return () => root.removeEventListener('scroll', noteScroll, { capture: true });
+  }, [rootRef]);
+
   const onContentTouchStart = (e: ReactTouchEvent) => {
     const touch = e.touches[0];
     if (!touch) return;
     touchStartX.current = touch.clientX;
     touchStartY.current = touch.clientY;
+    touchStoppedFlingRef.current = isFlingStopTap(lastScrollAtRef.current, e.timeStamp);
   };
 
   const onContentTouchEnd = (e: ReactTouchEvent) => {
@@ -114,6 +130,14 @@ export function useSentenceGestures({
       ? document.querySelector<HTMLElement>('[data-sentence-analysis]')
       : null;
     const facts = touchFacts(diffX, diffY, container);
+    // A still tap that stopped a fling only stopped the page: it neither plays nor pauses and starts no double tap,
+    // and a click the browser may still make of it is swallowed like a tap's.
+    if (facts.isStillTap && touchStoppedFlingRef.current) {
+      suppressSentenceSurfaceClickUntilRef.current = Date.now() + 500;
+      touchStartX.current = null;
+      touchStartY.current = null;
+      return;
+    }
     // Controls and the sentence's words keep their own handlers, so taps on them aren't gestures. (Every look-up
     // word, the ARIA buttons among them, carries data-word-offset.)
     const tapTarget = e.target as HTMLElement | null;

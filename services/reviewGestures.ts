@@ -1,7 +1,7 @@
 /**
  * The rules that keep a review gesture from misfiring, apart from React and the DOM so node tests pin them: a
- * remember counts once per item and gesture, whatever else lands with it, never comes from a control, and a double
- * tap in a word card's read bands leaves playback as it found it.
+ * remember counts once per item and gesture, whatever else lands with it, never comes from a control, a double tap
+ * in a word card's read bands leaves playback as it found it, and a tap that stops a fling does nothing else.
  */
 import type { PlaybackState } from './audio/player';
 
@@ -68,4 +68,13 @@ export function zoneDoubleTapUndo(
     case 'paused': return 'resume';
     case 'resumed': return 'pause';
   }
+}
+
+/**
+ * Whether a touch that began at `touchStartAt` landed on a page a fling was still moving: the page last scrolled, at
+ * `lastScrollAt`, less than `windowMs` before (both are event times; -Infinity before any scroll). Such a tap only
+ * stops the page, so if it stays still it neither plays nor pauses and doesn't count toward a double tap.
+ */
+export function isFlingStopTap(lastScrollAt: number, touchStartAt: number, windowMs = 120): boolean {
+  return touchStartAt - lastScrollAt < windowMs;
 }

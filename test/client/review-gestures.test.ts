@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { SRSData, StoredItem, VocabCard } from '../../types.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import {
-  TAP_CONTROL_SELECTOR, acceptRemember, doubleTapControlSelector, zoneDoubleTapUndo, zoneTapEffect,
+  TAP_CONTROL_SELECTOR, acceptRemember, doubleTapControlSelector, isFlingStopTap, zoneDoubleTapUndo, zoneTapEffect,
 } from '../../services/reviewGestures.ts';
 import { useRememberToast } from '../../views/detail/useRememberToast.ts';
 import { useSentenceActions } from '../../views/detail/useSentenceActions.ts';
@@ -140,4 +140,13 @@ test('a double tap is two taps within 450 ms and 40 px of each other', () => {
   assert.equal(zoneDoubleTapUndo(first, 1_100, 160, 50), 'stop');
   assert.equal(zoneDoubleTapUndo(first, 1_100, 161, 90), null);
   assert.equal(zoneDoubleTapUndo(first, 1_100, 120, 49), null);
+});
+
+test('a touch that lands within 120 ms of the page\'s last scroll stops a fling, so its tap does nothing else', () => {
+  assert.equal(isFlingStopTap(5_000, 5_080), true, 'the page scrolled 80 ms before the finger landed');
+  assert.equal(isFlingStopTap(5_000, 5_119), true);
+  assert.equal(isFlingStopTap(5_000, 5_120), false);
+  assert.equal(isFlingStopTap(5_000, 5_200), false, 'a page at rest for 200 ms takes taps');
+  assert.equal(isFlingStopTap(-Infinity, 5_000), false, 'nothing has scrolled yet');
+  assert.equal(isFlingStopTap(5_000, 5_150, 200), true, 'the window can be given');
 });

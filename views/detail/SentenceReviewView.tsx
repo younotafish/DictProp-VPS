@@ -324,7 +324,7 @@ export function SentenceReviewView({
     onContentTouchStart, onContentTouchEnd, handleMobileWordTouchStart, handleSentenceWordClickCapture,
     handleDoubleClick, handleSentenceSurfaceClick,
   } = useSentenceGestures({
-    isMobile, sentencePage, setSentencePage, isSentenceAutoPlayingRef, setShowSentenceAutoPlayPanel, onClose,
+    rootRef, isMobile, sentencePage, setSentencePage, isSentenceAutoPlayingRef, setShowSentenceAutoPlayPanel, onClose,
     currentGroupIndexRef, goToSentence, handleRemember, toggleSentencePlayback, playFromWordOffset,
   });
 
