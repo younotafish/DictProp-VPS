@@ -174,8 +174,8 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
             <p className="text-xs text-slate-500">Reviews</p>
           </div>
           <div>
-            <p className="text-xl font-bold text-emerald-700">{stats.weeklyRecallRate}%</p>
-            <p className="text-xs text-slate-500">Recalled</p>
+            <p className="text-xl font-bold text-emerald-700">{stats.weeklyStudyRecallRate === null ? '—' : `${stats.weeklyStudyRecallRate}%`}</p>
+            <p className="text-xs text-slate-500">Recall (study)</p>
           </div>
           <div className="flex flex-col items-center">
             <div className="flex items-center gap-1">
@@ -281,7 +281,7 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
           <div className="py-4 pr-4">
             <div className="flex items-center gap-2 mb-1">
               <Zap size={14} className="text-amber-500" />
-              <span className="text-xs font-medium text-slate-600">Best Streak</span>
+              <span className="text-xs font-medium text-slate-600">Best card streak</span>
             </div>
             <p className="text-2xl font-bold text-slate-800">{stats.longestStreak}</p>
             <p className="text-xs text-slate-500">correct in a row</p>

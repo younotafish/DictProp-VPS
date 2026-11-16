@@ -87,3 +87,15 @@ test('with nothing to review, Start is a disabled All caught up captioned with w
   // Nothing due by tomorrow leaves the count out.
   assert.match(render([vocab('jump', { reviews: 3, due: tonight + 9 * HOUR })]), />Next card due in 17h 30m<\/p>/);
 });
+
+test('the dashboard says Recall (study) and Best card streak, and shows — for recall until a study grade is made', t => {
+  t.mock.method(Date, 'now', () => NOW);
+  const items = [vocab('run', { reviews: 3, streak: 4 })];
+  const quickOnly: ReviewHistory = { recent: [review(NOW - HOUR, 'good', 'quick')], olderTimes: [], olderCount: 0 };
+  const text = textOf(render(items, quickOnly));
+  assert.match(text, /1 Reviews — Recall \(study\)/);
+  assert.match(text, /Best card streak 4 correct in a row/);
+  assert.doesNotMatch(text, /Recalled|Best Streak/);
+  const studied: ReviewHistory = { recent: [review(NOW - HOUR, 'again'), review(NOW - HOUR, 'good'), review(NOW - HOUR, 'good', 'quick')], olderTimes: [], olderCount: 0 };
+  assert.match(textOf(render(items, studied)), /3 Reviews 50% Recall \(study\)/);
+});

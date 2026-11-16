@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { ReviewEvent, ReviewHistory, ReviewRating, StoredItem } from '../../types.ts';
+import type { ReviewEvent, ReviewHistory, ReviewRating, ReviewTaskType, StoredItem } from '../../types.ts';
 import {
   combineStudyStats,
   computeHistoryStats,
@@ -46,8 +46,8 @@ function vocab(
 }
 
 let nextEventId = 0;
-const review = (reviewedAt: number, rating: ReviewRating = 'good'): ReviewEvent => ({
-  id: String(nextEventId++), itemId: 'x', itemType: 'vocab', reviewedAt, previousStep: 0, nextStep: 0, rating,
+const review = (reviewedAt: number, rating: ReviewRating = 'good', taskType: ReviewTaskType = 'meaning'): ReviewEvent => ({
+  id: String(nextEventId++), itemId: 'x', itemType: 'vocab', reviewedAt, previousStep: 0, nextStep: 0, rating, taskType,
 });
 const recentOnly = (recent: ReviewEvent[]): ReviewHistory => ({ recent, olderTimes: [], olderCount: 0 });
 
@@ -163,7 +163,7 @@ test('weekly stats cover the last seven days and the share not rated again', () 
   ];
   const stats = computeStudyStats([vocab('a', 'a', { reviews: 1 })], recentOnly(events), NOW);
   assert.equal(stats.weeklyReviews, 4);
-  assert.equal(stats.weeklyRecallRate, 75);
+  assert.equal(stats.weeklyStudyRecallRate, 75);
   assert.equal(stats.totalLifetimeReviews, 5);
 });
 
@@ -174,7 +174,7 @@ test('the week is the chart\'s seven days: at 21:00 a review 6 days 23 hours bac
   const inside = [review(evening - HOUR), review(new Date(2026, 8, 20, 0, 0).getTime(), 'again')];
   const stats = computeStudyStats([], recentOnly([sixDaysTwentyThreeHoursBack, fromAClockAhead, ...inside]), evening);
   assert.equal(stats.weeklyReviews, 2);
-  assert.equal(stats.weeklyRecallRate, 50);
+  assert.equal(stats.weeklyStudyRecallRate, 50);
   assert.equal(stats.last7Days.reduce((sum, day) => sum + day.reviews, 0), stats.weeklyReviews, 'the chart\'s total agrees');
 });
 
@@ -232,7 +232,7 @@ test('older reviews, known only by when they happened, extend the streak and the
   assert.equal(stats.streak, 11);
   // A week before 15:30 today is after that day's 01:00 review.
   assert.equal(stats.weeklyReviews, 7);
-  assert.equal(stats.weeklyRecallRate, 86);
+  assert.equal(stats.weeklyStudyRecallRate, 86);
   assert.equal(stats.totalLifetimeReviews, 1_008); // most older reviews are beyond a streak's reach
 });
 
@@ -296,4 +296,21 @@ test('a countdown gives its two largest units, leaving out a part that is 0, and
     [DAY, '1d'], [3 * DAY + 4 * HOUR + 30 * MINUTE, '3d 4h'], [12 * DAY, '12d'],
   ];
   for (const [ms, label] of cases) assert.equal(formatCountdown(ms), label, String(ms));
+});
+
+test('recall counts only study-session grades: the popup\'s quick Got it, always Good, is no recall test', () => {
+  const events = [
+    review(NOW - HOUR, 'again', 'meaning'),
+    review(NOW - HOUR, 'good', 'production'),
+    review(NOW - 2 * HOUR, 'good', 'cloze'),
+    review(NOW - 3 * HOUR, 'again', 'listening'),
+    ...Array.from({ length: 6 }, () => review(NOW - 4 * HOUR, 'good', 'quick')),
+  ];
+  const stats = computeStudyStats([], recentOnly(events), NOW);
+  assert.equal(stats.weeklyReviews, 10, 'every review still counts as a review');
+  assert.equal(stats.weeklyStudyRecallRate, 50);
+  // A review without a task type was never a study grade either.
+  const unlabeled = { ...review(NOW - HOUR, 'again'), taskType: undefined };
+  assert.equal(computeStudyStats([], recentOnly([unlabeled, review(NOW - HOUR, 'good', 'quick')]), NOW).weeklyStudyRecallRate, null);
+  assert.equal(computeStudyStats([], recentOnly([]), NOW).weeklyStudyRecallRate, null);
 });

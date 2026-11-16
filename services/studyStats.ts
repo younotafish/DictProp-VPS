@@ -1,6 +1,7 @@
 import { getItemSpelling, type ReviewHistory, type StoredItem } from '../types';
 import { masteryLevelFor, type MasteryKey } from './srsAlgorithm';
 import { sentenceReviewState } from './sentenceReviewState';
+import type { StudyTaskType } from './studySession';
 
 export interface StudyStats {
   /** Distinct due spellings (countDueSpellings). */
@@ -13,7 +14,9 @@ export interface StudyStats {
   streak: number;
   /** Reviews today and on the six days before it, the chart's seven days. */
   weeklyReviews: number;
-  weeklyRecallRate: number;
+  /** The share of this week's study-session grades not rated Again, as a percentage; null with none. The review
+   *  popup's Got it, always Good, isn't a recall test, so it doesn't count. */
+  weeklyStudyRecallRate: number | null;
   totalLifetimeReviews: number;
   longestStreak: number;
   /** Up to three reviewed items, the most reviewed first. */
@@ -29,12 +32,14 @@ export interface ItemStats extends Pick<StudyStats, 'due' | 'mastery' | 'total' 
 }
 
 /** The numbers counted over the review history, which change with the history and the day. */
-export interface HistoryStats extends Pick<StudyStats, 'streak' | 'weeklyReviews' | 'weeklyRecallRate' | 'last7Days'> {
+export interface HistoryStats extends Pick<StudyStats, 'streak' | 'weeklyReviews' | 'weeklyStudyRecallRate' | 'last7Days'> {
   /** How many reviews the history knows of, however old. */
   lifetimeCount: number;
 }
 
 const STREAK_DAYS = 365;
+/** The tasks a study session sets, whose grades say whether a card was recalled. */
+const STUDY_TASKS: ReadonlySet<string> = new Set(['meaning', 'production', 'cloze', 'listening'] satisfies StudyTaskType[]);
 const MOST_REVIEWED = 3;
 
 const reviewsOf = (item: StoredItem) => item.srs?.totalReviews ?? 0;
@@ -189,13 +194,17 @@ export function computeHistoryStats(history: ReviewHistory, now: number): Histor
   // Only the recent reviews carry ratings, and they cover the week: the chart's seven days, today and the six
   // before it, so the weekly numbers and the chart's total count the same reviews.
   let weeklyReviews = 0;
+  let weeklyStudyGrades = 0;
   let weeklyRecalled = 0;
   for (const event of history.recent) {
     const day = dayOf(event.reviewedAt);
     if (day >= 0) reviewsByDay[day]++;
     if (day >= 0 && day < 7) {
       weeklyReviews++;
-      if (event.rating !== 'again') weeklyRecalled++;
+      if (event.taskType && STUDY_TASKS.has(event.taskType)) {
+        weeklyStudyGrades++;
+        if (event.rating !== 'again') weeklyRecalled++;
+      }
     }
   }
 
@@ -208,7 +217,7 @@ export function computeHistoryStats(history: ReviewHistory, now: number): Histor
   return {
     streak,
     weeklyReviews,
-    weeklyRecallRate: weeklyReviews > 0 ? Math.round((weeklyRecalled / weeklyReviews) * 100) : 0,
+    weeklyStudyRecallRate: weeklyStudyGrades > 0 ? Math.round((weeklyRecalled / weeklyStudyGrades) * 100) : null,
     lifetimeCount: history.olderCount + history.recent.length,
     last7Days: Array.from({ length: 7 }, (_, i) => {
       const day = 6 - i;
