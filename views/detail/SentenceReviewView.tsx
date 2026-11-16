@@ -145,7 +145,7 @@ export function SentenceReviewView({
   }, [currentSentenceSnapshot?.data.id]);
   useEffect(() => () => endLesson(viewToken), [viewToken]);
   const { preparedSentenceById, preparingSentenceId, failedSentenceIds, sentencePreloadWindow } = useSentenceEnrichment({
-    sentenceItems, sentenceIndex, savedSentenceItemsRef, onSaveRef, onPatchItemRef,
+    sentenceItems, sentenceIndex, savedSentenceItemsRef, onPatchItemRef,
   });
   const {
     currentSentence, catalogSentencePreview, catalogPreviewKind, isSentencePreview, sentenceExitLabel,

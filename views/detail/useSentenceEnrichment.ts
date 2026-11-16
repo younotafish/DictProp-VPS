@@ -11,9 +11,8 @@ interface SentenceEnrichmentOptions {
   /** The sentence under review. */
   sentenceIndex: number;
   savedSentenceItemsRef: RefObject<StoredItem[]>;
-  onSaveRef: RefObject<(item: StoredItem) => void>;
   /** Writes an upgrade to a saved sentence's live copy, never to a deleted one (DetailViewProps.onPatchItem). */
-  onPatchItemRef: RefObject<DetailViewProps['onPatchItem'] | undefined>;
+  onPatchItemRef: RefObject<DetailViewProps['onPatchItem']>;
 }
 
 /** How long after a failed fetch the lessons are asked for again; coming back online asks at once. */
@@ -34,7 +33,7 @@ const withoutId = (ids: ReadonlySet<string>, id: string): ReadonlySet<string> =>
  * again 15 s later, when the device comes back online, or when the review moves.
  */
 export function useSentenceEnrichment({
-  sentenceItems, sentenceIndex, savedSentenceItemsRef, onSaveRef, onPatchItemRef,
+  sentenceItems, sentenceIndex, savedSentenceItemsRef, onPatchItemRef,
 }: SentenceEnrichmentOptions) {
   const [preparedSentenceById, setPreparedSentenceById] = useState<Record<string, StoredItem>>({});
   const [preparingSentenceId, setPreparingSentenceId] = useState<string | null>(null);
@@ -126,15 +125,8 @@ export function useSentenceEnrichment({
           },
         };
       };
-      // On the library's live copy, so a sentence deleted on another device while the lookup ran stays deleted;
-      // without onPatchItem, the copy found above is saved as before.
-      const patchItem = onPatchItemRef.current;
-      if (patchItem) {
-        patchItem(savedMatch.data.id, upgrade);
-      } else {
-        const upgraded = upgrade(savedMatch);
-        if (upgraded) onSaveRef.current(upgraded);
-      }
+      // On the library's live copy, so a sentence deleted on another device while the lookup ran stays deleted.
+      onPatchItemRef.current(savedMatch.data.id, upgrade);
     } catch (error) {
       // A fetch that threw (the network or the server) is not marked checked, so it's asked for again: after a while,
       // on reconnecting, or when the review moves. A reply that found nothing was marked checked above: not a failure.
@@ -151,7 +143,7 @@ export function useSentenceEnrichment({
       // Whichever call showed the loading, it ends with the fetch.
       setPreparingSentenceId(current => current === id ? null : current);
     }
-  }, [savedSentenceItemsRef, onSaveRef, onPatchItemRef]);
+  }, [savedSentenceItemsRef, onPatchItemRef]);
 
   useEffect(() => {
     const prepare = () => {

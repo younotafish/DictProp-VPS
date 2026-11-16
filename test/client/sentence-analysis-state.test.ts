@@ -178,7 +178,6 @@ async function settle(done: () => boolean = () => true) {
  */
 async function enrichmentHarness(items: StoredItem[], library: {
   saved?: StoredItem[];
-  onSave?: (item: StoredItem) => void;
   onPatchItem?: (id: string, patch: (item: StoredItem) => StoredItem | null) => void;
 } = {}) {
   const asked = new Map<string, ReturnType<typeof deferred<Response>>[]>();
@@ -201,10 +200,9 @@ async function enrichmentHarness(items: StoredItem[], library: {
   let state: ReturnType<typeof useSentenceEnrichment> | undefined;
   // Refs keep their identity across renders, as the view's useLatest refs do.
   const savedSentenceItemsRef = { current: library.saved ?? [] };
-  const onSaveRef = { current: library.onSave ?? (() => {}) };
-  const onPatchItemRef = { current: library.onPatchItem };
+  const onPatchItemRef = { current: library.onPatchItem ?? (() => {}) };
   const Lesson = ({ index }: { index: number }) => {
-    state = useSentenceEnrichment({ sentenceItems: items, sentenceIndex: index, savedSentenceItemsRef, onSaveRef, onPatchItemRef });
+    state = useSentenceEnrichment({ sentenceItems: items, sentenceIndex: index, savedSentenceItemsRef, onPatchItemRef });
     return null;
   };
   const show = (index: number) => act(() => root.render(createElement(Lesson, { index })));
@@ -308,15 +306,13 @@ const analysisReply = () => new Response(JSON.stringify({
 test('an analysis that arrives for a saved sentence patches its live copy instead of saving the copy the view holds', async () => {
   const saved = lessonSentence('s1', 'Saved line.');
   const patches: [string, (item: StoredItem) => StoredItem | null][] = [];
-  const saves: StoredItem[] = [];
   const lesson = await enrichmentHarness([saved], {
-    saved: [saved], onSave: item => { saves.push(item); }, onPatchItem: (id, patch) => { patches.push([id, patch]); },
+    saved: [saved], onPatchItem: (id, patch) => { patches.push([id, patch]); },
   });
   try {
     await settle(() => lesson.asks('Saved line.') === 1);
     await lesson.answer('Saved line.', analysisReply());
     await settle(() => patches.length === 1);
-    assert.equal(saves.length, 0);
     const [id, patch] = patches[0];
     assert.equal(id, 's1');
     // Applied to whatever copy the library holds then: it adds the analysis and the picture link, keeping the rest.
@@ -340,17 +336,3 @@ test('an analysis that arrives for a saved sentence patches its live copy instea
   }
 });
 
-test('without onPatchItem the arriving analysis is saved over the saved copy, as before', async () => {
-  const saved = lessonSentence('s1', 'Saved line.');
-  const saves: StoredItem[] = [];
-  const lesson = await enrichmentHarness([saved], { saved: [saved], onSave: item => { saves.push(item); } });
-  try {
-    await settle(() => lesson.asks('Saved line.') === 1);
-    await lesson.answer('Saved line.', analysisReply());
-    await settle(() => saves.length === 1);
-    assert.equal(saves[0].data.id, 's1');
-    assert.equal((saves[0].data as SentenceData).analysisGeneratedAt, 42);
-  } finally {
-    await lesson.close();
-  }
-});
