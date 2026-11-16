@@ -54,6 +54,9 @@ interface CardReviewPopupProps {
 const hasTouchPoints = (): boolean =>
   detectPlatform(typeof navigator === 'undefined' ? undefined : navigator, () => false).isTouchCapable;
 
+/** The card shown while no page is (the popup always opens on at least one saved sense), one object for every render. */
+const EMPTY_VOCAB = {} as VocabCard;
+
 /**
  * The full review card for a saved word, shown in an overlay — opened by tapping a saved word in a
  * sentence. Pages through ALL of the word's meanings: saved senses (with the SRS row — mastery, Got it /
@@ -101,7 +104,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
 
   const { word, current, currentSense, count, idx, goPrev, goNext, loadingSenses } =
     useSensePages(items, initialId, onFetchSenses, disarmDelete);
-  const vocab = current?.vocab ?? ({} as VocabCard);
+  const vocab = current?.vocab ?? EMPTY_VOCAB;
   const currentSaved = current?.kind === 'saved' ? current.item : null;
 
   const shortcutExamples = useMemo(
