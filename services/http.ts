@@ -11,8 +11,8 @@ export class HttpError extends Error {
 
 /** What every timed request rejects with once it runs out of time (see fetchWithin). */
 export class TimeoutError extends Error {
-  constructor(message = 'Request timed out') {
-    super(message);
+  constructor(message = 'Request timed out', options?: ErrorOptions) {
+    super(message, options);
     this.name = 'TimeoutError';
   }
 }

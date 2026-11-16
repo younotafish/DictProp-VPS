@@ -103,16 +103,19 @@ test('analysis sends the batch mode and keeps statuses the search box maps to me
  *  TimeoutError the request was aborted with, older ones with an AbortError. */
 const failWith = (error: unknown) => { globalThis.fetch = (async () => { throw error; }) as typeof fetch; };
 
-test('a request that runs out of time is a TimeoutError in each route\'s own words', async () => {
-  for (const stalled of [new TimeoutError(), new DOMException('The operation was aborted.', 'AbortError')]) {
-    failWith(stalled);
-    await assert.rejects(analyzeInput('gamut'), (error: unknown) => error instanceof TimeoutError
-      && error.message === 'The model did not finish this search before the timeout. Please retry it.');
-    await assert.rejects(compareWords(['fable', 'parable']), (error: unknown) => error instanceof TimeoutError
-      && error.message === 'The model did not finish this comparison before the timeout. Please retry it.');
-    await assert.rejects(detectVocabulary('It ran the gamut of emotions.'), (error: unknown) => error instanceof TimeoutError
-      && error.message === 'The model did not finish scanning this text before the timeout. Try a shorter text.');
-  }
+test('a request that runs out of time is a TimeoutError, which the search words itself', async () => {
+  const timedOut = new TimeoutError();
+  failWith(timedOut);
+  await assert.rejects(analyzeInput('gamut'), (error: unknown) => error === timedOut);
+  await assert.rejects(compareWords(['fable', 'parable']), (error: unknown) => error === timedOut);
+  await assert.rejects(detectVocabulary('It ran the gamut of emotions.'), (error: unknown) => error === timedOut);
+
+  const aborted = new DOMException('The operation was aborted.', 'AbortError');
+  failWith(aborted);
+  const fromAbort = (error: unknown) => error instanceof TimeoutError && error.cause === aborted;
+  await assert.rejects(analyzeInput('gamut'), fromAbort);
+  await assert.rejects(compareWords(['fable', 'parable']), fromAbort);
+  await assert.rejects(detectVocabulary('It ran the gamut of emotions.'), fromAbort);
 });
 
 test('a request that never reached the server keeps the network\'s TypeError, so the search can say so', async () => {

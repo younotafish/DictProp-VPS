@@ -20,11 +20,12 @@ const TRANSCRIBE_TIMEOUT_MS = TRANSCRIBE_BUDGET_MS + SERVER_ANSWER_MARGIN_MS;
 
 // How a failed AI request is reported, decided once for every route. A 429 carries a machine-readable token:
 // QUOTA_EXCEEDED (billing — callers show a quota message) or RATE_LIMITED (transient). A request that ran out of time
-// (an older browser aborts it with an AbortError instead of the TimeoutError it was given) is a TimeoutError with the
-// route's own words. Everything else stays as it was thrown: an HttpError with the server's message, or the network's
-// TypeError.
-const toAiError = (error: unknown, timeoutMessage: string): unknown => {
-  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) return new TimeoutError(timeoutMessage);
+// rejects with the TimeoutError it was aborted with, and an older browser's AbortError becomes one too; the screens word
+// a timeout themselves (describeSearchError in services/searchRecovery.ts). Everything else stays as it was thrown: an
+// HttpError with the server's message, or the network's TypeError.
+const toAiError = (error: unknown): unknown => {
+  if (error instanceof TimeoutError) return error;
+  if (error instanceof Error && error.name === 'AbortError') return new TimeoutError(undefined, { cause: error });
   if (!(error instanceof HttpError) || error.status !== 429) return error;
   if (error.responseBody.includes('QUOTA_EXCEEDED')) return new Error('QUOTA_EXCEEDED');
   return new HttpError('The AI provider rate-limited this request. Try again shortly.', 429, error.responseBody);
@@ -55,11 +56,11 @@ interface DetectedWordReply {
   reason?: unknown;
 }
 
-const postAi = async <T>(path: string, body: unknown, label: string, timeoutMs: number, timeoutMessage: string): Promise<T> => {
+const postAi = async <T>(path: string, body: unknown, label: string, timeoutMs: number): Promise<T> => {
   try {
     return await requestJson<T>(path, jsonRequest('POST', body), label, timeoutMs);
   } catch (error) {
-    throw toAiError(error, timeoutMessage);
+    throw toAiError(error);
   }
 };
 
@@ -74,7 +75,6 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
       { text, ...(options?.mode ? { mode: options.mode } : {}) },
       'Analysis',
       ANALYZE_TIMEOUT_MS,
-      'The model did not finish this search before the timeout. Please retry it.',
     );
 
     const vocabs = sortVocabCardsByUsage((data.vocabs || [])
@@ -130,7 +130,6 @@ export const detectVocabulary = async (text: string): Promise<VocabularyScan> =>
       { text },
       'Vocabulary detection',
       EXTRACT_TIMEOUT_MS,
-      'The model did not finish scanning this text before the timeout. Try a shorter text.',
     );
   } catch (error) {
     // The server's 404 means only that the text had nothing worth studying: an answer, not a failure.
@@ -164,7 +163,6 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
       { audio: base64, mimeType: audioBlob.type || 'audio/webm' },
       'Transcription',
       TRANSCRIBE_TIMEOUT_MS,
-      'The model did not finish transcribing this recording before the timeout.',
     );
   } catch (error) {
     if ((error as Error)?.message === 'QUOTA_EXCEEDED') throw error;
@@ -198,7 +196,6 @@ export const compareWords = async (words: string[]): Promise<ComparisonResult> =
       { words: uniqueWords },
       'Comparison',
       COMPARE_TIMEOUT_MS,
-      'The model did not finish this comparison before the timeout. Please retry it.',
     );
     return sanitizeComparisonResult(data, uniqueWords);
   } catch (error) {
