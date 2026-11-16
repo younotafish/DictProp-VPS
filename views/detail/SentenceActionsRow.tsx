@@ -2,10 +2,11 @@ import { Bookmark, CheckCircle2, RotateCcw, Trash2 } from 'lucide-react';
 import type { SRSData } from '../../types';
 import type { MasteryClasses } from '../../components/mastery';
 import { SrsStats } from '../../components/review/SrsStats';
+import { sentenceRowState } from './sentenceRowState';
 
 interface SentenceActionsRowProps {
   srs: SRSData | undefined;
-  /** The sentence's mastery and its colors; left out for a preview, which has no progress to show. */
+  /** The sentence's mastery and its colors, shown once it has been reviewed (sentenceRowState); null until then. */
   mastery: { label: string; color: string; percentage: number } | null;
   masteryColors: MasteryClasses | null;
   /** Sentences in this list at least 70% strong. */
@@ -18,17 +19,23 @@ interface SentenceActionsRowProps {
   onRemember: () => void;
   /** Saves an unsaved example preview; without it a preview offers nothing. */
   onSaveSentence?: () => void;
-  onReset: () => void;
+  /** Offered once the sentence has been reviewed (sentenceRowState); without it the row has no Reset. */
+  onReset?: () => void;
   onDelete: () => void;
 }
 
+// The button at the right end keeps one size in every state: its negative margins hold the row at 28 px, so neither
+// it nor the sentence above moves when a first Got it or listen saves the sentence.
+const PRIMARY_BUTTON = '-my-1 flex min-h-9 items-center gap-1 rounded-lg px-4 text-sm font-bold text-white transition-colors';
+
 /**
- * Sentence review's bottom row: the sentence's memory on the left, and on the right Got it, Reset and, outside the
- * catalog lessons, Delete (or Save for an unsaved example).
+ * Sentence review's bottom row: once the sentence has been reviewed, its memory on the left; on the right Reset (once
+ * reviewed) and, outside the catalog lessons, Delete, then Got it at the right end, or Save for an unsaved example.
  */
 export function SentenceActionsRow({
   srs, mastery, masteryColors, memorizedCount, preview, catalog, catalogKind, onRemember, onSaveSentence, onReset, onDelete,
 }: SentenceActionsRowProps) {
+  const { showDelete, primary } = sentenceRowState({ catalog, preview, totalReviews: srs?.totalReviews ?? 0 });
   return (
     <div className="mt-2 flex items-center gap-2 text-xs">
       {mastery && masteryColors && (
@@ -37,43 +44,37 @@ export function SentenceActionsRow({
         </SrsStats>
       )}
       <div className="ml-auto flex items-center gap-1">
-        {preview ? (
-          catalog ? (
-            <button
-              type="button"
-              onClick={onRemember}
-              className="flex min-h-11 items-center gap-2 rounded-md bg-emerald-500 px-4 text-sm font-bold text-white transition-colors hover:bg-emerald-600"
-              title={`Remember in this ${catalogKind === 'essay' ? 'essay' : 'Real Life collection'} (R)`}
-            >
-              <CheckCircle2 size={17} /> Got it
-            </button>
-          ) : onSaveSentence && (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onSaveSentence();
-              }}
-              className="flex min-h-11 items-center gap-2 rounded-md bg-indigo-600 px-4 text-sm font-bold text-white transition-colors hover:bg-indigo-700"
-              title="Save sentence for review"
-            >
-              <Bookmark size={17} /> Save sentence
-            </button>
-          )
-        ) : (
-          <>
-            <button onClick={onReset} className="-my-1 flex h-9 w-9 items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Reset memory (Shift+R)" aria-label="Reset memory">
-              <RotateCcw size={15} />
-            </button>
-            {!catalog && (
-              <button onClick={onDelete} className="-my-1 flex h-9 w-9 items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors" title="Delete sentence (D)" aria-label="Delete sentence">
-                <Trash2 size={15} />
-              </button>
-            )}
-            <button onClick={onRemember} className="-my-1 flex min-h-9 items-center gap-1 text-xs font-bold text-white bg-emerald-500 hover:bg-emerald-600 px-3 rounded-lg transition-colors" title="Remember (R)">
-              <CheckCircle2 size={14} /> Got it
-            </button>
-          </>
+        {onReset && (
+          <button onClick={onReset} className="-my-1 flex h-9 w-9 items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Reset memory (Shift+R)" aria-label="Reset memory">
+            <RotateCcw size={15} />
+          </button>
+        )}
+        {showDelete && (
+          <button onClick={onDelete} className="-my-1 flex h-9 w-9 items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors" title="Delete sentence (D)" aria-label="Delete sentence">
+            <Trash2 size={15} />
+          </button>
+        )}
+        {primary === 'got-it' ? (
+          <button
+            type="button"
+            onClick={onRemember}
+            className={`${PRIMARY_BUTTON} bg-emerald-500 hover:bg-emerald-600`}
+            title={preview && catalog ? `Remember in this ${catalogKind === 'essay' ? 'essay' : 'Real Life collection'} (R)` : 'Remember (R)'}
+          >
+            <CheckCircle2 size={16} /> Got it
+          </button>
+        ) : onSaveSentence && (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onSaveSentence();
+            }}
+            className={`${PRIMARY_BUTTON} bg-indigo-600 hover:bg-indigo-700`}
+            title="Save sentence for review"
+          >
+            <Bookmark size={16} /> Save sentence
+          </button>
         )}
       </div>
     </div>

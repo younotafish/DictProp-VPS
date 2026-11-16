@@ -19,6 +19,7 @@ import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
 import { preloadSession } from './cardReading';
 import { resolveSentenceUnderReview, SENTENCE_PREVIEW_ID_PREFIX } from './sentenceUnderReview';
 import { withSpeechStyle } from './speechStyle';
+import { sentenceRowState } from './sentenceRowState';
 import { PLATFORM } from '../../services/platform';
 import { RememberToast } from './RememberToast';
 import { SentenceHero } from './SentenceHero';
@@ -170,8 +171,14 @@ export function SentenceReviewView({
     onSaveRef.current(updated);
   }, [onSaveRef]);
 
-  // Sentence stats (mirror the word-card stats, computed across the saved sentences).
-  const sentenceMastery = !isSentencePreview && currentSentence?.srs
+  // The bottom row goes by the sentence's reviews, not by whether it has a record, so a first listen that creates a
+  // catalog line's record changes nothing on screen. Its memory shows from the first review on.
+  const sentenceRow = sentenceRowState({
+    catalog: catalogSentencePreview,
+    preview: isSentencePreview,
+    totalReviews: currentSentence?.srs?.totalReviews ?? 0,
+  });
+  const sentenceMastery = sentenceRow.showStats && currentSentence?.srs
     ? SRSAlgorithm.getMasteryLevel(currentSentence.srs)
     : null;
   const sentenceMasteryColors = sentenceMastery ? getMasteryColors(sentenceMastery.color) : null;
@@ -454,7 +461,7 @@ export function SentenceReviewView({
                 const sentence = currentSentence.data as SentenceData;
                 onSaveSentence(sentence.text, sentence.sourceWord, sentence.sourceSense, sentence);
               } : undefined}
-              onReset={handleResetSRS}
+              onReset={sentenceRow.showReset ? handleResetSRS : undefined}
               onDelete={handleDeleteItem}
             />
           </div>
