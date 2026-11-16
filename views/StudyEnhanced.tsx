@@ -14,11 +14,15 @@ import {
   applyUndoneGrade,
   findSessionCard,
   gradeSessionCard,
+  isSessionCardLive,
   moveSessionTo,
+  sessionRatings,
   startStudySession,
   type SessionGrade,
   type StudySession,
 } from '../services/studySession';
+import { updateAfterRating } from '../services/fsrsScheduler';
+import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { resolveStudyKey } from '../services/studyKeys';
 import { StudyDashboard } from '../components/StudyDashboard';
 import { StudyCard } from '../components/study/StudyCard';
@@ -63,10 +67,11 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   const [undoError, setUndoError] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // A card deleted or archived mid-session is passed over instead of ending the session there.
+  // A card deleted or archived mid-session, or reviewed elsewhere since it began, is passed over instead of
+  // ending the session there.
   const itemsById = useMemo(() => new Map(items.map(item => [item.data.id, item])), [items]);
   const currentIndex = session
-    ? findSessionCard(session.itemIds, session.index, session.passedOverFrom, id => itemsById.has(id))
+    ? findSessionCard(session.itemIds, session.index, session.passedOverFrom, id => isSessionCardLive(itemsById.get(id), session))
     : 0;
   const currentId = session?.itemIds[currentIndex];
   const currentItem: StoredItem | null = (currentId !== undefined && itemsById.get(currentId)) || null;
@@ -96,7 +101,12 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   const gradeCurrent = (rating: ReviewRating) => {
     if (!session || !currentItem || !session.revealed || undoing) return;
     const eventId = crypto.randomUUID();
-    const { grade: sessionGrade, itemIds } = gradeSessionCard(session, currentItem, rating, eventId, Date.now());
+    const now = Date.now();
+    // The interval the grade sets, scheduled as updateSRS will schedule it.
+    const intervalMinutes = updateAfterRating(
+      SRSAlgorithm.ensure(currentItem.srs, currentItem.data.id, currentItem.type), rating, now,
+    ).interval;
+    const { grade: sessionGrade, itemIds } = gradeSessionCard(session, currentItem, rating, eventId, now, intervalMinutes);
     const grade: LastGrade = { ...sessionGrade, undoing: false };
     setLastGrade(grade);
     setUndoError('');
@@ -106,7 +116,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       sessionId: session.id,
       eventId,
     }).catch(error => warn('Review failed:', error));
-    setSession(current => current ? advanceSession(current, itemIds, rating, Date.now()) : null);
+    setSession(current => current ? advanceSession(current, itemIds, grade, now) : null);
   };
 
   const undoLastGrade = async () => {
@@ -190,7 +200,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       return (
         <div ref={rootRef} className="h-full overflow-y-auto bg-slate-50 p-5 pb-24">
           <StudySummary
-            ratings={session.ratings}
+            ratings={sessionRatings(session)}
             canUndo={!!lastGrade}
             undoing={undoing}
             undoError={undoError}

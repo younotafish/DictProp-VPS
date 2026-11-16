@@ -91,6 +91,12 @@ export const RATINGS = ['again', 'hard', 'good', 'easy'] as const satisfies read
 
 export const emptyRatings = (): Record<ReviewRating, number> => ({ again: 0, hard: 0, good: 0, easy: 0 });
 
+/** A grade that stands in a session: the card it was given to, and which grade. */
+export interface StandingGrade {
+  itemId: string;
+  rating: ReviewRating;
+}
+
 /** A review session in progress: the cards it shows, in order, and how far it has got. */
 export interface StudySession {
   id: string;
@@ -99,7 +105,10 @@ export interface StudySession {
   revealed: boolean;
   typedAnswer: string;
   promptStartedAt: number;
-  ratings: Record<ReviewRating, number>;
+  /** When the session began: a card reviewed after it, other than by this session, is passed over (isSessionCardLive). */
+  startedAt: number;
+  /** The session's grades that stand, in the order they were given; undoing one takes it back off the end. */
+  grades: StandingGrade[];
   /** Where the cards just passed over begin. One that comes back before the next grade, as an undone
    *  delete or archive brings it, is shown again where it was. */
   passedOverFrom?: number;
@@ -115,7 +124,7 @@ export interface SessionGrade {
   taskType: ReviewTaskType;
   durationMs: number;
   typedAnswer: string;
-  /** Where an Again rating queued the card's extra showing, which undo takes back. */
+  /** Where a grade with a step under a day queued the card's extra showing (requeueShortStep), which undo takes back. */
   requeuedAt?: number;
 }
 
@@ -128,8 +137,16 @@ export function startStudySession(id: string, queue: readonly StoredItem[], now:
     revealed: false,
     typedAnswer: '',
     promptStartedAt: now,
-    ratings: emptyRatings(),
+    startedAt: now,
+    grades: [],
   };
+}
+
+/** How many times the session gave each grade, counting the grades that stand. */
+export function sessionRatings(session: Pick<StudySession, 'grades'>): Record<ReviewRating, number> {
+  const ratings = emptyRatings();
+  for (const { rating } of session.grades) ratings[rating]++;
+  return ratings;
 }
 
 /**
@@ -147,9 +164,17 @@ export function moveSessionTo(session: StudySession, index: number, now: number)
   };
 }
 
+/** The most time one prompt records: one left open while the learner was away counts this, not the absence. */
+export const PROMPT_TIME_CAP_MS = 120_000;
+
+/** The time from `start` to `now`, at most `cap`, and none for a clock that went back. */
+export function cappedDuration(start: number, now: number, cap = PROMPT_TIME_CAP_MS): number {
+  return Math.min(cap, Math.max(0, now - start));
+}
+
 /**
  * The grade of the card the session shows (`item`, at session.index), and the session's cards with any
- * extra showing that grade queues (requeueLapse).
+ * extra showing that grade queues. `intervalMinutes` is the interval the grade sets (requeueShortStep).
  */
 export function gradeSessionCard(
   session: StudySession,
@@ -157,8 +182,9 @@ export function gradeSessionCard(
   rating: ReviewRating,
   eventId: string,
   now: number,
+  intervalMinutes: number,
 ): { grade: SessionGrade; itemIds: string[] } {
-  const itemIds = requeueLapse(session.itemIds, session.index, rating);
+  const itemIds = requeueShortStep(session.itemIds, session.index, intervalMinutes);
   return {
     grade: {
       eventId,
@@ -167,7 +193,7 @@ export function gradeSessionCard(
       itemIndex: session.index,
       rating,
       taskType: selectReviewTask(item),
-      durationMs: Math.max(0, now - session.promptStartedAt),
+      durationMs: cappedDuration(session.promptStartedAt, now),
       typedAnswer: session.typedAnswer,
       requeuedAt: itemIds !== session.itemIds ? session.itemIds.length : undefined,
     },
@@ -175,8 +201,8 @@ export function gradeSessionCard(
   };
 }
 
-/** The session after a grade: on to the next card, unrevealed, with the grade counted. */
-export function advanceSession(session: StudySession, itemIds: string[], rating: ReviewRating, now: number): StudySession {
+/** The session after `grade`: on to the next card, unrevealed, with the grade standing. */
+export function advanceSession(session: StudySession, itemIds: string[], grade: StandingGrade, now: number): StudySession {
   return {
     ...session,
     itemIds,
@@ -185,15 +211,16 @@ export function advanceSession(session: StudySession, itemIds: string[], rating:
     revealed: false,
     typedAnswer: '',
     promptStartedAt: now,
-    ratings: { ...session.ratings, [rating]: session.ratings[rating] + 1 },
+    grades: [...session.grades, { itemId: grade.itemId, rating: grade.rating }],
   };
 }
 
 /**
  * The session after `grade` is undone: back at its card, revealed and with the typed answer, the grade no
- * longer counted, and the extra showing an Again queued taken back if it is still where it was queued.
+ * longer standing, and the extra showing it queued taken back if it is still where it was queued.
  */
 export function undoSessionGrade(session: StudySession, grade: SessionGrade, now: number): StudySession {
+  const last = session.grades[session.grades.length - 1];
   return {
     ...session,
     itemIds: grade.requeuedAt !== undefined && session.itemIds[grade.requeuedAt] === grade.itemId
@@ -204,10 +231,7 @@ export function undoSessionGrade(session: StudySession, grade: SessionGrade, now
     revealed: true,
     typedAnswer: grade.typedAnswer,
     promptStartedAt: now,
-    ratings: {
-      ...session.ratings,
-      [grade.rating]: Math.max(0, session.ratings[grade.rating] - 1),
-    },
+    grades: last?.itemId === grade.itemId && last.rating === grade.rating ? session.grades.slice(0, -1) : session.grades,
   };
 }
 
@@ -236,7 +260,25 @@ export function findSessionCard(
   return at;
 }
 
-/** A card rated Again comes back at the end of the session, as a further prompt after the rest. */
-export function requeueLapse(itemIds: string[], index: number, rating: ReviewRating): string[] {
-  return rating === 'again' && index < itemIds.length ? [...itemIds, itemIds[index]] : itemIds;
+/**
+ * Whether the session still shows a card: it is in the study list (a deleted or archived card isn't), and it
+ * wasn't reviewed elsewhere since the session began, by Got it in the review popup or the card view, or on
+ * another device. Every review stamps the card's lastReviewDate, the session's own too, so the cards this
+ * session graded don't count as reviewed elsewhere.
+ */
+export function isSessionCardLive(item: StoredItem | undefined, session: Pick<StudySession, 'startedAt' | 'grades'>): boolean {
+  if (!item) return false;
+  if ((item.srs?.lastReviewDate ?? 0) <= session.startedAt) return true;
+  return session.grades.some(grade => grade.itemId === item.data.id);
+}
+
+const DAY_MINUTES = 1_440;
+
+/**
+ * A grade whose next review is under a day away (Again's 10 minutes, or Hard's 15 on a new or relearning
+ * card) brings the card back at the end of the session, as a further prompt after the rest, rather than
+ * leaving it due before the next session starts.
+ */
+export function requeueShortStep(itemIds: string[], index: number, intervalMinutes: number): string[] {
+  return intervalMinutes < DAY_MINUTES && index < itemIds.length ? [...itemIds, itemIds[index]] : itemIds;
 }
