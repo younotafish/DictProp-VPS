@@ -4,6 +4,7 @@ import { createElement, type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import AppNavigation from '../../components/AppNavigation.tsx';
 import { AppStatusPills } from '../../components/AppStatus.tsx';
+import { KeyboardHelpModal } from '../../components/KeyboardHelpModal.tsx';
 import { NoticePill } from '../../components/NoticePill.tsx';
 import { SearchFab } from '../../components/search/SearchFab.tsx';
 import { SearchToasts } from '../../components/search/SearchToasts.tsx';
@@ -85,6 +86,17 @@ test('a screen reader hears the Sentences badge as the sentences to review, neve
   const html = renderToStaticMarkup(createElement(AppNavigation, nav));
   assert.match(html, /aria-label="Sentences, 3 to review"/);
   assert.doesNotMatch(html, / due"/);
+});
+
+test('the bar\'s ? button is named for the sheet it opens, Gestures & shortcuts, and its tooltip names the key too', () => {
+  // The bar's last button, after the five tabs.
+  const button = [...renderToStaticMarkup(createElement(AppNavigation, nav)).matchAll(/<button [^>]*>/g)].map(tag => tag[0])[5];
+  const sheet = renderToStaticMarkup(createElement(KeyboardHelpModal, { onClose: () => {}, touchFirst: false, isMac: true }));
+  const sheetName = sheet.match(/role="dialog" aria-modal="true" aria-label="([^"]*)"/)![1];
+  assert.equal(sheetName, 'Gestures &amp; shortcuts');
+  assert.match(button, new RegExp(`aria-label="${sheetName}"`));
+  assert.match(button, new RegExp(`title="${sheetName} \\(\\?\\)"`));
+  assert.doesNotMatch(button, /Keyboard shortcuts/);
 });
 
 type StackProps = ComponentProps<typeof AppStatusPills>;

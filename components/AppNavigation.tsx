@@ -66,8 +66,8 @@ const AppNavigation = forwardRef<HTMLElement, AppNavigationProps>(({
     <button
       onClick={onKeyboardHelp}
       className="hidden flex-col items-center justify-center gap-1 py-3 text-slate-300 transition-colors hover:text-slate-500 md:flex"
-      title="Keyboard shortcuts (?)"
-      aria-label="Keyboard shortcuts"
+      title="Gestures & shortcuts (?)"
+      aria-label="Gestures & shortcuts"
     >
       <Keyboard size={20} strokeWidth={2} />
       <span className="text-[10px] font-bold uppercase tracking-wider">?</span>
