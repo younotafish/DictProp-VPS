@@ -1,5 +1,5 @@
 import { keepServerOwnedData } from '../server/src/shared/server-owned-data';
-import { getItemTitle, type StoredItem } from '../types';
+import { getItemTitle, type SearchResult, type SentenceData, type StoredItem, type VocabCard } from '../types';
 import { SRSAlgorithm } from './srsAlgorithm';
 import { warn } from './logger';
 import { getItemContentHash, isItemDirty } from './itemHash';
@@ -118,7 +118,9 @@ const resolveDeletion = (
 // still be on a device, and a tab that hasn't reloaded since can write more, so a copy without its content
 // never replaces one that has it.
 const hasFullContent = (item: StoredItem): boolean => {
-  const data = item.data as any;
+  // Any of these can be missing from a stripped copy, whatever its type says.
+  const data: Partial<Pick<SentenceData, 'text'> & Pick<SearchResult, 'grammar' | 'vocabs'> & Pick<VocabCard, 'definition' | 'examples'>> =
+    item.data;
   if (item.type === 'sentence') return typeof data.text === 'string' && data.text.trim().length > 0;
   if (item.type === 'phrase') {
     return typeof data.grammar === 'string' || Array.isArray(data.vocabs);
@@ -208,15 +210,21 @@ const mergeSchedule = ({ local: localItem, remote: remoteItem, localRevision, re
   }
 };
 
+/** The picture fields of item data: its own picture and, in a phrase, its vocabs' pictures. */
+interface PictureFields {
+  imageUrl?: string;
+  vocabs?: Pick<VocabCard, 'id' | 'imageUrl'>[];
+}
+
 /** C. Pictures: the image markers that win, set on `mergedItem`'s data. */
 const mergeImages = ({ local: localItem, remote: remoteItem }: MergePair, mergedItem: StoredItem): void => {
   // Items carry image markers, not pictures: 'idb:stored' for one stored on this device, and
   // 'server:has_image:<version>' for one on the server. The list endpoint never sends pictures, so a local
   // marker is kept unless the server's copy is current and carries a versioned marker, which replaces it so the
   // stored picture is checked against that version.
-  const finalData = mergedItem.data as any;
-  const localData = localItem.data as any;
-  const remoteData = remoteItem.data as any;
+  const finalData: PictureFields = mergedItem.data;
+  const localData: PictureFields = localItem.data;
+  const remoteData: PictureFields = remoteItem.data;
   const remoteImageRevisionIsCurrent =
     typeof remoteItem.serverRevision === 'number' && typeof localItem.serverRevision === 'number'
       ? remoteItem.serverRevision > localItem.serverRevision ||
@@ -243,17 +251,17 @@ const mergeImages = ({ local: localItem, remote: remoteItem }: MergePair, merged
   if (mergedItem.type === 'phrase' && Array.isArray(finalData.vocabs)) {
     const localVocabs = new Map(
       (Array.isArray(localData.vocabs) ? localData.vocabs : [])
-        .filter((v: any) => v?.id)
-        .map((v: any) => [v.id, v]),
+        .filter(v => v?.id)
+        .map(v => [v.id, v]),
     );
     const remoteVocabs = new Map(
       (Array.isArray(remoteData.vocabs) ? remoteData.vocabs : [])
-        .filter((v: any) => v?.id)
-        .map((v: any) => [v.id, v]),
+        .filter(v => v?.id)
+        .map(v => [v.id, v]),
     );
-    finalData.vocabs.forEach((vocab: any) => {
-      const localVocab: any = localVocabs.get(vocab?.id);
-      const remoteVocab: any = remoteVocabs.get(vocab?.id);
+    finalData.vocabs.forEach(vocab => {
+      const localVocab = localVocabs.get(vocab?.id);
+      const remoteVocab = remoteVocabs.get(vocab?.id);
 
       if (remoteCanInvalidateImageCache(remoteVocab?.imageUrl)) {
         vocab.imageUrl = remoteVocab.imageUrl;

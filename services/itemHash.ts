@@ -34,12 +34,12 @@ const hashCache = new WeakMap<StoredItem, string>();
 
 // The server keeps images out of item data (it stores base64 separately and drops every other imageUrl),
 // so an imageUrl (a marker or a URL) is never content: hashing one would leave the item dirty after every echo.
-const stripImageForHash = (data: any): any => {
+const stripImageForHash = (data: StoredItem['data']): unknown => {
   if (!data) return data;
-  const cleaned = { ...data };
+  const cleaned: { imageUrl?: string; vocabs?: unknown[] } = { ...data };
   delete cleaned.imageUrl;
   if (Array.isArray(cleaned.vocabs)) {
-    cleaned.vocabs = cleaned.vocabs.map((v: any) => {
+    cleaned.vocabs = cleaned.vocabs.map(v => {
       if (v && typeof v === 'object' && 'imageUrl' in v) {
         const { imageUrl, ...rest } = v;
         return rest;
