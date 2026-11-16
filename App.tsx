@@ -95,7 +95,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
   const libraryViews = useLibraryViews(library.savedItems);
   const {
     allActiveItems, studyItems, allSentenceItems, realLifeProgressItems, essayProgressItems, sentenceItems,
-    sentenceDueCount, isSentenceSaved, isVocabSaved, findSavedByWord, findSavedItem, hasSavedVariant,
+    sentenceDueCount, isSentenceSaved, isVocabSaved, findSavedByWord, findSavedItem,
   } = libraryViews;
   const detail = useDetailView(libraryViews, library);
   const {
@@ -297,7 +297,6 @@ function SignedInApp({ user }: { user: AuthUser }) {
             onScroll={handleScroll}
             onForceSync={handleForceSync}
             isOnline={isOnline}
-            hasSavedVariant={hasSavedVariant}
             isVocabSaved={isVocabSaved}
             onFindDuplicates={handleFindDuplicates}
             onArchive={handleArchive}

@@ -50,8 +50,6 @@ interface NotebookProps {
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
   onForceSync: () => void;
   isOnline: boolean;
-  /** Unused: the 'notebook-search' listener that read it is gone. App still passes it until it stops (handoff). */
-  hasSavedVariant?: (query: string) => boolean;
   /** The saved base words a query inflects (ran -> run), which a search lists first after the word typed. */
   matchSavedBases?: (query: string) => Set<string>;
   /** Tells the nav bar that the notebook moved its list itself, so the jump doesn't hide the bar. */
