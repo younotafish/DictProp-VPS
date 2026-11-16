@@ -10,7 +10,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 
 /** A JSON value without its imageUrl fields, at any depth: images travel apart from the data. */
-function withoutImageFields(value: unknown): unknown {
+export function withoutImageFields(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(withoutImageFields);
   if (!isRecord(value)) return value;
   return Object.fromEntries(Object.entries(value)
