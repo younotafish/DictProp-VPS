@@ -235,7 +235,7 @@ function sentencePage(hero: ScrollPosition) {
     sentencePage: 'sentence', setSentencePage: page => { asked.push(`page ${String(page)}`); },
     isSentenceAutoPlayingRef: { current: false }, setShowSentenceAutoPlayPanel: () => {}, onClose: () => { asked.push('close'); },
     currentGroupIndexRef: { current: 5 }, goToSentence: index => { asked.push(`sentence ${index}`); },
-    handleRemember: () => {}, toggleSentencePlayback: () => {}, playFromWordOffset: () => {},
+    handleRemember: () => {}, toggleSentencePlayback: () => {}, playFromWordOffset: () => {}, lookUpSelection: () => false,
   }));
   /** A one-finger drag of `dy` px, the scroller standing at `during` once the finger has moved, if given. */
   const swipe = (dy: number, during?: ScrollPosition) => {

@@ -23,9 +23,9 @@ interface SentenceGesturesOptions {
   playFromWordOffset: (offset: number) => void;
   /**
    * A laptop's Command/Ctrl-click inside a phrase selected in the sentence: looks the phrase up and says whether it did
-   * (useSelectionLookup). Without it, or when it didn't, the click looks up the word under the pointer.
+   * (useSelectionLookup). When it didn't, the click looks up the word under the pointer.
    */
-  lookUpSelection?: () => boolean;
+  lookUpSelection: () => boolean;
 }
 
 /**
@@ -240,7 +240,7 @@ export function useSentenceGestures({
     }
     if (e.metaKey || e.ctrlKey) {
       // Inside a phrase selected in the sentence, the phrase is looked up instead, so the word's handler stays out.
-      if (lookUpSelection?.()) {
+      if (lookUpSelection()) {
         e.preventDefault();
         e.stopPropagation();
         return;

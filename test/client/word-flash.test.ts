@@ -106,7 +106,7 @@ after(() => {
  * Sentence review's word gestures on a phone or a laptop, with a sentence holding the word "gamut" at offset 12.
  * `lookUpSelection` stands for useSelectionLookup's: whether a Cmd/Ctrl-click found a selected phrase to look up.
  */
-function sentence(isMobile: boolean, lookUpSelection?: () => boolean) {
+function sentence(isMobile: boolean, lookUpSelection: () => boolean = () => false) {
   const log: string[] = [];
   const hero = new FakeNode(null, log);
   const gamut = new FakeNode(hero, log, 12);
