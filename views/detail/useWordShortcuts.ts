@@ -1,6 +1,7 @@
 import { useEffect, type RefObject } from 'react';
 import { useLatest } from '../../hooks/useStableValue';
-import { isDialogOpenOutside, isImeKey, isTypingTarget } from '../../components/keyboardTarget';
+import { isImeKey, isTypingTarget } from '../../components/keyboardTarget';
+import { isDialogAboveCardView } from './dialogAbove';
 import { handleWordKey, type WordKeyHandlers } from './cardKeys';
 
 interface WordShortcutsOptions extends WordKeyHandlers {
@@ -22,7 +23,7 @@ export function useWordShortcuts({ enabled, rootRef, ...handlers }: WordShortcut
     const handleKeyDown = (e: KeyboardEvent) => {
       // Typing or composing text isn't a shortcut, and a dialog over the view (a confirm, the shortcut list, a
       // search result) has the keys to itself. The key table ignores held keys.
-      if (isTypingTarget(e.target) || isImeKey(e) || isDialogOpenOutside(rootRef.current)) return;
+      if (isTypingTarget(e.target) || isImeKey(e) || isDialogAboveCardView(rootRef.current)) return;
       handleWordKey(e, handlersRef.current);
     };
 
