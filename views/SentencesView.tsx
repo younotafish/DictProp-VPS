@@ -13,7 +13,7 @@ import {
 import { needsReview, summarizeReviewStates } from '../services/sentenceReviewState';
 import { Virtuoso } from 'react-virtuoso';
 import { useLatest } from '../hooks/useStableValue';
-import { useNow } from '../hooks/useNow';
+import { useListClock } from '../hooks/useNow';
 import { formatDueLabel } from './reading/dueLabel';
 
 const sentenceKey = (_index: number, item: StoredItem) => item.data.id;
@@ -154,7 +154,6 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   onOpenCard,
 }) => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const now = useNow(items);
 
   const activeItems = useMemo(() => items.filter(s => !s.isArchived), [items]);
 
@@ -164,6 +163,12 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const deferredQuery = useDeferredValue(searchQuery);
   const runSentenceSearch = useSentenceSearch(items);
+
+  // The counts, the order and the rows' state count from this time, taken again when the filter or the settled
+  // search changes and when a sentence opens over the list, not when the library changes.
+  const settledQuery = deferredQuery.trim();
+  const listView = useMemo(() => ({ filter, query: settledQuery }), [filter, settledQuery]);
+  const { now, noteOpened } = useListClock(listView);
 
   // How many active sentences are in each review state (unreviewed, due, memorized), for the chips and header.
   const counts = useMemo(() => summarizeReviewStates(activeItems.map(item => item.srs), now), [activeItems, now]);
@@ -183,12 +188,13 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   const openSentence = useCallback((item: StoredItem) => {
     const { sorted, onOpenSentence } = latest.current;
     onOpenSentence(sorted, sorted.indexOf(item));
-  }, [latest]);
+    noteOpened();
+  }, [latest, noteOpened]);
 
   const renderSentence = useCallback((_index: number, item: StoredItem) => {
     if (!isSentenceItem(item)) return null;
-    // The header's rule: a sentence never reviewed is to review whatever its schedule says, even one saved on a device
-    // whose clock runs ahead.
+    // The header's rule: a sentence never reviewed is to review whatever its schedule says, even one saved after the
+    // list took its time, or on a device whose clock runs ahead.
     const toReview = needsReview(item.srs, now);
     return (
       <SentenceRow

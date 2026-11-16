@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import type { ReviewRating, StoredItem } from '../types';
 import { REAL_LIFE_COLLECTIONS } from '../services/realLifeCatalog';
 import { indexRealLifeProgress } from '../services/realLifeProgress';
-import { useNow } from '../hooks/useNow';
+import { useListClock } from '../hooks/useNow';
 import { RealLifeIndex } from './reading/RealLifeIndex';
 import { RealLifeCollectionScreen } from './reading/RealLifeCollectionScreen';
 
@@ -29,8 +29,14 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
 
   const selectedCollection = REAL_LIFE_COLLECTIONS.find(collection => collection.id === selectedCollectionId) ?? null;
-  const now = useNow(progressItems);
+  // What's due counts from this time, taken again when a collection opens or closes and when a sentence opens over
+  // the list, not when progress arrives from a sync.
+  const { now, noteOpened } = useListClock(selectedCollectionId);
   const progressIndex = useMemo(() => indexRealLifeProgress(progressItems), [progressItems]);
+  const openSentence = useCallback((ordered: StoredItem[], index: number) => {
+    onOpenSentence(ordered, index);
+    noteOpened();
+  }, [onOpenSentence, noteOpened]);
 
   if (!selectedCollection) {
     return (
@@ -50,7 +56,7 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
       progressIndex={progressIndex}
       now={now}
       onClose={() => setSelectedCollectionId(null)}
-      onOpenSentence={onOpenSentence}
+      onOpenSentence={openSentence}
       onUpdateSRS={onUpdateSRS}
       isSentenceSaved={isSentenceSaved}
       onScroll={onScroll}

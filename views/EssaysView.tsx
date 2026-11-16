@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import type { StoredItem } from '../types';
 import { indexEssayProgress } from '../services/essayProgress';
-import { useNow } from '../hooks/useNow';
+import { useListClock } from '../hooks/useNow';
 import { useEssayCatalog } from './reading/useEssayCatalog';
 import { EssayIndex } from './reading/EssayIndex';
 import { EssayReader } from './reading/EssayReader';
@@ -17,8 +17,14 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
   const [selectedEssayId, setSelectedEssayId] = useState<string | null>(null);
   const { essays, status, retry } = useEssayCatalog();
   const selectedEssay = essays.find(essay => essay.id === selectedEssayId) ?? null;
-  const now = useNow(progressItems);
+  // What's due counts from this time, taken again when an essay opens or closes and when a sentence opens over the
+  // page, not when progress arrives from a sync.
+  const { now, noteOpened } = useListClock(selectedEssayId);
   const progressIndex = useMemo(() => indexEssayProgress(progressItems), [progressItems]);
+  const openSentence = useCallback((ordered: StoredItem[], index: number) => {
+    onOpenSentence(ordered, index);
+    noteOpened();
+  }, [onOpenSentence, noteOpened]);
 
   if (!selectedEssay) {
     return (
@@ -40,7 +46,7 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
       progressIndex={progressIndex}
       now={now}
       onBack={() => setSelectedEssayId(null)}
-      onOpenSentence={onOpenSentence}
+      onOpenSentence={openSentence}
       onScroll={onScroll}
     />
   );
