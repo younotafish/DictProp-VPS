@@ -1,11 +1,15 @@
 // One definition of a complete vocabulary card, shared by the incremental selector and the completion
 // stage. When they disagreed, a card the completion stage accepted was selected again on every cycle.
+// Its usage-audit and example rules are the server's own, so a card the cycle completes is one production's
+// content audit accepts, and one it rejects is selected again.
 
-import { USAGE_STATUSES } from '../../server/src/shared/usage-audit.ts';
+import { exampleSetIssues, isValidGeneratedExampleSet } from '../../server/src/example-rules.ts';
+import { isUsageAudit, USAGE_STATUSES } from '../../server/src/shared/usage-audit.ts';
 
 // The server's list, in its order, which complete-corpus-fields.mjs's schema, and so every batch fingerprint, repeats.
 export { USAGE_STATUSES };
-export const USAGE_CONFIDENCES = ['high', 'medium', 'low'];
+// Why a set of examples fails, one reason per problem, in words the model can act on.
+export { exampleSetIssues };
 
 export function validString(value) {
   return typeof value === 'string' && value.trim().length > 0;
@@ -13,15 +17,8 @@ export function validString(value) {
 
 // Model output has no auditedAt yet; the completion stage stamps it when the audit is applied.
 export function validUsageAudit(value, { requireAuditedAt = true } = {}) {
-  return Boolean(value) && typeof value === 'object' &&
-    USAGE_STATUSES.includes(value.status) && validString(value.reason) &&
-    USAGE_CONFIDENCES.includes(value.confidence) &&
-    (!requireAuditedAt || Number(value.auditedAt) > 0);
-}
-
-export function validExample(value) {
-  return validString(value) && value.trim().length >= 20 &&
-    value.length <= 1_000 && (value.match(/\{\{([^{}]+)\}\}/g) || []).length === 1;
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value) &&
+    isUsageAudit(requireAuditedAt ? value : { ...value, auditedAt: 1 });
 }
 
 // The headword is the card's identity and is never written by the completion stage, so it is checked
@@ -44,9 +41,7 @@ export function missingCardFields(card, { requireAuditedAt = true } = {}) {
     !validString(member?.chinese) || !/[\u3400-\u9fff]/u.test(member.chinese))) {
     missing.push('wordFamily');
   }
-  if (!Array.isArray(card?.examples) || card.examples.length !== 2 || !card.examples.every(validExample)) {
-    missing.push('examples');
-  }
+  if (!isValidGeneratedExampleSet(card?.examples)) missing.push('examples');
   if (!validUsageAudit(card?.usageAudit, { requireAuditedAt })) missing.push('usageAudit');
   return [...new Set(missing)];
 }

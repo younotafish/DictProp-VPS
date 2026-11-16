@@ -157,7 +157,7 @@ function runBatch(batch, batchIndex) {
   return runCachedModelBatch({
     resultPath: filesFor(batch, batchIndex).result,
     prompt: correction => `${instruction}${correction}\n\nCOMPLETE THESE CARDS:\n${JSON.stringify(compact)}`,
-    correction: message => `\n\nYour previous response failed validation: ${message}. Return every itemIndex and two natural examples per item, each at least 20 characters long with exactly one target use wrapped in double curly braces.`,
+    correction: message => `\n\nYour previous response failed validation: ${message}. Return every itemIndex exactly once with every field valid.`,
     ask: askModel,
     validate: parsed => readCompletionResults(parsed, batch),
     retryDelayMs,

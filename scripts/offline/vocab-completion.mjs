@@ -8,7 +8,7 @@ import {
   hasCurrentLocalAdvancedEnrichment,
   markLocalAdvancedEnrichment,
 } from './local-advanced-enrichment.mjs';
-import { missingCardFields } from './vocab-card-contract.mjs';
+import { exampleSetIssues, missingCardFields } from './vocab-card-contract.mjs';
 
 const REQUIRED_TEXT_FIELDS = ['sense', 'chinese', 'ipa', 'definition', 'history', 'register', 'mnemonic', 'imagePrompt'];
 
@@ -74,9 +74,13 @@ const FIELD_PROBLEMS = {
   ipa: 'IPA must be one General American transcription enclosed in a single pair of slashes',
   imagePrompt: 'image prompt is missing or shorter than 50 characters',
   wordFamily: 'every wordFamily entry needs a word, a part of speech, and Simplified Chinese',
-  examples: 'examples must be two sentences of at least 20 characters, each with exactly one target use in double curly braces',
   usageAudit: 'usage audit is invalid',
 };
+
+// What is wrong with one field of a result, in words the model can act on; for the examples, each rule they break.
+const fieldProblem = (field, result) => field === 'examples'
+  ? exampleSetIssues(result.examples).join('; ')
+  : FIELD_PROBLEMS[field] || `${field} is missing or too short`;
 
 // The result is checked against the same contract the selector uses, so an accepted card is never
 // selected again for the same gap.
@@ -84,7 +88,7 @@ export function validateCompletion(result, task) {
   if (!result || typeof result !== 'object') throw new Error(`${task.cardId}: result is not an object`);
   const missing = missingCardFields({ ...result, word: task.card.word }, { requireAuditedAt: false });
   if (missing.length > 0) {
-    throw new Error(`${task.cardId}: ${missing.map(field => FIELD_PROBLEMS[field] || `${field} is missing or too short`).join('; ')}`);
+    throw new Error(`${task.cardId}: ${missing.map(field => fieldProblem(field, result)).join('; ')}`);
   }
   if (result.synonyms.length === 0) throw new Error(`${task.cardId}: synonyms are empty`);
 }

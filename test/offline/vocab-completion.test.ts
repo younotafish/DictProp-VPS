@@ -101,6 +101,13 @@ test('a completion is checked against the card contract and reports each problem
     /^Error: stale: chinese must be a Simplified Chinese equivalent; IPA must be one General American transcription/);
   assert.throws(() => validateCompletion(completion({ history: 'Short.' }), task), /stale: history is missing or too short/);
   assert.throws(() => validateCompletion(completion({ synonyms: [] }), task), /^Error: stale: synonyms are empty$/);
+  // Each rule the examples break is named, so the retry can fix exactly that.
+  assert.throws(() => validateCompletion(completion({ examples: ['Too short {{x}}.', 'The lab kept a {{sample}} from every [shipment.'] }), task),
+    /^Error: stale: example 1 must be at least 20 characters; example 2 must not contain stray \{ \} \[ \] characters outside the markers$/);
+  assert.throws(() => validateCompletion(completion({ examples: ['I tested a {{sample}} before ordering.', 'I tested a {{SAMPLE}} before ordering.'] }), task),
+    /^Error: stale: the two examples must be different sentences$/);
+  assert.throws(() => validateCompletion(completion({ usageAudit: { ...completion().usageAudit, reason: 'x'.repeat(1_001) } }), task),
+    /^Error: stale: usage audit is invalid$/);
 });
 
 test('alternative pronunciations in separate slash pairs become one transcription', () => {
