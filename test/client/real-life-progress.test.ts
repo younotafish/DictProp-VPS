@@ -85,7 +85,7 @@ test('a row\'s pill says where its line stands, Due in orange when it is due, at
     sentence, softClass: 'bg-indigo-50 text-indigo-700', saved: false, state, masteryPercent: 64, onOpen: () => {}, onMarkReviewed: () => {},
   }));
   const pill = 'flex min-w-[4.5rem] shrink-0 items-center justify-center rounded-full px-2 py-0.5 text-[10px]';
-  const reviewed = '<button type="button" class="flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 transition-colors hover:bg-emerald-100" title="Mark as reviewed">';
+  const reviewed = '<button type="button" class="flex min-h-8 items-center gap-1 rounded-lg bg-emerald-50 px-2.5 text-xs font-bold text-emerald-700 transition-colors hover:bg-emerald-100" title="Mark as reviewed">';
 
   const memorized = row('memorized');
   assert.ok(memorized.includes(`<span class="${pill} gap-1 bg-emerald-50 font-bold text-emerald-700"><svg`));

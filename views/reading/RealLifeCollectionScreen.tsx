@@ -113,7 +113,7 @@ export const RealLifeSentenceRow = React.memo(function RealLifeSentenceRow({
                       if (event.detail > 1) return;
                       onMarkReviewed(sentence);
                     }}
-                    className="flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 transition-colors hover:bg-emerald-100"
+                    className="flex min-h-8 items-center gap-1 rounded-lg bg-emerald-50 px-2.5 text-xs font-bold text-emerald-700 transition-colors hover:bg-emerald-100"
                     title="Mark as reviewed"
                   >
                     <Check size={12} /> Reviewed
