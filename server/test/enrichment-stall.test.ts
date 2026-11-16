@@ -6,9 +6,8 @@ import {
   readStoredExampleCoverage,
   type StoredSentenceEnrichmentRecord,
 } from '../src/example-enrichment-coverage.js';
-import {
-  advancedVocabContentHash, summarizeIncrementalEnrichmentBacklog, type AuditedItem,
-} from '../src/incremental-enrichment.js';
+import { summarizeIncrementalEnrichmentBacklog, type AuditedItem } from '../src/incremental-enrichment.js';
+import { advancedVocabContentHash } from '../src/local-enrichment-markers.js';
 import { sentenceLookupHash } from '../src/sentence-lookup.js';
 import { completeAnalysis, completeVocab } from './support/fixtures.js';
 

@@ -7,8 +7,8 @@ import {
   storedExampleFlags,
   summarizeExampleEnrichmentCoverage,
 } from '../example-enrichment-coverage.js';
-import { fieldsOf } from '../incremental-enrichment.js';
 import { normalizeLabel, sentenceIdentityKey, sentenceTextKey, vocabSenseKey } from '../library-identity.js';
+import { fieldsOf } from '../local-enrichment-markers.js';
 import { hasCompleteSentenceAnalysis, hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
 import { isUsageAudit, shouldArchiveUsage, USAGE_STATUSES } from '../shared/usage-audit.js';
 import { isAdvancedEnrichmentMarker, validateStoredItem } from '../validation.js';

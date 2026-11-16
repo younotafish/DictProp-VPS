@@ -1,4 +1,5 @@
-import { fieldsOf, type AuditedItem } from './incremental-enrichment.js';
+import type { AuditedItem } from './incremental-enrichment.js';
+import { fieldsOf } from './local-enrichment-markers.js';
 import { hasCompleteSentenceAnalysis } from './sentence-analysis.js';
 import { exampleSentenceId, normalizeSentenceLookup, sentenceLookupHash } from './sentence-lookup.js';
 

@@ -6,7 +6,7 @@ import {
   addItemImage, createOwner, lastJsonLine, runScript, saveItem, storeExample, storeRawExample,
 } from './support/library.js';
 
-const { advancedVocabContentHash, imagePromptHash } = await import('../src/incremental-enrichment.js');
+const { advancedVocabContentHash, imagePromptHash } = await import('../src/local-enrichment-markers.js');
 const { exampleSentenceId, sentenceLookupHash } = await import('../src/sentence-lookup.js');
 
 const HOUR = 60 * 60 * 1_000;

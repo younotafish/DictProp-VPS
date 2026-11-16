@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { corpusSourceHash } from '../src/corpus-audit.js';
-import { hasCurrentLocalAdvancedEnrichment } from '../src/incremental-enrichment.js';
+import { hasCurrentLocalAdvancedEnrichment } from '../src/local-enrichment-markers.js';
 import { repoPath } from './support/paths.js';
 
 const script = (name: string) => repoPath('scripts', 'offline', name);

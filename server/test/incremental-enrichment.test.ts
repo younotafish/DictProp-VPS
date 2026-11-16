@@ -1,14 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { hasCompleteVocabContent, summarizeIncrementalEnrichmentBacklog } from '../src/incremental-enrichment.js';
 import {
   advancedVocabContentHash,
   hasCurrentLocalAdvancedEnrichment,
   hasCurrentLocalImageEnrichment,
-  hasCompleteVocabContent,
   imagePromptHash,
   localImageMarker,
-  summarizeIncrementalEnrichmentBacklog,
-} from '../src/incremental-enrichment.js';
+} from '../src/local-enrichment-markers.js';
 import { completeVocab } from './support/fixtures.js';
 
 const withAdvancedEnrichment = (data: Record<string, unknown>) => ({

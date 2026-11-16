@@ -1,5 +1,6 @@
 import { summarizeExampleEnrichmentCoverage, type StoredExampleCoverage } from './example-enrichment-coverage.js';
-import { fieldsOf, summarizeIncrementalEnrichmentBacklog, type AuditedItem } from './incremental-enrichment.js';
+import { summarizeIncrementalEnrichmentBacklog, type AuditedItem } from './incremental-enrichment.js';
+import { fieldsOf } from './local-enrichment-markers.js';
 
 const HOUR_MS = 60 * 60 * 1_000;
 // The local cycle completes words saved in the past week: INCREMENTAL_VOCAB_LOOKBACK_HOURS in

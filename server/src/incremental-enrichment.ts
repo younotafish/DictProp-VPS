@@ -6,19 +6,6 @@ import {
   hasCurrentLocalImageEnrichment,
 } from './local-enrichment-markers.js';
 
-// The markers the local cycle leaves on what it enriched live in local-enrichment-markers.ts, which the offline
-// scripts load under plain node; this module's importers keep reaching them here.
-export {
-  advancedVocabContentHash,
-  fieldsOf,
-  hasCurrentLocalAdvancedEnrichment,
-  hasCurrentLocalImageEnrichment,
-  imagePromptHash,
-  LOCAL_IMAGE_ENRICHMENT_PROVIDER,
-  localImageMarker,
-  type StoredFields,
-} from './local-enrichment-markers.js';
-
 /** An item as getAllItems returns it, as far as the audits read it. */
 export interface AuditedItem {
   readonly type?: unknown;

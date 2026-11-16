@@ -1,7 +1,7 @@
 import { corpusSourceHash } from '../corpus-audit.js';
 import { db, getItemById, upsertItemImageBinary, type StoredItemData, type StoredItemRecord } from '../db.js';
 import { backupBeforeWrite, recordStale, StaleEntryError, writeOverLiveItem } from '../import-support.js';
-import { fieldsOf, localImageMarker } from '../incremental-enrichment.js';
+import { fieldsOf, localImageMarker } from '../local-enrichment-markers.js';
 import { validateOfflineImageBundle, type OfflineImageBundle } from '../offline-image-import.js';
 import { errorMessage, readBundleImage, readBundleManifest, resolveInBundle } from './support/bundle.js';
 import { finishImport, requireOwner } from './support/run.js';
