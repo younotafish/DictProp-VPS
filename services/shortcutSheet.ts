@@ -1,5 +1,6 @@
 import type { ViewState } from '../types';
 import { TAB_KEYS } from '../hooks/useAppShortcuts';
+import { hasSearchBox } from './navReselect';
 
 /**
  * The gestures and shortcuts sheet (components/KeyboardHelpModal) as data, so a test can pin what it says. Each row
@@ -7,8 +8,8 @@ import { TAB_KEYS } from '../hooks/useAppShortcuts';
  * commit. The rows come from:
  * - Touch: views/detail/useSentenceGestures.ts, useWordGestures.ts and touchGestures.ts, the auto-play button's long press
  *   (views/detail/SentencePlaybackControls.tsx); services/navReselect.ts.
- * - Navigation: hooks/useAppShortcuts.ts (TAB_KEYS, ?, Escape, ⌘Z), components/GlobalSearch.tsx (⌘F), views/Notebook.tsx
- *   (Escape), the Real Life and essay screens (Escape).
+ * - Navigation: hooks/useAppShortcuts.ts (TAB_KEYS, ?, Escape, ⌘Z), services/navReselect.ts (the tabs with a search box),
+ *   components/GlobalSearch.tsx (⌘F), views/Notebook.tsx (Escape), the Real Life and essay screens (Escape).
  * - Card view: views/detail/cardKeys.ts handleWordKey, hooks/useKeyboardNavigation.ts, views/detail/useWordGestures.ts.
  * - Sentences: views/detail/cardKeys.ts handleSentenceKey, hooks/useKeyboardNavigation.ts,
  *   views/detail/useSentenceGestures.ts and SentenceReviewView.tsx (Escape), views/SentencesView.tsx (the list).
@@ -60,6 +61,15 @@ const TAB_NAMES: Record<ViewState, string> = {
   notebook: 'Notebook', sentences: 'Sentences', 'real-life': 'Real Life', essays: 'Essays', study: 'Study',
 };
 
+/**
+ * Which of `views` a reselect at the top sends to the search (services/navReselect), by name: 'Notebook or Sentences'.
+ * The other tabs have no search box, so there a second tap or press at the top does nothing.
+ */
+function tabsWithSearch(views: Iterable<ViewState>): string {
+  const names = [...views].filter(hasSearchBox).map(view => TAB_NAMES[view]);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}` : names.join('');
+}
+
 const SECTIONS: readonly ShortcutSection[] = [
   {
     id: 'touch',
@@ -75,7 +85,10 @@ const SECTIONS: readonly ShortcutSection[] = [
       { keys: ['Swipe down'], label: 'From the top: the previous one; a short pull at a card’s top shows its header' },
       { keys: ['Tap the top of a card'], label: 'The top quarter reads example 1; the next quarter, example 2' },
       { keys: ['Long-press auto-play'], label: 'In a sentence: open the auto-play panel (a tap resumes a paused auto-play)' },
-      { keys: ['Tap the current tab'], label: 'Jump to its top; tap again at the top to search' },
+      {
+        keys: ['Tap the current tab'],
+        label: `Jump to its top; on ${tabsWithSearch(Object.keys(TAB_NAMES) as ViewState[])}, tap again at the top to search`,
+      },
     ],
   },
   {
@@ -84,7 +97,8 @@ const SECTIONS: readonly ShortcutSection[] = [
     rows: [
       {
         keys: [...TAB_KEYS.keys()],
-        label: `${[...TAB_KEYS.values()].map(view => TAB_NAMES[view]).join(', ')}; pressed again on its own tab: to the top, then to the search`,
+        label: `${[...TAB_KEYS.values()].map(view => TAB_NAMES[view]).join(', ')}; pressed again on its own tab: to the top, `
+          + `then, on ${tabsWithSearch(TAB_KEYS.values())}, to the search`,
       },
       { keys: ['Mod', 'F'], label: 'Look up a word' },
       { keys: ['?'], label: 'Show this sheet' },

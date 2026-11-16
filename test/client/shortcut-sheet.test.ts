@@ -32,7 +32,8 @@ test('on a touch screen the gestures come first: a tap on a word reads from it, 
   const touch = phone[0].rows;
   assert.ok(hasRow(touch, ['Tap a word'], 'In a sentence: play from that word'));
   assert.ok(hasRow(touch, ['Two-finger tap a word'], 'In a sentence: look it up (a saved word opens its card)'));
-  assert.ok(hasRow(touch, ['Tap the current tab'], 'Jump to its top; tap again at the top to search'));
+  // Only the tabs with a search box (services/navReselect) search on a second tap at the top.
+  assert.ok(hasRow(touch, ['Tap the current tab'], 'Jump to its top; on Notebook or Sentences, tap again at the top to search'));
   // Long vertical swipes change the card or sentence only from the matching edge (UX-18); a card that fits is at both.
   assert.ok(hasRow(touch, ['Swipe up'], 'From the bottom of a card or sentence: the next one'));
   assert.ok(hasRow(touch, ['Swipe down'], 'From the top: the previous one; a short pull at a card’s top shows its header'));
@@ -47,9 +48,9 @@ test('Mod is ⌘ on a Mac and Ctrl elsewhere', () => {
   for (const sections of [mac, phone]) assert.ok(!keysOf(sections).includes('Mod'), 'every Mod is named');
 });
 
-test('the number keys are the tab keys, and pressed again they go up, then to the search', () => {
+test('the number keys are the tab keys, and pressed again they go up, then, on the tabs with a search box, to the search', () => {
   assert.ok(hasRow(section(mac, 'navigation').rows, [...TAB_KEYS.keys()],
-    'Notebook, Sentences, Study; pressed again on its own tab: to the top, then to the search'));
+    'Notebook, Sentences, Study; pressed again on its own tab: to the top, then, on Notebook or Sentences, to the search'));
   assert.deepEqual([...TAB_KEYS.keys()], ['1', '2', '3']);
 });
 
