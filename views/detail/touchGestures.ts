@@ -2,6 +2,7 @@
  * What a finished one-finger touch on the card view means. The view measures the touch and the scroller it
  * moved; these functions decide, so the thresholds and edge rules are pinned by tests rather than by reading.
  */
+import { eyesFreeZoneAt } from '../../components/eyesFreeBands';
 
 /** A finger that moved no more than this either way is a tap, not a swipe or a scroll. */
 export const TAP_MOVE_MAX = 10;
@@ -116,9 +117,8 @@ export function wordTouchAction(
 ): WordTouchAction {
   if (facts.isStillTap) {
     if (onControl) return null;
-    if (y < viewportHeight / 4) return { kind: 'read-zone', zone: 0 };
-    if (y < viewportHeight / 2) return { kind: 'read-zone', zone: 1 };
-    return null;
+    const zone = eyesFreeZoneAt(y, viewportHeight);
+    return zone === -1 ? null : { kind: 'read-zone', zone };
   }
   if (facts.isVerticalSwipe && facts.isShortSwipe && facts.dy > 0 && facts.atTop) return { kind: 'reveal-header' };
   if (facts.isVerticalSwipe) {
