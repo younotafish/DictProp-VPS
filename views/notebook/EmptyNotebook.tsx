@@ -23,6 +23,9 @@ export const EmptyNotebook: React.FC<EmptyNotebookProps> = ({ query, onQueryChan
           type="text"
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}
+          autoComplete="off"
+          autoCapitalize="off"
+          enterKeyHint="search"
           placeholder="Search a word or phrase..."
           className="w-full px-4 py-3 pr-12 rounded-xl border border-slate-200 bg-white text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-base"
           autoFocus

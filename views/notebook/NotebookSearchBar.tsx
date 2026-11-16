@@ -15,12 +15,19 @@ interface NotebookSearchBarProps {
   onToggleRecording: () => void;
   onSearchWithAI: () => void;
   onClear: () => void;
+  /** The input, which the notebook blurs to drop the keyboard. */
+  inputRef: React.Ref<HTMLInputElement>;
+  /** The input gained or lost focus. */
+  onFocusChange: (focused: boolean) => void;
 }
 
-/** The box that filters the notebook and looks a new word up with AI, with its voice, AI and clear buttons. */
+/**
+ * The box that filters the notebook and looks a new word up with AI, with its voice, AI and clear buttons. Like the
+ * app's other search fields, it neither capitalizes nor offers autofill, and the phone's Return key reads "search".
+ */
 export const NotebookSearchBar: React.FC<NotebookSearchBarProps> = ({
   query, onQueryChange, onKeyDown, onTouchStart, onTouchEnd, isOnline, isRecording, isTranscribing, isSearching,
-  onToggleRecording, onSearchWithAI, onClear,
+  onToggleRecording, onSearchWithAI, onClear, inputRef, onFocusChange,
 }) => (
   <div
     className="px-6 pb-4"
@@ -30,10 +37,16 @@ export const NotebookSearchBar: React.FC<NotebookSearchBarProps> = ({
     <div className="relative group">
       <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={16} />
       <input
+        ref={inputRef}
         type="text"
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
         onKeyDown={onKeyDown}
+        onFocus={() => onFocusChange(true)}
+        onBlur={() => onFocusChange(false)}
+        autoComplete="off"
+        autoCapitalize="off"
+        enterKeyHint="search"
         placeholder={isRecording ? "Listening..." : "Search or look up new word"}
         aria-label="Search the notebook, or look up a new word"
         className="w-full pl-10 pr-24 py-2.5 bg-white border border-slate-200 rounded-xl text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm"
@@ -67,7 +80,6 @@ export const NotebookSearchBar: React.FC<NotebookSearchBarProps> = ({
             className="w-9 h-9 flex items-center justify-center text-violet-500 hover:text-violet-700 rounded-lg hover:bg-violet-50 transition-colors"
             title="Search with AI (Enter)"
             aria-label="Search with AI"
-            disabled={!isOnline}
           >
             <Wand2 size={16} />
           </button>

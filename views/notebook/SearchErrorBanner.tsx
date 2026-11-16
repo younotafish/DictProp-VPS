@@ -1,6 +1,6 @@
 import React from 'react';
 
-/** Why the AI lookup or the voice search failed, with a Retry while there's a query to retry. */
+/** Why the AI lookup or the voice search failed, with a Retry when retrying can work (see retryOffered). */
 export const SearchErrorBanner: React.FC<{ message: string; onRetry?: () => void }> = ({ message, onRetry }) => (
   <div className="px-4 py-3 mx-3 mt-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-sm flex items-center justify-between gap-3">
     <span>{message}</span>

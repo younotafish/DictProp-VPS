@@ -3,17 +3,20 @@ import type { SearchResult } from '../../types';
 import { analyzeInput } from '../../services/api/ai';
 import { speakWord, ensureTTS } from '../../services/neuralTts';
 import { logError } from '../../services/logger';
+import { offlineSearchError, searchFailure, type NotebookSearchError } from '../../services/notebook/searchBox';
 
 /**
  * The notebook's inline AI lookup: the result card above the list, its error and its spinner. A newer lookup
- * supersedes an older one, and clearAISearch drops whatever is showing or still on its way.
+ * supersedes an older one, and clearAISearch drops whatever is showing or still on its way. submittedQueryRef holds
+ * the query the card, the lookup or the error belongs to, until clearAISearch drops them.
  */
 export function useNotebookAISearch(isOnline: boolean) {
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<NotebookSearchError | null>(null);
   // Each lookup and each clear takes the next generation, so a lookup that lands after either is discarded.
   const searchGenerationIdRef = useRef(0);
+  const submittedQueryRef = useRef<string | null>(null);
   // Whether the notebook tab is showing. A hidden tab's <Activity> runs this effect's cleanup and runs it again
   // when the tab shows, so a lookup that lands while another tab shows doesn't speak over it.
   const shownRef = useRef(false);
@@ -24,15 +27,23 @@ export function useNotebookAISearch(isOnline: boolean) {
 
   // AI Search function
   const performAISearch = useCallback(async (query: string) => {
-    if (!query.trim() || !isOnline) return;
-
-    setIsSearching(true);
-    setSearchError(null);
-    setSearchResults(null);
+    if (!query.trim()) return;
 
     // A newer search or a clear moves the generation on; this search's result, error and spinner then go unused.
     const currentGenId = ++searchGenerationIdRef.current;
     const isCurrent = () => searchGenerationIdRef.current === currentGenId;
+    submittedQueryRef.current = query;
+    setSearchResults(null);
+
+    // Offline the lookup can't be sent, so it says so instead of doing nothing; Retry comes back with the network.
+    if (!isOnline) {
+      setIsSearching(false);
+      setSearchError(offlineSearchError());
+      return;
+    }
+
+    setIsSearching(true);
+    setSearchError(null);
 
     try {
       const result = await analyzeInput(query.trim());
@@ -55,7 +66,8 @@ export function useNotebookAISearch(isOnline: boolean) {
       }
     } catch (err) {
       logError('AI Search failed:', err);
-      if (isCurrent()) setSearchError((err as Error).message || 'Search failed. Please try again.');
+      // Worded as the search sheet words it, and retryable only when sending it again could work.
+      if (isCurrent()) setSearchError(searchFailure(query.trim(), err));
     } finally {
       if (isCurrent()) setIsSearching(false);
     }
@@ -64,10 +76,11 @@ export function useNotebookAISearch(isOnline: boolean) {
   /** Drops the result card, the error and any lookup still on its way, and stops the spinner. */
   const clearAISearch = useCallback(() => {
     searchGenerationIdRef.current++;
+    submittedQueryRef.current = null;
     setSearchResults(null);
     setSearchError(null);
     setIsSearching(false);
   }, []);
 
-  return { isSearching, searchResults, searchError, setSearchError, performAISearch, clearAISearch };
+  return { isSearching, searchResults, searchError, setSearchError, performAISearch, clearAISearch, submittedQueryRef };
 }

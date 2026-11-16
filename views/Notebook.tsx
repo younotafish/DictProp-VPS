@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo, startTransition } from 'react';
+import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, startTransition } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { getItemTitle, type AppUser, type ItemGroup, type StoredItem, type SyncStatus, type VocabCard } from '../types';
 import { TextAnalyzer } from '../components/TextAnalyzer';
@@ -12,6 +12,8 @@ import {
   type NotebookFilter, type NotebookRow, type NotebookSection, type NotebookSort,
 } from '../services/notebookList';
 import { readNotebookListView, writeNotebookListView } from '../services/notebook/listView';
+import { aiCardStillValid, retryOffered, shouldBlurOnDrag } from '../services/notebook/searchBox';
+import { PLATFORM } from '../services/platform';
 import { isImeKey, isTypingTarget } from '../components/keyboardTarget';
 import { NotebookGroup } from './notebook/NotebookGroup';
 import { SearchResultsCarousel } from './notebook/SearchResultsCarousel';
@@ -86,14 +88,20 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
   const { headerRef, handleScroll, showHeader } = useAutoHidingHeader(onScroll);
 
   // AI Search state
-  const { isSearching, searchResults, searchError, setSearchError, performAISearch, clearAISearch } = useNotebookAISearch(isOnline);
+  const {
+    isSearching, searchResults, searchError, setSearchError, performAISearch, clearAISearch, submittedQueryRef,
+  } = useNotebookAISearch(isOnline);
+  // The search box, which a drag of the list or a lookup from a phone's keyboard blurs to drop the keyboard.
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [searchFocused, setSearchFocused] = useState(false);
 
-  // Every change to the query goes through here. Emptying it, by any path, drops the AI card, its error and a
-  // lookup still on its way, so none of them shows up later under an empty box.
+  // Every change to the query goes through here. Editing it, by any path, drops an AI card, its error and a lookup
+  // still on its way that belong to the query before (case and spacing aside), and emptying it drops them all, so
+  // none of them shows up under a query it doesn't answer.
   const changeQuery = useCallback((query: string) => {
     setLocalSearchQuery(query);
-    if (!query.trim()) clearAISearch();
-  }, [clearAISearch]);
+    if (!query.trim() || !aiCardStillValid(submittedQueryRef.current, query)) clearAISearch();
+  }, [clearAISearch, submittedQueryRef]);
 
   // Text Analyzer modal state
   const [showTextAnalyzer, setShowTextAnalyzer] = useState(false);
@@ -109,7 +117,12 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     changeQuery(text);
     performAISearch(text);
   }, [changeQuery, performAISearch]);
-  const { state: voiceState, toggleRecording } = useVoiceSearch(isOnline, handleTranscript, setSearchError);
+  // A voice failure shows in the lookup's banner, with no Retry: Retry looks up the typed query, not the recording.
+  const reportVoiceError = useCallback(
+    (message: string | null) => setSearchError(message ? { message, retryable: false } : null),
+    [setSearchError],
+  );
+  const { state: voiceState, toggleRecording } = useVoiceSearch(isOnline, handleTranscript, reportVoiceError);
   const isRecording = voiceState === 'recording';
   const isTranscribing = voiceState === 'transcribing';
 
@@ -127,6 +140,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     if (e.key === 'Enter' && localSearchQuery.trim()) {
       e.preventDefault();
       performAISearch(localSearchQuery);
+      // On a phone the keyboard would hide the card the lookup brings, so it goes.
+      if (PLATFORM.isMobile) e.currentTarget.blur();
     }
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -282,6 +297,31 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     if (element) setScrollParent(element);
   }, []);
 
+  // While the search box has the keyboard up, a mostly vertical drag of the list below the header drops it, so the
+  // results can be read; a sideways swipe through a word's senses leaves it up. Mice make no touches.
+  useEffect(() => {
+    if (!searchFocused || !scrollParent) return;
+    let start: { x: number; y: number; inHeader: boolean } | null = null;
+    const onTouchStart = (e: TouchEvent) => {
+      const touch = e.touches[0];
+      start = touch ? { x: touch.clientX, y: touch.clientY, inHeader: !!headerRef.current?.contains(e.target as Node) } : null;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      const touch = e.touches[0];
+      if (!start || !touch) return;
+      if (shouldBlurOnDrag({ dx: touch.clientX - start.x, dy: touch.clientY - start.y }, start.inHeader)) {
+        start = null;
+        searchInputRef.current?.blur();
+      }
+    };
+    scrollParent.addEventListener('touchstart', onTouchStart, { passive: true });
+    scrollParent.addEventListener('touchmove', onTouchMove, { passive: true });
+    return () => {
+      scrollParent.removeEventListener('touchstart', onTouchStart);
+      scrollParent.removeEventListener('touchmove', onTouchMove);
+    };
+  }, [searchFocused, scrollParent, headerRef]);
+
   // An empty notebook keeps its header, with the tools and the account menu, over an invitation in place of the
   // list. The header and the sheets keep their place when the first word arrives, so an open menu or sheet
   // carries on.
@@ -342,6 +382,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
             onToggleRecording={toggleRecording}
             onSearchWithAI={() => performAISearch(localSearchQuery)}
             onClear={() => changeQuery('')}
+            inputRef={searchInputRef}
+            onFocusChange={setSearchFocused}
           />
         )}
         {/* Batch Import Progress Banner, part of the header so it hides and shows with it */}
@@ -353,8 +395,8 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
           {/* AI Search Results */}
           {searchError && (
             <SearchErrorBanner
-              message={searchError}
-              onRetry={localSearchQuery.trim() ? () => performAISearch(localSearchQuery) : undefined}
+              message={searchError.message}
+              onRetry={retryOffered(searchError, isOnline, localSearchQuery) ? () => performAISearch(localSearchQuery) : undefined}
             />
           )}
 
