@@ -1,10 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback, useDeferredValue, useId } from 'react';
+import { createPortal } from 'react-dom';
 import { SearchResult, VocabCard, StoredItem, ComparisonResult } from '../types';
 import { makeVocabStoredItem } from '../services/items';
 import { speakWord, prefetchTTS } from '../services/neuralTts';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { useSentenceSearch } from '../hooks/useSentenceSearch';
 import { useEscapeLayer } from './escapeStack';
+import { useNoticeSlot } from './noticeSlots';
 import { isTypingTarget } from './keyboardTarget';
 import { useModalFocus } from './Modal';
 import { useOverlay } from './overlayStack';
@@ -23,9 +25,13 @@ import { SearchInputBar } from './search/SearchInputBar';
 import { SearchResultsSheet } from './search/SearchResultsSheet';
 import { SearchVocabPane } from './search/SearchVocabPane';
 import { SearchFab } from './search/SearchFab';
+import { SearchStatusPill } from './search/SearchStatusPill';
+import { deriveSearchStatus, nextStatusChangeAt } from './search/searchStatusLine';
 
 /** No saved sentences: one array for every render, so the suggestions' index isn't rebuilt each time. */
 const NO_SENTENCES: StoredItem[] = [];
+
+const earliest = (a: number | null, b: number | null): number | null => (a === null ? b : b === null ? a : Math.min(a, b));
 
 interface Props {
   onSave: (item: StoredItem) => void;
@@ -52,6 +58,8 @@ interface Props {
    * sentence view, above the lesson row. Left out, they keep their old offsets (bottom-24 and bottom-44).
    */
   aboveTabBar?: boolean;
+  /** A decision dialog is open (App's useOverlays().modalOpen), so the status line stays out of its way. */
+  statusHidden?: boolean;
 }
 
 /**
@@ -59,7 +67,7 @@ interface Props {
  * queue of lookups and comparisons lives in search/useSearchQueue; this component holds what's on screen (the
  * mode, the open result and meaning, the query) and the actions on it, and composes the pieces in search/.
  */
-export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence, aboveTabBar }) => {
+export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence, aboveTabBar, statusHidden }) => {
   const [mode, setMode] = useState<SearchMode>('idle');
   const [query, setQuery] = useState('');
   // The open result, by its queue entry's id (its position among the ready results moves as earlier lookups finish),
@@ -77,8 +85,6 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   // failed lookup would just vanish.
   const { message: notice, show: showNotice, clear: clearNotice } = useTimedMessage<string>(6000);
 
-  // Neutral status pill (top-center) — "scanning…/found N expressions" notices that aren't errors.
-  const { message: statusToast, show: showStatus } = useTimedMessage<string>(3500);
   // The save confirmation pill.
   const { message: saveToast, show: showSaveToast } = useTimedMessage<string>(2000);
 
@@ -123,21 +129,26 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const {
     queue, readyItems, unseenCount, runningCount, isBusy, updateQueue, lookUp, refreshInPlace,
   } = useSearchQueue({
-    findSavedByWord, isOnline, onRefreshReplace, onCompareReady, onCompare, openWhenReady: setPendingOpenId, showNotice, showStatus,
+    findSavedByWord, isOnline, onRefreshReplace, onCompareReady, onCompare, openWhenReady: setPendingOpenId, showNotice,
   });
   const readyCount = readyItems.length;
 
-  // The time the error toast is worked out at. It moves on when a failure is due to leave the toast, so that expiry
-  // re-renders without a ticking clock; a failure that arrives later than it still shows, since it can only expire
-  // after it arrived.
+  // The time the status line and the error toast are worked out at. It moves on when one of them is due to change (a
+  // line or a failure running out), so that change re-renders without a ticking clock; something that happens later
+  // than it still shows, since it can only run out after it began.
   const [clock, setClock] = useState(() => Date.now());
+  const status = deriveSearchStatus(queue, clock);
   const failures = summarizeFailures(queue, clock);
-  const nextChange = nextFailureExpiry(queue, clock);
+  const nextChange = earliest(nextStatusChangeAt(queue, clock), nextFailureExpiry(queue, clock));
   useEffect(() => {
     if (nextChange === null) return;
     const timer = setTimeout(() => setClock(Math.max(Date.now(), nextChange)), Math.max(0, nextChange - Date.now()));
     return () => clearTimeout(timer);
   }, [nextChange]);
+  // The status line shows only beside the floating button (not while the box or the sheet is open) and stays out of a
+  // decision dialog's way; its slot is the notice stack's, so it follows the stack's place above the tab bar or a card.
+  const statusSlot = useNoticeSlot('search');
+  const statusShown = mode === 'idle' && !statusHidden && statusSlot !== null && status !== null;
   const errorToast: SearchErrorToast | null = notice !== null ? { msg: notice }
     : failures && { msg: failures.newest.failure.message, more: failures.others, action: failures.action ?? undefined };
 
@@ -409,7 +420,6 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     <>
       <SearchToasts
         saveToast={saveToast}
-        statusToast={statusToast}
         error={errorToast}
         onRetry={retryFailures}
         onEdit={editFailedQuery}
@@ -478,6 +488,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         </SearchResultsSheet>
       )}
 
+      {/* The status line, in the notice stack: only beside the floating button, and never over a decision dialog. */}
+      {statusShown && status && statusSlot && createPortal(<SearchStatusPill status={status} onView={setPendingOpenId} />, statusSlot)}
+
       {/* Floating button — hidden when input or viewing is open */}
       {mode !== 'input' && mode !== 'viewing' && (
         <SearchFab
@@ -486,6 +499,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           runningCount={runningCount}
           isBusy={isBusy}
           aboveTabBar={aboveTabBar}
+          quiet={statusShown && status?.kind === 'ready'}
           onClick={handleFloatingClick}
         />
       )}

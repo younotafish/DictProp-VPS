@@ -15,7 +15,6 @@ const ACTION_LABELS: Record<NonNullable<SearchErrorToast['action']>, string> = {
 
 interface Props {
   saveToast: string | null;
-  statusToast: string | null;
   error: SearchErrorToast | null;
   onRetry: () => void;
   onEdit: () => void;
@@ -35,19 +34,16 @@ const errorBottom = (aboveTabBar: boolean | undefined): string =>
   : aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+4rem)]'
   : 'bottom-[calc(var(--card-float-bottom,6rem)+7.5rem)]';
 
-/** The search's notices: the save confirmation, the neutral status pill and the failure toast. */
-export const SearchToasts: React.FC<Props> = ({ saveToast, statusToast, error, onRetry, onEdit, onDismissError, aboveTabBar }) => (
+/**
+ * The search's own toasts: the save confirmation, at the top so it shows above the sheet, and the failure toast. Its
+ * status line lives in the app's notice stack (SearchStatusPill).
+ */
+export const SearchToasts: React.FC<Props> = ({ saveToast, error, onRetry, onEdit, onDismissError, aboveTabBar }) => (
   <>
     {/* Save toast */}
     {saveToast && (
       <div role="status" aria-live="polite" className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] bg-emerald-500 text-white text-sm font-semibold px-4 py-2 rounded-full shadow-lg fade-in">
         {saveToast}
-      </div>
-    )}
-    {/* Status toast — neutral notices (sentence scanning / found N expressions) */}
-    {statusToast && (
-      <div role="status" aria-live="polite" className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] max-w-[90vw] text-center bg-violet-600 text-white text-sm font-medium px-4 py-2 rounded-full shadow-lg fade-in">
-        {statusToast}
       </div>
     )}
     {/* Error toast — failures surface here instead of vanishing, above the search box's suggestions (z-[56]). Its

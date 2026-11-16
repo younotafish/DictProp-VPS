@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { SearchToasts, type SearchErrorToast } from '../../components/search/SearchToasts.tsx';
 
 const toasts = (error: SearchErrorToast | null) => renderToStaticMarkup(createElement(SearchToasts, {
-  saveToast: null, statusToast: null, error, onRetry: () => {}, onEdit: () => {}, onDismissError: () => {},
+  saveToast: null, error, onRetry: () => {}, onEdit: () => {}, onDismissError: () => {},
 }));
 
 /** The error toast as what it says and the text of each of its buttons (× by its accessible name). */

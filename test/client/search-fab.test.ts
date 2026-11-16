@@ -19,7 +19,7 @@ const fab = (props: Partial<FabProps> = {}) => renderToStaticMarkup(createElemen
   unseenCount: 0, readyCount: 0, runningCount: 0, isBusy: false, onClick: () => {}, ...props,
 }));
 const errorToast = (props: Partial<ToastProps> = {}) => renderToStaticMarkup(createElement(SearchToasts, {
-  saveToast: null, statusToast: null, error: { msg: 'Couldn’t reach DictProp for “gamut”.', action: 'retry' },
+  saveToast: null, error: { msg: 'Couldn’t reach DictProp for “gamut”.', action: 'retry' },
   onRetry: () => {}, onEdit: () => {}, onDismissError: () => {}, ...props,
 }));
 
@@ -74,14 +74,13 @@ test('the error toast sits above the search button: over the tab bar on a tab, o
   }
 });
 
-test('the save and status toasts stay at the top whatever aboveTabBar says', () => {
+test('the save toast stays at the top whatever aboveTabBar says, and the search has no status toast of its own', () => {
   for (const aboveTabBar of [undefined, true, false]) {
     const markup = renderToStaticMarkup(createElement(SearchToasts, {
-      saveToast: 'Sentence saved', statusToast: 'Found 2 expressions — analyzing…', error: null,
-      onRetry: () => {}, onEdit: () => {}, onDismissError: () => {}, aboveTabBar,
+      saveToast: 'Sentence saved', error: null, onRetry: () => {}, onEdit: () => {}, onDismissError: () => {}, aboveTabBar,
     }));
-    assert.equal((markup.match(/fixed top-4 left-1\/2/g) ?? []).length, 2);
-    assert.doesNotMatch(markup, /bottom-/);
+    assert.equal((markup.match(/fixed top-4 left-1\/2/g) ?? []).length, 1);
+    assert.doesNotMatch(markup, /bottom-|bg-violet/);
   }
 });
 
@@ -164,4 +163,14 @@ test('the button never animates beyond its spinner', () => {
     assert.doesNotMatch(markup, /animate-(ping|pulse)/, JSON.stringify(state));
     assert.equal(markup.includes('animate-spin'), !!state.isBusy, JSON.stringify(state));
   }
+});
+
+test('kept quiet while the status line shows a new result, the button signals it no more: no red count, its quiet look', () => {
+  const quiet = fab({ unseenCount: 2, readyCount: 3, quiet: true });
+  assert.equal(labelOf(quiet), 'Search (3 results)');
+  assert.deepEqual(lookOf(quiet), QUIET);
+  assert.deepEqual(badgeOf(quiet), { tone: 'bg-slate-400', count: 3 });
+  const busy = fab({ unseenCount: 2, readyCount: 3, isBusy: true, runningCount: 1, quiet: true });
+  assert.deepEqual([labelOf(busy), badgeOf(busy)], ['Search (in progress)', { tone: 'bg-indigo-500', count: 1 }]);
+  assert.equal(fab({ unseenCount: 2, readyCount: 3, quiet: false }), fab({ unseenCount: 2, readyCount: 3 }));
 });

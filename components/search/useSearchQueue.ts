@@ -56,7 +56,6 @@ interface Options {
   /** A passing notice in the error toast: a request refused offline, or a refresh of an open result that failed.
    *  Failed entries carry their own failure, which the toast shows until it's retried or dismissed. */
   showNotice: (message: string) => void;
-  showStatus: (msg: string) => void;
 }
 
 /**
@@ -67,7 +66,7 @@ interface Options {
  * lookup of each expression it found.
  */
 export function useSearchQueue({
-  findSavedByWord, isOnline, onRefreshReplace, onCompareReady, onCompare, openWhenReady, showNotice, showStatus,
+  findSavedByWord, isOnline, onRefreshReplace, onCompareReady, onCompare, openWhenReady, showNotice,
 }: Options) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const processingIdsRef = useRef<Set<string>>(new Set()); // prevents a re-render from starting an item twice
@@ -123,8 +122,7 @@ export function useSearchQueue({
     }
     if (live) {
       log('🔍 Queue: "' + query + '" is still being looked up');
-      setQueue(queueUpdate({ type: 'repeat-asked', id: live.id, at: Date.now() }));
-      showStatus(`Still looking up “${query}”…`);
+      setQueue(queueUpdate({ type: 'repeat-asked', id: live.id, at: Date.now() })); // the status line says so
       return true;
     }
     const route = routeLookup(request, {
@@ -139,7 +137,7 @@ export function useSearchQueue({
     if (route.kind === 'scan') scan(query);
     else enqueue(query, { forceAI: route.forceAI, analyzeMode: route.analyzeMode, openOnReady: route.forceAI ? 'any' : 'saved-hit' });
     return true;
-  }, [queueRef, isOnlineRef, findSavedByWordRef, openWhenReady, showStatus, showNotice, scan, enqueue]);
+  }, [queueRef, isOnlineRef, findSavedByWordRef, openWhenReady, showNotice, scan, enqueue]);
 
   // Comparisons a reload brings back go through App's handleCompare, which hands over a saved result, and return as a
   // request like a Compare tap's. A request run again never opens by itself, so their keys wait here for it.
@@ -224,15 +222,9 @@ export function useSearchQueue({
       const q = item.query;
       setQueue(queueUpdate({ type: 'start', id: itemId, at: Date.now() }));
       detectVocabulary(q).then(({ words, translation, sourceLang }) => {
+        // The status line reports what the scan found (see searchStatusLine), the English too when it read Chinese.
         const english = sourceLang === 'zh' && translation ? translation : undefined;
         setQueue(queueUpdate({ type: 'scan-done', id: itemId, found: words.length, translation: english, at: Date.now() }));
-        if (words.length === 0) {
-          showStatus('No advanced expressions found in that sentence.');
-          return;
-        }
-        const n = words.length;
-        const noun = n === 1 ? 'expression' : 'expressions';
-        showStatus(english ? `“${english}” — analyzing ${n} ${noun}…` : `Found ${n} ${noun} — analyzing…`);
         for (const w of words) enqueue(w.word, { analyzeMode: 'batch', scanId: itemId, openOnReady: 'never' });
       }).catch(err => {
         warn('🔍 Sentence scan failed "' + q + '":', (err as Error | undefined)?.message);
@@ -290,7 +282,7 @@ export function useSearchQueue({
       // expired as a refresh, so the request it really was is kept over it, to run as itself after signing in.
       showError: () => { if (isAuthenticationError(request.kept.error)) rememberSearchRetry(requestOf(item)); },
     }).finally(done);
-  }, [findSavedByWord, lookupEffects, showStatus, enqueue, onCompareReady, openWhenReady, queueRef]);
+  }, [findSavedByWord, lookupEffects, enqueue, onCompareReady, openWhenReady, queueRef]);
 
   // The results sheet's refresh button: re-run the AI for `word` and swap the fresh result into `item` in place,
   // keeping its current result on screen (with a spinner) meanwhile, rather than clearing the entry, which blanked
