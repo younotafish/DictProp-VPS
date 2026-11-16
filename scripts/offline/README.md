@@ -82,7 +82,7 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
 - `prepare-incremental-item-images.mjs` — Writes image targets, with their prompts, for the live saved sentences, words and phrases that have no image, or whose advanced rewrite has no matching local image yet. It also writes the manifest that the image dispatcher publishes.
   `node scripts/offline/prepare-incremental-item-images.mjs <corpus-export.json> <sentence-analysis.json|-> <vocab-completion.json|-> <output-directory> [model]`
 - `run-streaming-image-quality-loop.sh` — Each round renders the next numbered candidate for the targets that are still open, while `stream-image-quality-pass.mjs` judges the candidates as they appear. Rejected targets get a refined prompt for the next round. An image that fails `IMAGE_QUALITY_DEFER_AFTER` candidates is left for a later cycle, and its candidates are removed.
-  `bash scripts/offline/run-streaming-image-quality-loop.sh <targets.json> <candidates-dir> <images-dir> <work-dir> [width=768] [height=432] [steps=6] [candidate=1] [chunk-size=128] [first-generation-targets]`
+  `bash scripts/offline/run-streaming-image-quality-loop.sh <targets.json> <candidates-dir> <images-dir> <work-dir> [width=768] [height=432] [steps=6] [candidate=1] [chunk-size=128]`
 - `generate-krea-candidates.py` — Renders numbered candidates for each target in the local mflux runtime, with Krea-2-Turbo by default. It skips candidates that are already complete, so a killed batch resumes where it stopped. A target's `seedRound` sets its seeds.
   `~/.cache/dictprop/mflux/bin/python scripts/offline/generate-krea-candidates.py <targets.json> <output-dir> [--candidates N] [--candidate-start N] [--model krea2] [--steps N] [--accepted-directory DIR]`
 - `stream-image-quality-pass.mjs` — One judging pass of the loop. It sends chunks of candidates to `judge-image-candidates.mjs`, and sends the rejected targets to `refine-rejected-image-prompts.mjs`.
@@ -108,6 +108,7 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
 
 Each dispatcher splits its stage's results into waves. Its wave preparer leaves out the entries that earlier waves already published. The dispatcher encrypts each wave with `bridge-crypto.mjs` and hands it to `publish-backfill-release.sh`. The dispatcher's `*_STATE_ROOT` variable names the folder where it keeps the waves. When a wave's publication fails, the dispatcher sets the wave aside and puts its entries into a fresh wave on the next run.
 
+- `wave-dispatch.sh` — Sourced by the six `dispatch-staged-*.sh` scripts: the published waves, opening a fresh wave (setting an abandoned one aside), sealing it for `import:<op>:<tag>`, its release, and handing it to `publish-backfill-release.sh`.
 - `publish-backfill-release.sh` — Uploads one encrypted wave to the release its dispatcher created. It waits for the required deploy, and dispatches that deploy itself if no deploy run exists. It then dispatches `sentence-backfill.yml`'s import, waits for the import to finish, and deletes the release.
   `scripts/offline/publish-backfill-release.sh <release-tag> <encrypted-archive> <asset-name> <operation> <required-deploy-sha> [poll-seconds]`
 - `wait-for-incremental-enrichment.sh` — Waits until no `incremental-enrichment.yml` run is active, because that workflow owns the next production slot. The three sentence dispatchers call it before they create a wave's release.
@@ -151,6 +152,11 @@ The repository is public, so everything that crosses it is encrypted. `sentence-
 These modules are imported by other scripts and never run on their own.
 
 - `offline-io.mjs` — `readJson`, `writePrivateJson` (a temp file renamed into place, mode 0600) and `linkOrCopy`.
+- `atomic-file.mjs` — `writeFileAtomic`, `writeJsonAtomic` and `copyFileAtomic`, which write a private temp file beside the target and rename it over it, and `fileReady`, which treats an empty file as missing.
+- `model-stage.mjs` — What the four model stages share: their settings, lifecycle and worker pool, the cached batch request with its three attempts, the halving of a batch that fails as a whole, and the pruning of cached batches older than two weeks.
+- `vocab-completion.mjs` — The vocabulary-completion stage's own logic: which cards need work, what is sent for each, how an answer is checked and how it is merged into its card. `complete-corpus-fields.mjs` runs it.
+- `sentence-analysis-checks.mjs` — The sentence-analysis stage's own logic: the records it sends and the checks a fresh analysis must pass, which are stricter than the import contract. `enrich-sentences.mjs` runs it.
+- `image-review.mjs` — The image judge's and the prompt refiner's own logic: the records each sends and how each reads the model's answer. `judge-image-candidates.mjs` and `refine-rejected-image-prompts.mjs` run it.
 - `wave-manifests.mjs` — The wave preparers' common parts: parsing the entry cap, reading earlier waves' published manifests, writing a wave's manifest, and printing its summary. Its header documents each wave's manifest.
 - `sentence-pool.mjs` — Sentence identity: lookup normalization, the hashes, example ids, image filenames, and the shape of a pool record. It copies the server's normalization in `server/src/sentence-enrichment.ts`, and `server/test/sentence-pool.test.ts` keeps the two in step.
 - `image-model.mjs` — The label of the default local image model.
@@ -201,10 +207,3 @@ Real Life (`content/real-life-catalog.json`):
   `<venv>/bin/python scripts/offline/generate-qwen-naturalness-benchmark.py [--sentence-limit N] [--recipe ID] [--force]`
 - `generate-mimo-naturalness-benchmark.mjs` — Renders the same sentences with the MiMo baseline, through curl, using `DEEPINFRA_API_KEY`.
   `node scripts/offline/generate-mimo-naturalness-benchmark.mjs [--output DIR] [--sentence-limit N]`
-
-## Retired
-
-These scripts are kept only until they are deleted. Don't run them: they call scripts that are already gone.
-
-- `run-example-sentence-pool-pipeline.sh` — The July 2026 bulk pipeline that built the baseline example-sentence pool.
-- `publish-ready-corpus-corrections.sh` — Published that pipeline's corpus corrections. Only that pipeline could feed it.
