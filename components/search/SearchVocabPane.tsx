@@ -123,11 +123,10 @@ export const SearchVocabPane: React.FC<Props> = ({
             onSearch={onSearch}
             onRefresh={onRefresh}
             onCompare={onCompare}
-            scrollable={false}
             onLazyLoadImage={onLazyLoadImage}
             onSaveSentence={onSaveSentence}
             isSentenceSaved={isSentenceSaved}
-            className="!h-auto !overflow-visible border-indigo-200 shadow-sm bg-white"
+            className="shadow-sm"
           />
         </div>
 

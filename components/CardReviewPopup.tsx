@@ -370,14 +370,13 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
               key={current?.sense ?? 'card'}
               data={vocab}
               showSave={false}
-              scrollable={false}
               onSearch={onSearch}
               onRefresh={onRefresh}
               onCompare={onCompare}
               onSaveSentence={onSaveSentence}
               isSentenceSaved={isSentenceSaved}
               onLazyLoadImage={onLazyLoadImage}
-              className="!h-auto !overflow-visible border-indigo-100 shadow-sm bg-white"
+              className="shadow-sm"
             />
           </div>
           {/* PHONE side-edge read-zone guide (top quarter = example 1, second = example 2). Visual only;

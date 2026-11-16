@@ -32,9 +32,8 @@ interface Props {
   className?: string;
   showSave?: boolean;
   onSearch?: (term: string) => void;
-  /** @deprecated Ignored: nothing renders from it. Still passed by DetailView until it drops the prop. */
-  onExpand?: () => void;
-  /** @deprecated Ignored: the card never scrolls or clips itself. Still passed by every caller until they drop it. */
+  /** @deprecated Ignored: the card never scrolls or clips itself. Still passed by PhraseBody, WordDetailView and
+   *  SearchResultsCarousel until they drop it. */
   scrollable?: boolean;
   showRefresh?: boolean;
   /** Real refresh: re-run the AI for this word (bypassing the saved-card reuse). Falls back to onSearch. */
