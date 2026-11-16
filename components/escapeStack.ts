@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useLatest } from '../hooks/useStableValue';
+import { isImeKey } from './keyboardTarget';
 
 /**
  * Escape closes only the topmost open layer — a dialog over the review popup over the search sheet — instead
@@ -19,8 +20,9 @@ const topLayer = (): Layer | undefined => {
 };
 
 const onKeyDown = (e: KeyboardEvent) => {
-  // Mid-composition, Escape belongs to the input method (it cancels the candidate), not to a layer.
-  if (e.key !== 'Escape' || e.isComposing) return;
+  // Mid-composition, Escape belongs to the input method (it cancels the candidate), not to a layer. Safari reports
+  // the Escape that ends a composition with isComposing false and keyCode 229, which isImeKey also catches.
+  if (e.key !== 'Escape' || isImeKey(e)) return;
   const top = topLayer();
   if (!top) return;
   e.preventDefault();
