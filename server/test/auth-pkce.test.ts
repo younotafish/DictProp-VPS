@@ -37,9 +37,9 @@ async function login(app: Hono) {
   return { google, cookieHeader: cookies.join('; '), stateCookie: stateCookie.slice('oauth_state='.length) };
 }
 
-const callback = (app: Hono, state: string, cookieHeader: string) =>
+const callback = (app: Hono, state: string, cookieHeader: string, headers: Record<string, string> = {}) =>
   app.request(`http://localhost:3000/api/auth/callback?code=google-code&state=${state}`, {
-    headers: { Host: 'localhost:3000', Cookie: cookieHeader },
+    headers: { Host: 'localhost:3000', Cookie: cookieHeader, ...headers },
   });
 
 async function until(condition: () => boolean): Promise<void> {
@@ -100,6 +100,13 @@ test('at most four token exchanges run at once; a fifth is told to retry and kee
   assert.equal(busy.status, 503);
   assert.equal(busy.headers.get('retry-after'), '5');
   assert.deepEqual(busy.headers.getSetCookie(), []);
+  assert.deepEqual(await busy.json(), { error: 'Sign-in is busy. Try again shortly.' });
+  // A browser's page says to reload, which redeems the code once a slot is free.
+  const busyPage = await callback(app, state, cookieHeader, { Accept: 'text/html,*/*;q=0.8' });
+  assert.equal(busyPage.status, 503);
+  assert.equal(busyPage.headers.get('retry-after'), '5');
+  assert.deepEqual(busyPage.headers.getSetCookie(), []);
+  assert.ok((await busyPage.text()).includes('<p>Sign-in is busy. Reload this page in a few seconds to finish signing in.</p>'));
   assert.equal(exchanges.length, 4);
 
   for (const exchange of exchanges) exchange.release(Response.json({ id_token: 'signed-by-google' }));

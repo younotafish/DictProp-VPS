@@ -15,14 +15,13 @@ import {
 } from '../db.js';
 import { ownerLoginDecision } from '../owner-access.js';
 import { sanitizeAuthReturnTo } from '../auth-return.js';
+import { signInFailure, SIGN_IN_FAILURES } from '../sign-in-failure.js';
 
 // A few concurrent sign-ins is all one owner needs; more than that is a flood holding Google round trips open.
 const MAX_TOKEN_EXCHANGES = 4;
 // The state cookie is "<state>.<PKCE verifier>": the state's UUID and 32 random bytes in base64url.
 const OAUTH_STATE_COOKIE = /^([0-9a-f-]{36})\.([A-Za-z0-9_-]{43})$/;
 const TOKEN_EXCHANGE_TIMEOUT_MS = 30_000;
-// Google's side of sign-in failed: its token endpoint or its signing keys, not anything the visitor sent.
-const GOOGLE_UNAVAILABLE = 'Google sign-in is unavailable';
 
 export interface AuthRouteDependencies {
   fetch?: FetchLike;
@@ -98,12 +97,12 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
     // start, even an intercepted one.
     if (!code || !state || !saved || saved[1] !== state) {
       clearSignInCookies();
-      return c.json({ error: 'Invalid OAuth state' }, 400);
+      return signInFailure(c, SIGN_IN_FAILURES.invalidState);
     }
     // The code is still unspent, so a busy reply keeps the cookies: reloading the callback finishes the sign-in.
     if (tokenExchanges >= MAX_TOKEN_EXCHANGES) {
       c.header('Retry-After', '5');
-      return c.json({ error: 'Sign-in is busy. Try again shortly.' }, 503);
+      return signInFailure(c, SIGN_IN_FAILURES.busy);
     }
     clearSignInCookies();
 
@@ -132,18 +131,18 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
         });
         if (!tokenRes.ok) {
           console.error(`Google token exchange refused (${tokenRes.status}):`, await tokenRes.text());
-          return c.json({ error: GOOGLE_UNAVAILABLE }, 502);
+          return signInFailure(c, SIGN_IN_FAILURES.googleUnavailable);
         }
         idToken = (await tokenRes.json() as { id_token?: string }).id_token;
       } catch (error) {
         console.error('Google token exchange did not complete:', error instanceof Error ? error.message : error);
-        return c.json({ error: GOOGLE_UNAVAILABLE }, 502);
+        return signInFailure(c, SIGN_IN_FAILURES.googleUnavailable);
       } finally {
         clearTimeout(tokenTimeout);
       }
       if (!idToken) {
         console.error('Google token exchange returned no id_token');
-        return c.json({ error: GOOGLE_UNAVAILABLE }, 502);
+        return signInFailure(c, SIGN_IN_FAILURES.googleUnavailable);
       }
 
       try {
@@ -151,10 +150,10 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
       } catch (error) {
         if (error instanceof GoogleKeysUnavailableError) {
           console.error('Google id_token not checked:', error.message);
-          return c.json({ error: GOOGLE_UNAVAILABLE }, 502);
+          return signInFailure(c, SIGN_IN_FAILURES.googleUnavailable);
         }
         console.warn('Google id_token verification failed:', error instanceof Error ? error.message : error);
-        return c.json({ error: 'Invalid id_token claims' }, 400);
+        return signInFailure(c, SIGN_IN_FAILURES.invalidToken);
       }
     } finally {
       tokenExchanges--;
@@ -164,9 +163,7 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
     // unknown Google identities are rejected before they can create a user or session.
     let userRow = findUserByGoogleId(payload.sub);
     const access = ownerLoginDecision(userRow, payload.email, getUserCount(), env.OWNER_GOOGLE_EMAIL);
-    if (access === 'deny') {
-      return c.json({ error: 'This DictProp instance is private.' }, 403);
-    }
+    if (access === 'deny') return signInFailure(c, SIGN_IN_FAILURES.notOwner);
     if (access === 'bootstrap') {
       userRow = createUserAndClaimItems({
         googleId: payload.sub,
@@ -175,7 +172,7 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
         photoUrl: payload.picture || null,
       });
     }
-    if (!userRow) return c.json({ error: 'This DictProp instance is private.' }, 403);
+    if (!userRow) return signInFailure(c, SIGN_IN_FAILURES.notOwner);
 
     setSessionCookie(c, createSession(userRow.id).token);
     return c.redirect(returnTo);
