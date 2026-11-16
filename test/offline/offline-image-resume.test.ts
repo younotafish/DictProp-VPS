@@ -263,8 +263,9 @@ test('example enrichment publication excludes published and production-covered i
     text: `Sentence ${id}`,
     lookupHash: `lookup-${id}`,
     textHash: `text-${id}`,
+    // Production already has the last one's image.
+    ...(id === 'c' ? { hasImage: true } : {}),
   }));
-  (sentences[2] as any).hasImage = true;
   const source = join(root, 'source.json');
   const analysis = join(root, 'analysis.json');
   const analysisOnly = join(root, 'analysis-only.json');
