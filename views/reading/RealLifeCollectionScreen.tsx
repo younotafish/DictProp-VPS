@@ -14,7 +14,6 @@ import { Virtuoso } from 'react-virtuoso';
 import type { ReviewRating, StoredItem } from '../../types';
 import { HighlightedSentence } from '../../components/HighlightedSentence';
 import { activateOnEnterOrSpace } from '../../components/activateOnKey';
-import { useEscapeLayer } from '../../components/escapeStack';
 import { SentenceSpeakerButton } from '../../components/SentenceSpeakerButton';
 import type { SpeakHandle } from '../../services/neuralTts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
@@ -30,6 +29,7 @@ import { useLatest } from '../../hooks/useStableValue';
 import { collectionStyle } from './realLifeStyle';
 import { filterRealLifeSentences } from './realLifeFilter';
 import { createSpeechSlot } from './speechSlot';
+import { useReadingEscape } from './useReadingEscape';
 
 const sentenceKey = (_index: number, sentence: RealLifeSentence) => sentence.id;
 const listComponents = { Footer: () => <div className="h-[calc(6rem+env(safe-area-inset-bottom))]" /> };
@@ -175,9 +175,10 @@ export function RealLifeCollectionScreen({
   const deferredQuery = useDeferredValue(query);
 
   // Esc clears the search, then goes back to the collections, unless a layer above (a lesson, the word popup, a dialog,
-  // the search sheet) takes it. In the search box too: the escape stack leaves an Esc that ends a composition in the
-  // input method (which Safari reports as keyCode 229) to the input method.
-  useEscapeLayer(() => (query ? setQuery('') : onClose()), 0);
+  // the search sheet) takes it, or a lesson or popup still loading, or crashed, covers the page. In the search box too:
+  // the escape stack leaves an Esc that ends a composition in the input method (which Safari reports as keyCode 229) to
+  // the input method.
+  useReadingEscape(() => (query ? setQuery('') : onClose()));
 
   const progress = useMemo(
     () => summarizeCatalogProgress(collection.sentences, progressIndex, now),

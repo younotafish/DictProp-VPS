@@ -1,7 +1,6 @@
 import React, { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Clock3, ExternalLink, Play } from 'lucide-react';
 import type { SentenceData, StoredItem } from '../../types';
-import { useEscapeLayer } from '../../components/escapeStack';
 import type { Essay, EssayBodyParagraph, EssaySentence } from '../../services/essayCatalog';
 import { buildEssayStudyItems } from '../../services/essayProgress';
 import { beginLesson, subscribeLessonEnd } from '../../services/lessonTrail';
@@ -19,6 +18,7 @@ import {
 } from '../../services/readingPosition';
 import { useLatest } from '../../hooks/useStableValue';
 import { essayStyle } from './essayStyle';
+import { useReadingEscape } from './useReadingEscape';
 
 // A paragraph's review states as one letter per sentence, so it re-renders only when one of its own changes.
 const STATE_LETTER: Record<SentenceReviewState, string> = { unreviewed: 'u', due: 'd', memorized: 'm' };
@@ -231,8 +231,9 @@ export function EssayReader({
     return () => window.clearTimeout(timer);
   }, [returnedTo]);
 
-  // Esc goes back to the essays, unless a layer above (a lesson, a dialog, the search sheet) takes it first.
-  useEscapeLayer(back, 0);
+  // Esc goes back to the essays, unless a layer above (a lesson, a dialog, the search sheet) takes it first, or a lesson
+  // or popup still loading, or crashed, covers the page.
+  useReadingEscape(back);
 
   const style = essayStyle[essay.accent];
 
