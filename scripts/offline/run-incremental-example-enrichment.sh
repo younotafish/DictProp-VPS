@@ -3,6 +3,7 @@
 # from the repository root every six hours. It exports the production corpus, then goes stage by stage:
 # vocabulary completion, saved-sentence analyses, saved-item images, then example-sentence analyses and
 # images. Each stage publishes what it made, and a later stage builds on it only once production has it.
+# Last comes the weekly off-site database backup, when one is due.
 #
 # Usage: run-incremental-example-enrichment.sh [cycle-root] [baseline-source.json] [baseline-image-root]
 #          [required-deploy-sha]
@@ -135,12 +136,18 @@ stage_failed() {
   log "$1 did not complete this cycle"
 }
 
-# What the cycle's last log line says; the example stage, which runs last, sets it.
+# What the cycle's closing message says; the example stage, which runs last, sets it.
 CYCLE_MESSAGE=""
 # How many sentences the running sentence stage works on: those of its source not waiting out a failure backoff.
 SENTENCE_COUNT=0
 finish_cycle() {
   log "$1"
+  # Once every publisher has finished, the off-site database backup, when one is due (offsite-backup.sh). It needs
+  # production to run this cycle's commit, whose server has the backup script, and a failed attempt fails the cycle.
+  if ! GH_BIN="$GH_BIN" NODE_BIN="$NODE_BIN" SENTENCE_BRIDGE_KEY_FILE="$KEY_FILE" GITHUB_REPOSITORY="$REPO" \
+    bash scripts/offline/offsite-backup.sh "$REQUIRED_DEPLOY_SHA"; then
+    stage_failed "off-site backup"
+  fi
   "$NODE_BIN" scripts/offline/failure-ledger.mjs summary "$FAILURE_LEDGER" || true
   if [ -n "$FAILED_STAGES" ]; then
     log "stages that did not complete this cycle: $FAILED_STAGES"

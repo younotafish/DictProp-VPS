@@ -12,7 +12,7 @@ Production keeps everything in one SQLite file, `/opt/dictprop-vps/data/dictprop
 
    It's encrypted by `scripts/offline/bridge-crypto.mjs` for `db-backup:<run id>` only. Not in it: `.env` (its secrets come from their providers' consoles), the speech cache in `data/tts` (the TTS Backfill workflow makes it again), the static sites' files (their workflows put them back) and logs.
 
-`scripts/offline/offsite-backup.sh` makes the off-site copies. Once the newest is 162 hours old, it dispatches the Off-site Database Backup workflow (`.github/workflows/offsite-backup.yml`), which streams the slot's copy, under 12 hours old or fresh, into its run's encrypted artifact; then it downloads the artifact, checks every byte of it without writing plaintext, keeps it, and deletes the artifact and the run's log. It never dispatches while production is busy or doesn't yet run the commit whose server script the workflow calls, and after a failed attempt it waits a day.
+`scripts/offline/offsite-backup.sh` makes the off-site copies; the enrichment cycle runs it last, every six hours. Once the newest is 162 hours old, it dispatches the Off-site Database Backup workflow (`.github/workflows/offsite-backup.yml`), which streams the slot's copy, under 12 hours old or fresh, into its run's encrypted artifact; then it downloads the artifact, checks every byte of it without writing plaintext, keeps it, and deletes the artifact and the run's log. It never dispatches while production is busy or doesn't yet run the commit whose server script the workflow calls, and after a failed attempt it waits a day.
 
 ## What a restore loses
 
@@ -24,7 +24,7 @@ Every off-site copy is useless without the bridge key, `~/.config/dictprop/sente
 
 ## The first backup
 
-The script makes no backup on its own while `data/offsite-backups/` holds none, so the first one runs by hand and its outcome is watched:
+The cycle makes no backup while `data/offsite-backups/` holds none, so the first one runs by hand and its outcome is watched; after it, the cycle makes one every 162 hours:
 
 1. Check that no cycle is running and hold the cycle lock (CLAUDE.md, Offline Data Bridge).
 2. From the repository root, once the deploy of the commit that added the backup has succeeded:

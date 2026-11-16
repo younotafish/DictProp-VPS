@@ -142,6 +142,7 @@ switch (name) {
   case 'build-example-sentence-pool.mjs': write(args[1], { sentences: [] }); break;
   case 'prepare-incremental-example-source.mjs': write(args[2], { sentences: [] }); break;
   case 'merge-sentence-analysis-manifests.mjs': write(args[0], { entries: [] }); break;
+  case 'offsite-backup.sh': finish(scenario.backupStatus ?? 0);
   default:
     if (name.startsWith('dispatch-staged-')) finish(scenario.dispatch?.[name] ?? 0);
 }
@@ -156,7 +157,7 @@ const NODE_STUBS = [
 const SHELL_STUBS = [
   'sweep-bridge-leftovers.sh', 'fetch-workflow-export.sh', 'run-streaming-image-quality-loop.sh',
   'dispatch-staged-corpus-audit.sh', 'dispatch-staged-saved-sentence-analyses.sh', 'dispatch-staged-offline-images.sh',
-  'dispatch-staged-example-analyses.sh', 'dispatch-staged-example-enrichments.sh',
+  'dispatch-staged-example-analyses.sh', 'dispatch-staged-example-enrichments.sh', 'offsite-backup.sh',
 ];
 // The guard's dependency check finds no lockfile in this checkout, so it passes.
 const RUNNER_FILES = ['run-incremental-example-enrichment.sh', 'deadline.sh', 'vetted-checkout.sh', 'check-installed-dependencies.mjs'];
@@ -183,6 +184,7 @@ interface Scenario {
   exampleImageLoopStatus?: number;
   model?: number[];
   dispatch?: Record<string, number>;
+  backupStatus?: number;
   busy?: 'image' | 'text';
   // Files an earlier cycle left in the cycle root, with their contents.
   seed?: Record<string, string>;
@@ -335,6 +337,7 @@ const SCENARIOS: Record<string, Scenario> = {
   'bad-setting': { env: { INCREMENTAL_VOCAB_LOOKBACK_HOURS: 'week' } },
   'export-retried': { exportConclusions: ['failure', 'success'] },
   'export-failed': { exportConclusions: ['cancelled', 'timed_out'] },
+  'backup-failed': { backupStatus: 1 },
   'no-base-images': { baseImageRoot: 'missing-images' },
   previous: {
     seed: {
@@ -408,6 +411,8 @@ const pool = (overlay: string) => `build-example-sentence-pool.mjs ${C}/current-
 const exampleSource = (previous = '-') =>
   `prepare-incremental-example-source.mjs ${C}/current-source.json <root>/base/source.json ${C}/source.json.tmp ${previous}`;
 const exampleFilter = `failure-ledger.mjs filter-sentences ${LEDGER} example-sentence ${C}/unfiltered-source.json ${C}/source.json`;
+// How every cycle that gets through its export ends: the off-site backup, given the vetted commit, then the summary.
+const backup = 'offsite-backup.sh <head>';
 const summary = `failure-ledger.mjs summary ${LEDGER}`;
 
 test('a cycle with nothing new exports the corpus, checks every stage and publishes nothing', async () => {
@@ -423,6 +428,7 @@ test('a cycle with nothing new exports the corpus, checks every stage and publis
     pool('-'),
     exampleSource(),
     exampleFilter,
+    backup,
     summary,
   ]);
   assert.deepEqual(result.log, [
@@ -473,6 +479,7 @@ test('a full cycle completes, reconciles and publishes every stage in order', as
     `failure-ledger.mjs record-image-outcomes ${LEDGER} example-image ${C}/final-images/cycle-targets.json ${C}/final-images/images 0`,
     `verify-example-sentence-pool.mjs ${C}/source.json ${C}/final-reconciliation/final-analysis.json ${C}/final-images  [ALLOW_DEFERRED_IMAGES=1]`,
     `dispatch-staged-example-enrichments.sh ${C} 100 <head>  [ALLOW_DEFERRED_IMAGES=1 EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT=${STATE}/example-enrichments/101 EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS=30]`,
+    backup,
     summary,
   ]);
   assert.deepEqual(result.log, [
@@ -528,6 +535,7 @@ test('stages that fail let the rest of the cycle run, and the cycle exits 1 nami
     `failure-ledger.mjs filter-image-targets ${LEDGER} example-image ${C}/final-images/targets.json ${C}/final-images/cycle-targets.json`,
     `verify-example-sentence-pool.mjs ${C}/source.json ${C}/final-reconciliation/final-analysis.json ${C}/final-images  [ALLOW_DEFERRED_IMAGES=1]`,
     `dispatch-staged-example-enrichments.sh ${C} 100 <head>  [ALLOW_DEFERRED_IMAGES=1 EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT=${STATE}/example-enrichments/101 EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS=30]`,
+    backup,
     summary,
   ]);
   assert.deepEqual(result.log, [
@@ -563,7 +571,7 @@ test('the example stage ends the cycle when every sentence is backing off or rec
     `enrich-sentences.mjs ${C}/final-reconciliation/missing-source.json ${C}/new-analysis.json ${C}/analysis-work ${C}/analysis-cache.json  [CODEX_CONCURRENCY=16 SENTENCE_ANALYSIS_BATCH_SIZE=${count} ENRICHMENT_FAILURE_LEDGER=${LEDGER} ENRICHMENT_FAILURE_STAGE=example-sentence]`;
 
   assert.equal(backoff.status, 1, backoff.stderr.join('\n'));
-  assert.deepEqual(backoff.trace, [...prefix, ...exampleStart, enrich(1), 'check-structured-model.mjs', exampleFilter, summary]);
+  assert.deepEqual(backoff.trace, [...prefix, ...exampleStart, enrich(1), 'check-structured-model.mjs', exampleFilter, backup, summary]);
   assert.deepEqual(backoff.log.slice(-4), [
     'generating detailed Claude claude-opus-5-5 explanations for 2 production gap(s)',
     'example-sentence analysis did not complete this cycle',
@@ -575,6 +583,7 @@ test('the example stage ends the cycle when every sentence is backing off or rec
   assert.deepEqual(incomplete.trace, [
     ...prefix, ...exampleStart, enrich(1), exampleFilter,
     `reconcile-sentence-analyses.mjs ${C}/source.json ${C}/combined-analysis-cache.json ${C}/final-reconciliation ${C}/new-analysis.json  [ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1]`,
+    backup,
     summary,
   ]);
   assert.deepEqual(incomplete.log.slice(-4), [
@@ -601,6 +610,7 @@ test('a cycle builds its sources on what the previous cycle left, and sets an ou
     pool('-'),
     exampleSource(`${C}/unfiltered-source.json`),
     exampleFilter,
+    backup,
     summary,
   ]);
   // The output log outgrew the limit and replaced the older copy; the error log did not.
@@ -635,6 +645,7 @@ test('a corpus export that ends without success is requested once more, and the 
     pool('-'),
     exampleSource(),
     exampleFilter,
+    backup,
     summary,
   ]);
   assert.deepEqual(result.log.slice(0, 6), [
@@ -660,6 +671,18 @@ test('a second corpus export that ends without success ends the cycle', async ()
   assert.equal(result.lock, false);
 });
 
+test('the off-site backup runs last, with the vetted commit, and a failed attempt fails the cycle', async () => {
+  const result = await cycle('backup-failed');
+  assert.equal(result.status, 1, result.stderr.join('\n'));
+  assert.deepEqual(result.trace.slice(-3), [exampleFilter, backup, summary]);
+  assert.deepEqual(result.log.slice(-3), [
+    'no post-baseline example sentences need enrichment',
+    'off-site backup did not complete this cycle',
+    'stages that did not complete this cycle: off-site backup',
+  ]);
+  assert.equal(result.lock, false);
+});
+
 test('a baseline image root without its images folder stops the cycle before it exports anything', async () => {
   const result = await cycle('no-base-images');
   assert.equal(result.status, 1);
@@ -676,6 +699,7 @@ test('a model that stops answering after a failed stage ends the cycle there', a
     vocabSource,
     `complete-corpus-fields.mjs ${C}/vocabulary/source.json ${C}/vocabulary/completed.json ${C}/vocabulary/work  [CODEX_CONCURRENCY=16 VOCAB_COMPLETION_BATCH_SIZE=8 ENRICHMENT_FAILURE_LEDGER=${LEDGER} ENRICHMENT_FAILURE_STAGE=vocab]`,
     'check-structured-model.mjs',
+    backup,
     summary,
   ]);
   assert.deepEqual(result.log.slice(-3), [
@@ -716,6 +740,7 @@ test('another local job defers the cycle, and a busy image pipeline leaves new i
     `failure-ledger.mjs filter-image-targets ${LEDGER} example-image ${C}/final-images/targets.json ${C}/final-images/cycle-targets.json`,
     `verify-example-sentence-pool.mjs ${C}/source.json ${C}/final-reconciliation/final-analysis.json ${C}/final-images  [ALLOW_DEFERRED_IMAGES=1]`,
     `dispatch-staged-example-enrichments.sh ${C} 100 <head>  [ALLOW_DEFERRED_IMAGES=1 EXAMPLE_ENRICHMENT_WAVE_STATE_ROOT=${STATE}/example-enrichments/101 EXAMPLE_ENRICHMENT_WAVE_COOLDOWN_SECONDS=30]`,
+    backup,
     summary,
   ]);
   assert.deepEqual(image.log.slice(-6), [

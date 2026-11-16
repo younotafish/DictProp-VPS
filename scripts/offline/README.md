@@ -58,7 +58,9 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
    - The ledger filter, the image loop and the outcome record run as in stage 5.
    - `verify-example-sentence-pool.mjs` checks the analyses together with the images.
    - `dispatch-staged-example-enrichments.sh` publishes each sentence's analysis and image together.
-8. **Summary.**
+8. **Off-site backup.**
+   - `offsite-backup.sh` dispatches `offsite-backup.yml` once the newest copy in `data/offsite-backups/` is 162 hours old, and keeps the encrypted database copy that run leaves.
+9. **Summary.**
    - `failure-ledger.mjs summary` logs the items that are waiting out a backoff.
 
 - `run-incremental-example-enrichment.sh` — Runs the whole cycle, in the stage order above, and holds `.cycle.lock` while it runs. Every model stage uses `ENRICHMENT_MODEL_PROVIDER` (`claude` or `codex`).
@@ -117,7 +119,7 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
   `node scripts/offline/prepare-sentence-images.mjs <sentence-export.json> <analysis-manifest.json> <output-directory> [model] [fallback-image-directory]...`
 - `bootstrap-mflux-runtime.sh` — Installs the pinned mflux runtime that the image loop renders with. Run it once.
   `scripts/offline/bootstrap-mflux-runtime.sh [runtime-root]`
-- `offsite-backup.sh` — Keeps encrypted copies of production's database on this Mac, in `data/offsite-backups/`; nothing calls it yet. Once the newest copy is 162 hours old (`OFFSITE_BACKUP_INTERVAL_HOURS`), and only while production runs the required commit and `deploy-state.sh` finds nothing queued or running in `dictprop-production`, it dispatches `offsite-backup.yml`, downloads the artifact, checks it with `bridge-crypto.mjs verify`, which writes no plaintext, keeps it beside a `.json` sidecar, prunes to the newest three (`OFFSITE_BACKUP_KEEP`), and deletes the artifact and the run's log. A failed attempt leaves `.last-attempt`, and the next one waits a day. While the folder holds no copy, only a run by hand makes one: `OFFSITE_BACKUP_INTERVAL_HOURS=0` forces an attempt. Hold the cycle lock to run it. `ops/RESTORE.md` restores from a copy.
+- `offsite-backup.sh` — Keeps encrypted copies of production's database on this Mac, in `data/offsite-backups/`. The runner calls it after the last stage, and a failed attempt fails the cycle. Once the newest copy is 162 hours old (`OFFSITE_BACKUP_INTERVAL_HOURS`), and only while production runs the required commit and `deploy-state.sh` finds nothing queued or running in `dictprop-production`, it dispatches `offsite-backup.yml`, downloads the artifact, checks it with `bridge-crypto.mjs verify`, which writes no plaintext, keeps it beside a `.json` sidecar, prunes to the newest three (`OFFSITE_BACKUP_KEEP`), and deletes the artifact and the run's log. A failed attempt leaves `.last-attempt`, and the next one waits a day. While the folder holds no copy, only a run by hand makes one: `OFFSITE_BACKUP_INTERVAL_HOURS=0` forces an attempt. Hold the cycle lock to run it. `ops/RESTORE.md` restores from a copy.
   `OFFSITE_BACKUP_INTERVAL_HOURS=0 GH_BIN=.tools/gh scripts/offline/offsite-backup.sh <required-deploy-sha> [root=data/offsite-backups]`
 
 ## Publishing
@@ -151,7 +153,7 @@ Each dispatcher splits its stage's results into waves. Its wave preparer leaves 
 
 ## The bridge
 
-The repository is public, so everything that crosses it is encrypted. `sentence-backfill.yml` runs these scripts on a GitHub runner, because the Mac can't reach the VPS.
+The repository is public, so everything that crosses it is encrypted. `sentence-backfill.yml` and `offsite-backup.yml` run these scripts on a GitHub runner, because the Mac can't reach the VPS.
 
 - `bridge-crypto.mjs` — Encrypts and decrypts bridge bundles with AES-256-GCM, under a key derived from `SENTENCE_BRIDGE_KEY`. Each bundle is bound to the operation it was made for. Both the workflow and the Mac's dispatchers and fetcher use it. `verify` checks a blob that stays encrypted, such as an off-site backup: it authenticates every byte, decompresses with `--gunzip` only after that, writes nothing, and prints `{"verified":true,"bytes":N}` with the plaintext's size.
   `node scripts/offline/bridge-crypto.mjs <encrypt|decrypt> --purpose <label> --out <file> [--in <file>] [--key-file <file>] [--gunzip]`
