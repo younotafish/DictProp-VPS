@@ -28,12 +28,10 @@ export interface UsageAudit {
   originalText?: string;
 }
 
-const STATUS_SET = new Set<string>(USAGE_STATUSES);
-
 export function isUsageAudit(value: unknown): value is UsageAudit {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const audit = value as Record<string, unknown>;
-  return typeof audit.status === 'string' && STATUS_SET.has(audit.status) &&
+  return typeof audit.status === 'string' && (USAGE_STATUSES as readonly string[]).includes(audit.status) &&
     typeof audit.reason === 'string' && audit.reason.trim().length > 0 && audit.reason.length <= 1_000 &&
     (audit.confidence === 'high' || audit.confidence === 'medium' || audit.confidence === 'low') &&
     typeof audit.auditedAt === 'number' && Number.isFinite(audit.auditedAt) && audit.auditedAt > 0 &&

@@ -1,13 +1,7 @@
+import { USAGE_PRIORITY } from '../server/src/shared/usage-audit';
 import type { StoredItem, UsageStatus, VocabCard } from '../types';
 
-const USAGE_PRIORITY: Record<UsageStatus, number> = {
-  modern_american: 0,
-  current_general: 1,
-  narrow_specialized: 2,
-  british_only: 3,
-  rare_or_dated: 4,
-};
-
+// A sense the audit hasn't reached yet ranks as current general usage.
 export const getUsagePriority = (status?: UsageStatus): number =>
   status ? USAGE_PRIORITY[status] : 1;
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { sortStoredSensesByUsage, sortVocabCardsByUsage } from '../../services/usageAudit.ts';
+import { USAGE_PRIORITY, USAGE_STATUSES } from '../../server/src/shared/usage-audit.ts';
+import { getUsagePriority, sortStoredSensesByUsage, sortVocabCardsByUsage } from '../../services/usageAudit.ts';
 import type { StoredItem, UsageStatus, VocabCard } from '../../types.ts';
 
 const card = (word: string, status?: UsageStatus): VocabCard => ({
@@ -48,4 +49,17 @@ test('live and saved senses put useful modern usage before specialized, British,
   const expected = ['modern_american', 'current_general', 'narrow_specialized', 'british_only', 'rare_or_dated'];
   assert.deepEqual(sortVocabCardsByUsage(cards).map(value => value.usageAudit?.status), expected);
   assert.deepEqual(sortStoredSensesByUsage(cards.map(stored)).map(value => (value.data as VocabCard).usageAudit?.status), expected);
+});
+
+test('senses rank by the shared usage priority, and a sense the audit has not reached ranks with current general usage', () => {
+  for (const status of USAGE_STATUSES) assert.equal(getUsagePriority(status), USAGE_PRIORITY[status]);
+  assert.equal(getUsagePriority(undefined), USAGE_PRIORITY.current_general);
+
+  const cards = [card('word', 'narrow_specialized'), card('word'), card('word', 'current_general'), card('word', 'modern_american')];
+  const expected = ['modern_american', 'none', 'current_general', 'narrow_specialized'];
+  assert.deepEqual(sortVocabCardsByUsage(cards).map(value => value.usageAudit?.status ?? 'none'), expected);
+  assert.deepEqual(
+    sortStoredSensesByUsage(cards.map(stored)).map(value => (value.data as VocabCard).usageAudit?.status ?? 'none'),
+    expected,
+  );
 });
