@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type { StoredItem } from '../../types';
-import { getPlaybackState, pauseCurrent, resumeCurrent, speakWord } from '../../services/lazyTts';
+import { getPlaybackState, pauseCurrent, resumeCurrent, speakWord } from '../../services/neuralTts';
 
 /**
  * The card view's letter shortcuts, apart from React and the DOM so node tests can pin them. Each view's listener
