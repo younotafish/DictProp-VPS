@@ -1,6 +1,7 @@
 // The manifest of an offline speech bundle: clips the Mac generated, aligned and verified for the versioned
 // offline voices, imported into the server's cache by scripts/import-offline-tts.ts.
 import { OFFLINE_TTS_VOICES, ttsKey } from './tts/cache.js';
+import { isPositiveFinite, isRecord, isSha256 } from './validation-helpers.js';
 
 export interface OfflineTtsEntry {
   key: string;
@@ -21,19 +22,12 @@ export interface OfflineTtsBundle {
   entries: OfflineTtsEntry[];
 }
 
-const SHA256 = /^[a-f0-9]{64}$/;
 const VOICES = new Set<string>(OFFLINE_TTS_VOICES);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-}
 
 export function validateOfflineTtsBundle(value: unknown): string | null {
   if (!isRecord(value)) return 'bundle must be an object';
   if (value.version !== 1) return 'unsupported bundle version';
-  if (typeof value.generatedAt !== 'number' || !Number.isFinite(value.generatedAt) || value.generatedAt <= 0) {
-    return 'bundle generatedAt is invalid';
-  }
+  if (!isPositiveFinite(value.generatedAt)) return 'bundle generatedAt is invalid';
   for (const field of ['model', 'aligner'] as const) {
     if (typeof value[field] !== 'string' || value[field].length === 0 || value[field].length > 300) {
       return `bundle ${field} is invalid`;
@@ -47,7 +41,7 @@ export function validateOfflineTtsBundle(value: unknown): string | null {
   for (let index = 0; index < value.entries.length; index++) {
     const entry = value.entries[index];
     if (!isRecord(entry)) return `entry ${index} must be an object`;
-    if (typeof entry.key !== 'string' || !SHA256.test(entry.key)) return `entry ${index} key is invalid`;
+    if (!isSha256(entry.key)) return `entry ${index} key is invalid`;
     if (keys.has(entry.key)) return `entry ${index} duplicates key ${entry.key}`;
     keys.add(entry.key);
     if (typeof entry.voice !== 'string' || !VOICES.has(entry.voice)) return `entry ${index} voice is invalid`;
@@ -58,8 +52,8 @@ export function validateOfflineTtsBundle(value: unknown): string | null {
     const prefix = entry.key.slice(0, 2);
     if (entry.audioFile !== `audio/${prefix}/${entry.key}.mp3`) return `entry ${index} audioFile is invalid`;
     if (entry.timingsFile !== `audio/${prefix}/${entry.key}.json`) return `entry ${index} timingsFile is invalid`;
-    if (typeof entry.audioSha256 !== 'string' || !SHA256.test(entry.audioSha256)) return `entry ${index} audioSha256 is invalid`;
-    if (typeof entry.timingsSha256 !== 'string' || !SHA256.test(entry.timingsSha256)) return `entry ${index} timingsSha256 is invalid`;
+    if (!isSha256(entry.audioSha256)) return `entry ${index} audioSha256 is invalid`;
+    if (!isSha256(entry.timingsSha256)) return `entry ${index} timingsSha256 is invalid`;
     if (typeof entry.durationSeconds !== 'number' || !Number.isFinite(entry.durationSeconds) ||
         entry.durationSeconds < 0.2 || entry.durationSeconds > 180) {
       return `entry ${index} durationSeconds is invalid`;
