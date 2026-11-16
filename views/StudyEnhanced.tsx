@@ -13,11 +13,13 @@ import {
   acceptFooterTap,
   advanceSession,
   applyUndoneGrade,
+  endSessionEarly,
   findSessionCard,
   gradeSessionCard,
   isSessionCardLive,
   moveSessionTo,
   receiptText,
+  resumeSession,
   sessionSiblingCounts,
   startStudySession,
   summarizeSession,
@@ -190,8 +192,13 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     }
   };
 
+  // The summary shows once no card is left, or once the session was ended early; a session ended early with a card
+  // left can be resumed there.
+  const showingSummary = !!session && (!currentItem || !!session.ended);
+  const canResume = !!session?.ended && !!currentItem;
+
   // On a card the failed undo takes the receipt line's place for a few seconds; the summary keeps its own line.
-  const showingCard = !!session && !!currentItem;
+  const showingCard = !!session && !showingSummary;
   useEffect(() => {
     if (!undoError || !showingCard) return;
     const timer = window.setTimeout(() => setUndoError(''), UNDO_ERROR_MS);
@@ -204,30 +211,40 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     setSession(null);
   };
 
-  // Escape leaves the answer box first, then ends the session. It goes through the escape stack, so a
-  // search box or dialog opened over the session closes before the session does.
+  // Ending a session after a grade shows its summary, 'Ended early', where Resume takes it up again; with no grade
+  // yet there is nothing to sum up, so it closes.
+  const endSession = () => {
+    if (session && session.grades.length > 0) setSession(current => current && endSessionEarly(current));
+    else closeSession();
+  };
+  const resume = () => setSession(current => current && resumeSession(current, Date.now()));
+
+  // Escape leaves the answer box first, then ends the session on a card or closes the summary. It goes through the
+  // escape stack, so a search box or dialog opened over the session closes before the session does.
   useEscapeLayer(() => {
     const active = document.activeElement;
     if (active instanceof HTMLElement && isTypingTarget(active) && rootRef.current?.contains(active)) active.blur();
+    else if (showingCard) endSession();
     else closeSession();
   }, 0, !!session && !interactionLocked);
 
   // The session's keys (services/studyKeys.ts). One listener while the session has the keys, reading the
   // session and the handlers as they are now, so typing an answer doesn't register it again.
-  const keyContext = useLatest({ session, currentItem, lastGrade, reveal, gradeCurrent, undoLastGrade, closeSession });
+  const keyContext = useLatest({ session, showingSummary, canResume, lastGrade, reveal, gradeCurrent, undoLastGrade, closeSession, resume });
   const keysActive = !!session && !interactionLocked;
   useEffect(() => {
     if (!keysActive) return;
     // In the capture phase the session gets its keys before the window-level shortcuts (1-3 also switch
     // tabs), and stops the ones it uses so no other shortcut reacts to them.
     const handleSessionKey = (event: KeyboardEvent) => {
-      const { session, currentItem, lastGrade, reveal, gradeCurrent, undoLastGrade, closeSession } = keyContext.current;
+      const { session, showingSummary, canResume, lastGrade, reveal, gradeCurrent, undoLastGrade, closeSession, resume } = keyContext.current;
       if (!session) return;
       const action = resolveStudyKey(event, {
-        phase: currentItem ? 'card' : 'summary',
+        phase: showingSummary ? 'summary' : 'card',
         revealed: session.revealed,
         canUndo: !!lastGrade,
         undoing: lastGrade?.undoing ?? false,
+        canResume,
         typing: isTypingTarget(event.target),
         onControl: isKeyboardFocusedControl(event.target),
         dialogOutside: isDialogOpenOutside(rootRef.current),
@@ -239,6 +256,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       else if (action.type === 'undo') void undoLastGrade();
       else if (action.type === 'reveal') reveal();
       else if (action.type === 'done') closeSession();
+      else if (action.type === 'resume') resume();
     };
     window.addEventListener('keydown', handleSessionKey, true);
     return () => window.removeEventListener('keydown', handleSessionKey, true);
@@ -258,7 +276,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 
   if (session) {
     const undo = () => void undoLastGrade();
-    if (!currentItem) {
+    if (showingSummary || !currentItem) {
       const summary = summarizeSession(session);
       // The missed words still in the library; each opens the card view with them all as its list.
       const missedItems = summary.missedIds.flatMap(id => itemsById.get(id) ?? []);
@@ -269,6 +287,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
         <div ref={rootRef} className="h-full overflow-y-auto bg-slate-50 p-5 pb-[calc(var(--nav-h,95px)+1rem)]">
           <StudySummary
             summary={summary}
+            endedEarly={!!session.ended}
+            onResume={canResume ? resume : undefined}
             missed={missedItems.map(item => ({ id: item.data.id, title: getItemTitle(item) }))}
             onOpenMissed={openMissed}
             canUndo={!!lastGrade}
@@ -291,7 +311,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
           receipt={lastGrade && receiptText({ ...lastGrade, requeued: lastGrade.requeuedAt !== undefined })}
           undoError={undoError}
           onUndo={undo}
-          onClose={closeSession}
+          onClose={endSession}
           onReveal={reveal}
           onFooterReveal={footerReveal}
           onFooterGrade={footerGrade}

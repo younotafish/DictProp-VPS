@@ -9,7 +9,7 @@ import { RATINGS } from './studySession';
 
 /** What the session shows, and the facts about the key's target that the table needs. */
 export interface StudyKeyState {
-  /** A card, or the summary once no card is left. */
+  /** A card, or the summary once no card is left or the session was ended early. */
   phase: 'card' | 'summary';
   /** The card's answer is showing. */
   revealed: boolean;
@@ -17,6 +17,8 @@ export interface StudyKeyState {
   canUndo: boolean;
   /** An undo of the last grade is under way. */
   undoing: boolean;
+  /** The summary is of a session ended early with a card left, which R resumes. */
+  canResume: boolean;
   /** The key went to a text field (isTypingTarget), which keeps its keys. */
   typing: boolean;
   /** The keyboard focused a control, which Space and Enter press instead (isKeyboardFocusedControl). */
@@ -31,6 +33,8 @@ export type StudyKeyAction =
   | { type: 'reveal' }
   /** The summary's Done: back to the dashboard. */
   | { type: 'done' }
+  /** The summary's Resume: back to the card a session ended early was on. */
+  | { type: 'resume' }
   /** A key the session owns that does nothing now. It's still stopped, so no other shortcut acts on it. */
   | { type: 'swallow' };
 
@@ -43,7 +47,7 @@ const RATING_KEYS: ReadonlyMap<string, ReviewRating> = new Map(RATINGS.map((rati
  * What a key does in a study session, or null when the session leaves it alone. The session owns 1-4 even
  * before the answer shows: an early press does nothing rather than switch tabs mid-session. U undoes the last
  * grade, and Space or Enter shows the answer unless the keyboard focused a control they should press; on the
- * summary Enter is Done. While an undo is under way, grading and revealing wait: the undo is about to bring back
+ * summary Enter is Done, and R resumes a session ended early. While an undo is under way, grading and revealing wait: the undo is about to bring back
  * the card it undoes. A held key acts once, when pressed (acceptKeyRepeat); a held 1-4 stays the session's, so its
  * repeats don't switch tabs.
  */
@@ -61,5 +65,6 @@ export function resolveStudyKey(event: StudyKeyEvent, state: StudyKeyState): Stu
     return state.undoing ? { type: 'swallow' } : { type: 'reveal' };
   }
   if (event.key === 'Enter' && state.phase === 'summary' && !state.onControl) return { type: 'done' };
+  if (event.key.toLowerCase() === 'r' && state.phase === 'summary' && state.canResume) return { type: 'resume' };
   return null;
 }

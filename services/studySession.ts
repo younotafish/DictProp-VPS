@@ -134,6 +134,8 @@ export interface StudySession {
   /** Where the cards just passed over begin. One that comes back before the next grade, as an undone
    *  delete or archive brings it, is shown again where it was. */
   passedOverFrom?: number;
+  /** The learner ended the session early, after a grade: its summary shows until it's resumed or closed. */
+  ended?: boolean;
 }
 
 /** A grade the session recorded, with what undoing it takes. */
@@ -223,6 +225,17 @@ export function summarizeSession(session: Pick<StudySession, 'itemIds' | 'grades
   };
 }
 
+/** The session ended early: its summary shows, and Resume takes it up again at the card it was on. */
+export function endSessionEarly(session: StudySession): StudySession {
+  return { ...session, ended: true };
+}
+
+/** A session ended early, taken up again at the card it was on, unrevealed and unanswered. */
+export function resumeSession(session: StudySession, now: number): StudySession {
+  const { ended: _ended, ...running } = session;
+  return moveSessionTo(running, running.index, now);
+}
+
 /**
  * The session moved to the card at `index` (see findSessionCard), unrevealed and unanswered. Moving forward
  * marks where the cards passed over begin, unless an earlier run of them is still open.
@@ -293,21 +306,23 @@ export function advanceSession(session: StudySession, itemIds: string[], grade: 
 
 /**
  * The session after `grade` is undone: back at its card, revealed and with the typed answer, the grade no
- * longer standing, and the extra showing it queued taken back if it is still where it was queued.
+ * longer standing, and the extra showing it queued taken back if it is still where it was queued. A session
+ * ended early is running again, as an undo from the summary of a finished one goes back to the card too.
  */
 export function undoSessionGrade(session: StudySession, grade: SessionGrade, now: number): StudySession {
-  const last = session.grades[session.grades.length - 1];
+  const { ended: _ended, ...running } = session;
+  const last = running.grades[running.grades.length - 1];
   return {
-    ...session,
-    itemIds: grade.requeuedAt !== undefined && session.itemIds[grade.requeuedAt] === grade.itemId
-      ? session.itemIds.filter((_, index) => index !== grade.requeuedAt)
-      : session.itemIds,
+    ...running,
+    itemIds: grade.requeuedAt !== undefined && running.itemIds[grade.requeuedAt] === grade.itemId
+      ? running.itemIds.filter((_, index) => index !== grade.requeuedAt)
+      : running.itemIds,
     index: grade.itemIndex,
     passedOverFrom: undefined,
     revealed: true,
     typedAnswer: grade.typedAnswer,
     promptStartedAt: now,
-    grades: last?.itemId === grade.itemId && last.rating === grade.rating ? session.grades.slice(0, -1) : session.grades,
+    grades: last?.itemId === grade.itemId && last.rating === grade.rating ? running.grades.slice(0, -1) : running.grades,
   };
 }
 

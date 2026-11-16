@@ -11,6 +11,7 @@ import {
   advanceSession,
   applyUndoneGrade,
   buildReviewQueue,
+  endSessionEarly,
   cappedDuration,
   findSessionCard,
   formatReviewInterval,
@@ -22,6 +23,7 @@ import {
   moveSessionTo,
   receiptText,
   requeueShortStep,
+  resumeSession,
   selectReviewTask,
   sessionRatings,
   sessionSiblingCounts,
@@ -389,6 +391,7 @@ test('undoing a miss takes the card off the missed list, unless another Again or
 
 const summaryMarkup = (props: Partial<Parameters<typeof StudySummary>[0]> = {}) => renderToStaticMarkup(createElement(StudySummary, {
   summary: { total: 50, graded: 50, counts: { again: 3, hard: 2, good: 40, easy: 5 }, missedIds: ['a', 'b'] },
+  endedEarly: false,
   missed: [{ id: 'a', title: 'crestfallen' }, { id: 'b', title: 'give up' }],
   canUndo: false, undoing: false, undoError: '', onUndo: () => {}, onDone: () => {},
   ...props,
@@ -416,4 +419,32 @@ test('the summary keeps its undo for the last rating, and says when an undo fail
   const markup = summaryMarkup({ canUndo: true, undoError: 'Reconnect to undo this review.' });
   assert.match(summaryText(markup), /Undo last rating Reconnect to undo this review\. Done$/);
   assert.match(summaryMarkup({ canUndo: true, undoing: true }), /disabled="" [^>]*aria-keyshortcuts="U">.*Undoing\.\.\.<\/button>/);
+});
+
+test('a session ended early keeps its place: Resume takes it up at the same card, unrevealed, and an undo runs it again', () => {
+  const running = session({ index: 1, revealed: true, typedAnswer: 'wal', passedOverFrom: 1 });
+  const ended = endSessionEarly(running);
+  assert.deepEqual(ended, { ...running, ended: true });
+  const resumed = resumeSession(ended, 9_000);
+  assert.deepEqual(resumed, { ...running, revealed: false, typedAnswer: '', promptStartedAt: 9_000 });
+  assert.equal('ended' in resumed, false);
+
+  // Undoing the last grade from the summary goes back to that card, revealed, as from a finished session's summary.
+  const before = session();
+  const { grade, itemIds } = gradeSessionCard(before, vocab('b', 'walk'), 'good', 'event', 2_000, 2_880);
+  const undone = undoSessionGrade(endSessionEarly(advanceSession(before, itemIds, grade, 2_000)), grade, 7_000);
+  assert.deepEqual(undone, { ...before, passedOverFrom: undefined, promptStartedAt: 7_000 });
+});
+
+test('a session ended early says how many of its cards were reviewed, and offers Resume while a card is left', () => {
+  const markup = summaryMarkup({
+    summary: { total: 50, graded: 23, counts: { again: 1, hard: 1, good: 20, easy: 2 }, missedIds: [] },
+    endedEarly: true,
+    missed: [],
+    onResume: () => {},
+  });
+  assert.match(markup, /<h2 class="text-2xl font-bold text-slate-800">Ended early · 23 of 50 reviewed<\/h2>/);
+  assert.match(markup, /aria-keyshortcuts="R"><svg[^]*?<\/svg> Resume<\/button><button [^>]*aria-keyshortcuts="Enter">Done<\/button>/);
+  assert.doesNotMatch(summaryMarkup({ endedEarly: true }), /Resume/, 'no card is left to resume at');
+  assert.doesNotMatch(summaryMarkup(), /Resume|Ended early/);
 });

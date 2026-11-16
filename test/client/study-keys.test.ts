@@ -10,7 +10,7 @@ const held = (key: string) => press(key, { repeat: true });
 
 /** A card with its answer hidden and nothing to undo, the key going to the page. */
 const card = (overrides: Partial<StudyKeyState> = {}): StudyKeyState => ({
-  phase: 'card', revealed: false, canUndo: false, undoing: false, typing: false, onControl: false, dialogOutside: false,
+  phase: 'card', revealed: false, canUndo: false, undoing: false, canResume: false, typing: false, onControl: false, dialogOutside: false,
   ...overrides,
 });
 
@@ -92,4 +92,15 @@ test('keys with a modifier, keys a view already used, typing and an open dialog 
     assert.equal(resolveStudyKey(press(key), card({ dialogOutside: true })), null, `${key} under a dialog unrevealed`);
   }
   assert.equal(resolveStudyKey(press('Escape'), ready), null, 'Escape goes through the escape stack');
+});
+
+test('on the summary of a session ended early, R resumes it; elsewhere R is not a study key', () => {
+  const ended = card({ phase: 'summary', canResume: true, canUndo: true });
+  assert.deepEqual(resolveStudyKey(press('r'), ended), { type: 'resume' });
+  assert.deepEqual(resolveStudyKey(press('R'), ended), { type: 'resume' });
+  assert.equal(resolveStudyKey(held('r'), ended), null, 'a held R resumed once');
+  assert.equal(resolveStudyKey(press('r', { metaKey: true }), ended), null, 'Cmd+R reloads');
+  assert.equal(resolveStudyKey(press('r'), { ...ended, typing: true }), null);
+  assert.equal(resolveStudyKey(press('r'), card({ phase: 'summary' })), null, 'a finished session has nothing to resume');
+  assert.equal(resolveStudyKey(press('r'), card({ canResume: true })), null, 'not on a card');
 });
