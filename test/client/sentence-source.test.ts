@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { sentenceSourceResolver } from '../../services/sentenceSource.ts';
+import { sentenceSourceResolver, syntheticSourceItem } from '../../services/sentenceSource.ts';
 import type { StoredItem, VocabCard } from '../../types.ts';
 
 const card = (id: string, word: string, sense: string, forms: string[] = [], extra: { isDeleted?: boolean } = {}): StoredItem =>
@@ -44,4 +44,14 @@ test('deleted cards, other item types and unknown words find nothing', () => {
   assert.equal(find('make time'), undefined);
   assert.equal(find(''), undefined);
   assert.equal(find(undefined), undefined);
+});
+
+test('a sentence whose word is gone opens on a stand-in card with the word, the sense and the sentence as its example', () => {
+  const stand = syntheticSourceItem('s9', 'ephemeral', 'adjective: brief', 'An ephemeral fame.');
+  assert.equal(stand.type, 'vocab');
+  assert.equal(stand.data.id, 'sentence-src:s9');
+  assert.equal(stand.srs.id, 'sentence-src:s9');
+  const vocab = stand.data as { word: string; sense?: string; examples: string[] };
+  assert.deepEqual([vocab.word, vocab.sense, vocab.examples], ['ephemeral', 'adjective: brief', ['An ephemeral fame.']]);
+  assert.equal((syntheticSourceItem('s9', '', undefined, 'x').data as { word: string }).word, '(unknown word)');
 });

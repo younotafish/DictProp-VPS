@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { getItemTitle, isSentenceItem, type ItemGroup, type SentenceData, type StoredItem, type VocabCard } from '../types';
+import { getItemTitle, isSentenceItem, type ItemGroup, type SentenceData, type StoredItem } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
-import { sentenceSourceResolver } from '../services/sentenceSource';
+import { sentenceSourceResolver, syntheticSourceItem } from '../services/sentenceSource';
 import { normalizeSentenceIdentity } from '../services/sentenceIdentity';
 import { isCatalogProgressItem } from '../services/catalogProgressIdentity';
 import { useStableArray } from './useStableValue';
@@ -73,31 +73,6 @@ export const withoutSentence = (context: DetailContext, sentenceId: string): Det
   if (newSentenceItems.length === 0) return null; // reviewed/deleted the last one → close
   const newGroupIndex = Math.min(context.groupIndex, newGroups.length - 1);
   return { ...context, groups: newGroups, sentenceItems: newSentenceItems, groupIndex: newGroupIndex, itemIndex: 0 };
-};
-
-/**
- * The stand-in source card for a sentence whose word isn't in the notebook: the word and sense, with the sentence
- * as its one example. Sentence review and the word card's example preview both open on it.
- */
-export const syntheticSourceItem = (sentenceId: string, word: string | undefined, sense: string | undefined, text: string): StoredItem => {
-  const synthetic: VocabCard = {
-    id: `sentence-src:${sentenceId}`,
-    word: word || '(unknown word)',
-    sense,
-    chinese: '',
-    ipa: '',
-    definition: '',
-    forms: [],
-    wordFamily: [],
-    synonyms: [],
-    antonyms: [],
-    confusables: [],
-    examples: [text],
-    history: '',
-    register: '',
-    mnemonic: '',
-  };
-  return { data: synthetic, type: 'vocab', savedAt: Date.now(), srs: SRSAlgorithm.createNew(synthetic.id, 'vocab') };
 };
 
 const NO_GROUPS: ItemGroup[] = [];

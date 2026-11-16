@@ -1,4 +1,5 @@
 import { getItemSense, getItemSpelling, type StoredItem, type VocabCard } from '../types';
+import { SRSAlgorithm } from './srsAlgorithm';
 import { normalizeKey, splitForms } from './wordMatch';
 
 const add = (map: Map<string, StoredItem[]>, key: string, item: StoredItem) => {
@@ -36,3 +37,28 @@ export function sentenceSourceResolver(items: readonly StoredItem[]): (sourceWor
     return (sourceSense ? matches.find(item => getItemSense(item) === sourceSense) : undefined) ?? matches[0];
   };
 }
+
+/**
+ * The stand-in source card for a sentence whose word isn't in the notebook: the word and sense, with the sentence
+ * as its one example. Sentence review and the word card's example preview both open on it.
+ */
+export const syntheticSourceItem = (sentenceId: string, word: string | undefined, sense: string | undefined, text: string): StoredItem => {
+  const synthetic: VocabCard = {
+    id: `sentence-src:${sentenceId}`,
+    word: word || '(unknown word)',
+    sense,
+    chinese: '',
+    ipa: '',
+    definition: '',
+    forms: [],
+    wordFamily: [],
+    synonyms: [],
+    antonyms: [],
+    confusables: [],
+    examples: [text],
+    history: '',
+    register: '',
+    mnemonic: '',
+  };
+  return { data: synthetic, type: 'vocab', savedAt: Date.now(), srs: SRSAlgorithm.createNew(synthetic.id, 'vocab') };
+};

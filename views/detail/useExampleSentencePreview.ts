@@ -4,7 +4,7 @@ import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { stopCurrent } from '../../services/neuralTts';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
 import { isCatalogProgressItem } from '../../services/catalogProgressIdentity';
-import { syntheticSourceItem } from '../../hooks/useDetailView';
+import { syntheticSourceItem } from '../../services/sentenceSource';
 import { SENTENCE_PREVIEW_ID_PREFIX } from './sentenceUnderReview';
 import type { SavedSentenceIndex } from './useSavedSentenceIndex';
 import type { DetailViewProps } from './types';
