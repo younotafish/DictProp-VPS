@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { getItemSpelling, getItemTitle, isPhraseItem, isVocabItem, type SearchResult, type SentenceData, type StoredItem, type VocabCard } from '../types';
 import { IMAGE_IDB_MARKER, attachImage, extractInlineImages, offloadImages, restoreInlineImages, unsavedImages } from '../services/libraryImages';
-import { findSavedCopyIndex, makeSentenceStoredItem, makeVocabStoredItem, saveOverExisting } from '../services/items';
+import { findSavedCopyIndex, makeSentenceStoredItem, makeVocabStoredItem, patchLiveCopy, saveOverExisting } from '../services/items';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { planReset, unarchiveUndo } from '../services/undoRules';
 import { log, logError, warn } from '../services/logger';
@@ -163,6 +163,15 @@ export function useLibraryActions(
     await persistChangedItems([unarchived], 'Unarchive');
   }, [latestItemsRef, replaceItem, persistChangedItems, offerUndo]);
 
+  /**
+   * Applies a write the app makes on its own, such as a listen's speech style or an analysis arriving, to the live
+   * item `id` (services/items patchLiveCopy), which is then stored and pushed as any saved change is. Unlike a save,
+   * it never brings a deleted item back, and a patch with nothing to change (null, or the item itself) changes nothing.
+   */
+  const patchLiveItem = useCallback((id: string, patch: (item: StoredItem) => StoredItem | null): void => {
+    replaceItem(id, item => patchLiveCopy(item, patch, Date.now()));
+  }, [replaceItem]);
+
   // Save a sentence for review, as services/items builds it from the copy the screen holds.
   const handleSaveSentence = useCallback((text: string, sourceWord: string, sourceSense?: string, prepared?: SentenceData) => {
     handleSave(makeSentenceStoredItem(text, sourceWord, sourceSense, prepared));
@@ -214,7 +223,7 @@ export function useLibraryActions(
 
   return {
     handleSave, handleAttachSentenceImage, handleDelete, handleArchive, handleRemoveVocabFromPhrase, handleUnarchive,
-    handleSaveSentence, handleRefreshReplace, resetSRS,
+    patchLiveItem, handleSaveSentence, handleRefreshReplace, resetSRS,
   };
 }
 

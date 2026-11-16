@@ -22,16 +22,25 @@ const saved = (data: VocabCard, fields: Partial<StoredItem> = {}): StoredItem =>
 function renderActions(initial: StoredItem[]) {
   let items = initial;
   const calls: string[] = [];
+  // As useLibrary's: an update that replaces no item keeps the library array.
+  const updateItems = (transform: (current: StoredItem[]) => StoredItem[]): StoredItem[] => {
+    const next = transform(items);
+    if (next.length === items.length && next.every((item, index) => item === items[index])) return items;
+    return (items = next);
+  };
   const library = {
     userId: 'u1',
     latestItemsRef: { get current() { return items; }, set current(next: StoredItem[]) { items = next; } },
-    updateItems: (transform: (current: StoredItem[]) => StoredItem[]) => (items = transform(items)),
+    updateItems,
     replaceItem: (id: string, update: (item: StoredItem) => StoredItem) => {
-      const index = items.findIndex(item => item.data.id === id);
-      if (index < 0) return undefined;
-      const next = update(items[index]);
-      items = items.map((item, at) => (at === index ? next : item));
-      return next;
+      let replaced: StoredItem | undefined;
+      updateItems(current => {
+        const index = current.findIndex(item => item.data.id === id);
+        if (index < 0) return current;
+        replaced = update(current[index]);
+        return current.map((item, at) => (at === index ? replaced! : item));
+      });
+      return replaced;
     },
     persistChangedItems: async (changed: StoredItem[], label: string) => { calls.push(`persist ${label} ${changed.map(item => item.data.id).join(',')}`); },
   };
@@ -99,4 +108,28 @@ test('a saved sentence is stored as services/items builds it, under a fresh id, 
   assert.equal(sentence.srs.type, 'sentence');
   assert.equal(sentence.srs.totalReviews, 0);
   assert.equal(sentence.savedAt, 1_700_000_000_000);
+});
+
+test('an automatic write patches a live card and stamps it, and nothing that changes nothing touches the library', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 5_000 });
+  const card = saved(vocab('w1', 'gamut', 'noun: range'));
+  const { actions, items } = renderActions([card]);
+  actions.patchLiveItem('w1', item => ({ ...item, data: { ...item.data, definition: 'patched' } as VocabCard }));
+  assert.equal((items()[0].data as VocabCard).definition, 'patched');
+  assert.equal(items()[0].updatedAt, 5_000);
+
+  const library = items();
+  actions.patchLiveItem('w1', () => null);
+  actions.patchLiveItem('w1', item => item);
+  actions.patchLiveItem('gone', item => ({ ...item, isArchived: true }));
+  assert.equal(items(), library, 'a null patch, the item itself or a missing id leave the same library');
+});
+
+test('an automatic write never brings a deleted card back, and its patch is not even asked', () => {
+  const deleted = saved(vocab('w1', 'gamut', 'noun: range'), { isDeleted: true });
+  const { actions, items } = renderActions([deleted]);
+  let asked = 0;
+  actions.patchLiveItem('w1', item => { asked++; return { ...item, isDeleted: undefined }; });
+  assert.equal(items()[0], deleted);
+  assert.equal(asked, 0);
 });
