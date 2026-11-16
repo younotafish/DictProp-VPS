@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { transcribeAudio } from '../../services/api/ai';
-import { error as logError } from '../../services/logger';
+import { logError } from '../../services/logger';
 
 /** Where voice search is: waiting for the microphone, recording, or transcribing what it recorded. */
 export type VoiceSearchState = 'idle' | 'starting' | 'recording' | 'transcribing';

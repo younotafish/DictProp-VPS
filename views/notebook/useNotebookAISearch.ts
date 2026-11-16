@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SearchResult } from '../../types';
 import { analyzeInput } from '../../services/api/ai';
 import { speakWord, ensureTTS } from '../../services/neuralTts';
-import { error as logError } from '../../services/logger';
+import { logError } from '../../services/logger';
 
 /**
  * The notebook's inline AI lookup: the result card above the list, its error and its spinner. A newer lookup
