@@ -191,7 +191,7 @@ case "$1 $2" in
     echo '2026-10-01T00:00:04Z Server running on port 3000' ;;
   'image ls')
     printf '%s\n' "$RELEASE_IMAGE" ghcr.io/younotafish/dictprop-vps:0123abc dictprop-vps:rollback-77 dictprop-vps:local \
-      dictprop-vps:local-test node:22-alpine '<none>:<none>' ;;
+      dictprop-vps-app:latest dictprop-app:latest dictprop-vps:local-test node:22-alpine '<none>:<none>' ;;
 esac`);
   stub(bin, 'curl', String.raw`
 if [ "$(cat "$RUNNING")" = "$RELEASE_IMAGE" ]; then [ -z "$FAIL_HEALTH" ]; else [ -z "$FAIL_ROLLBACK" ]; fi`);
@@ -344,7 +344,7 @@ test('a healthy release drops the images no release runs, and nothing else', () 
     assert.equal(run.status, 0, run.output);
     assert.deepEqual(cleanup(run.calls), [
       'docker image ls --format {{.Repository}}:{{.Tag}}',
-      'docker image rm ghcr.io/younotafish/dictprop-vps:0123abc dictprop-vps:rollback-77 dictprop-vps:local',
+      'docker image rm ghcr.io/younotafish/dictprop-vps:0123abc dictprop-vps:rollback-77 dictprop-vps:local dictprop-vps-app:latest dictprop-app:latest',
       'docker image prune -f',
     ]);
   } finally {
