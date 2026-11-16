@@ -187,6 +187,8 @@ export const NotebookView: React.FC<NotebookProps> = ({
     if (isImeKey(e.nativeEvent)) return;
     if (e.key === 'Enter' && localSearchQuery.trim()) {
       e.preventDefault();
+      // A held Enter looks the query up once, not again on every repeat.
+      if (e.repeat) return;
       startAISearch(localSearchQuery);
       // On a phone the keyboard would hide the card the lookup brings, so it goes.
       if (PLATFORM.isMobile) e.currentTarget.blur();
