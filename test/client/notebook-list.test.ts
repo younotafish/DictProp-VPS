@@ -303,18 +303,19 @@ const rowSummary = (rows: NotebookRow[]) => rows.map(row =>
 test('browse rows run compare banner, note, groups, due header and due groups, then the archived toggle and its open groups', () => {
   const group = (title: string) => ({ title, items: [vocab(title)] });
   const list = {
+    searched: false,
     groups: [group('bank'), group('banker')],
     dueGroups: [group('river')],
     archived: [vocab('pond', { archived: true })],
     archivedGroups: [group('pond')],
   };
 
-  assert.deepEqual(rowSummary(buildNotebookRows(list, { searching: false, compareMode: false, showListNote: false, showArchived: false })),
+  assert.deepEqual(rowSummary(buildNotebookRows(list, { compareMode: false, showListNote: false, showArchived: false })),
     ['main:bank', 'main:banker', 'due-header(1)', 'due:river', 'archived-toggle(1)']);
-  assert.deepEqual(rowSummary(buildNotebookRows(list, { searching: false, compareMode: true, showListNote: true, showArchived: true })),
+  assert.deepEqual(rowSummary(buildNotebookRows(list, { compareMode: true, showListNote: true, showArchived: true })),
     ['compare-banner', 'list-note', 'main:bank', 'main:banker', 'due-header(1)', 'due:river', 'archived-toggle(1)', 'archived:pond']);
-  assert.deepEqual(rowSummary(buildNotebookRows({ groups: [], dueGroups: [], archived: [], archivedGroups: [] },
-    { searching: false, compareMode: false, showListNote: true, showArchived: true })), ['list-note']);
+  assert.deepEqual(rowSummary(buildNotebookRows({ searched: false, groups: [], dueGroups: [], archived: [], archivedGroups: [] },
+    { compareMode: false, showListNote: true, showArchived: true })), ['list-note']);
 });
 
 test('search rows list the matches, then the archived matches open under their heading, then the due cards left out', () => {
@@ -328,13 +329,29 @@ test('search rows list the matches, then the archived matches open under their h
   const list = buildNotebookList(items, findNotebookMatches(items, 'bank'), 'familiarity', 'all', NOW);
   // N counts the archived spellings listed, whatever the toggle says.
   for (const showArchived of [false, true]) {
-    assert.deepEqual(rowSummary(buildNotebookRows(list, { searching: true, compareMode: false, showListNote: false, showArchived })),
+    assert.deepEqual(rowSummary(buildNotebookRows(list, { compareMode: false, showListNote: false, showArchived })),
       ['main:bank', 'archived-header(2)', 'archived:bankrupt', 'archived:embankment', 'due-header(1)', 'due:river']);
   }
   // With nothing archived among the matches there's no heading, and no archived toggle either.
   const unarchived = buildNotebookList(items, findNotebookMatches(items, 'river'), 'familiarity', 'all', NOW);
-  assert.deepEqual(rowSummary(buildNotebookRows(unarchived, { searching: true, compareMode: false, showListNote: false, showArchived: true })),
+  assert.deepEqual(rowSummary(buildNotebookRows(unarchived, { compareMode: false, showListNote: false, showArchived: true })),
     ['main:river']);
+});
+
+test('rows draw a list as it was built, so the browse list kept on screen while a query waits for its fuzzy scan stays a browse list', () => {
+  const items = [vocab('apple'), vocab('pear'), vocab('old1', { archived: true }), vocab('old2', { archived: true })];
+  const options = { compareMode: false, showListNote: false, showArchived: false };
+  // A query nothing contains, typed into an empty box: useNotebookSearch keeps the browse list until the scan runs.
+  const browse = buildNotebookList(items, null, 'alphabetical', 'all', NOW);
+  assert.equal(browse.searched, false);
+  assert.deepEqual(rowSummary(buildNotebookRows(browse, options)), ['main:apple', 'main:pear', 'archived-toggle(2)']);
+  // The same cards as a search's matches list the archived ones open.
+  const search = buildNotebookList(items, items, 'alphabetical', 'all', NOW);
+  assert.equal(search.searched, true);
+  assert.deepEqual(rowSummary(buildNotebookRows(search, options)),
+    ['main:apple', 'main:pear', 'archived-header(2)', 'archived:old1', 'archived:old2']);
+  // A search that found nothing is still a search's list.
+  assert.equal(buildNotebookList(items, [], 'alphabetical', 'all', NOW).searched, true);
 });
 
 test('the list orders by the clock it is given and carries that clock, so its rows count Due from the same instant', () => {

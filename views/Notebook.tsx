@@ -271,10 +271,9 @@ export const NotebookView: React.FC<NotebookProps> = ({
     startTransition(() => setClockBump(n => n + 1));
   }, [listRef, onViewDetail]);
 
-  const searching = !!searchQuery;
   const virtualRows = useMemo(
-    () => buildNotebookRows(list, { searching, compareMode, showListNote, showArchived }),
-    [list, searching, showArchived, compareMode, showListNote],
+    () => buildNotebookRows(list, { compareMode, showListNote, showArchived }),
+    [list, showArchived, compareMode, showListNote],
   );
 
   const renderVirtualRow = useCallback((_index: number, row: NotebookRow) => {

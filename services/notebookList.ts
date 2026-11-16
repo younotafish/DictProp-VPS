@@ -36,6 +36,11 @@ export const isNotebookDue = (item: StoredItem, now: number): boolean =>
   !item.isArchived && needsReview(item.srs, now);
 
 export interface NotebookList {
+  /**
+   * Built from a search's matches rather than for browsing, so its rows list the archived matches open instead of the
+   * archived toggle. A list kept on screen while the next query waits for its fuzzy scan draws as it was built.
+   */
+  searched: boolean;
   /** The listed unarchived items, grouped by spelling in display order. */
   groups: ItemGroup[];
   archived: StoredItem[];
@@ -211,6 +216,7 @@ export const buildNotebookList = (
   }
 
   return {
+    searched: matches !== null,
     groups: reuseGroups(groupByTitle(active), previous?.groups),
     archived,
     archivedGroups: reuseGroups(groupByTitle(archived), previous?.archivedGroups),
@@ -289,15 +295,13 @@ export type NotebookRow =
   | { key: string; type: 'list-note' };
 
 /**
- * The list flattened for virtualization: the compare banner, the list note and the groups. A search then lists its
- * archived matches open under an 'Archived matches · N' heading (N spellings) and the due groups it leaves out under
- * theirs; browsing ends with the archived toggle, and the archived groups when it's open.
+ * The list flattened for virtualization: the compare banner, the list note and the groups. A search's list then lists
+ * its archived matches open under an 'Archived matches · N' heading (N spellings) and the due groups it leaves out
+ * under theirs; a browse list ends with the archived toggle, and the archived groups when it's open.
  */
 export const buildNotebookRows = (
-  list: Pick<NotebookList, 'groups' | 'dueGroups' | 'archived' | 'archivedGroups'>,
-  { searching, compareMode, showListNote, showArchived }: {
-    searching: boolean; compareMode: boolean; showListNote: boolean; showArchived: boolean;
-  },
+  list: Pick<NotebookList, 'searched' | 'groups' | 'dueGroups' | 'archived' | 'archivedGroups'>,
+  { compareMode, showListNote, showArchived }: { compareMode: boolean; showListNote: boolean; showArchived: boolean },
 ): NotebookRow[] => {
   const rows: NotebookRow[] = [];
   const addGroups = (groups: ItemGroup[], section: NotebookSection) => groups.forEach(group => {
@@ -307,7 +311,7 @@ export const buildNotebookRows = (
   if (compareMode) rows.push({ key: 'compare-banner', type: 'compare-banner' });
   if (showListNote) rows.push({ key: 'list-note', type: 'list-note' });
   addGroups(list.groups, 'main');
-  if (searching && list.archivedGroups.length > 0) {
+  if (list.searched && list.archivedGroups.length > 0) {
     rows.push({ key: 'archived-header', type: 'archived-header', count: list.archivedGroups.length });
     addGroups(list.archivedGroups, 'archived');
   }
@@ -316,7 +320,7 @@ export const buildNotebookRows = (
     rows.push({ key: 'due-header', type: 'due-header', count: list.dueGroups.length });
     addGroups(list.dueGroups, 'due');
   }
-  if (!searching && list.archived.length > 0) {
+  if (!list.searched && list.archived.length > 0) {
     rows.push({ key: 'archived-toggle', type: 'archived-toggle', count: list.archived.length });
     if (showArchived) addGroups(list.archivedGroups, 'archived');
   }
