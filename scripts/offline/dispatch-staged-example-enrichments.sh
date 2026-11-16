@@ -26,8 +26,31 @@ manifest_count() {
   "$NODE_BIN" -e 'const fs=require("fs"); const source=JSON.parse(fs.readFileSync(process.argv[1])); const current=new Map(source.sentences.filter(entry => entry.hasImage !== true).map(entry => [entry.id, entry.textHash])); const ids=new Set(); for(const path of process.argv.slice(2)){const manifest=JSON.parse(fs.readFileSync(path)); if(Number(manifest.generatedAt||0)<Number(source.exportedAt||0)) continue; for(const entry of manifest.entries) if(typeof entry.imageFile === "string" && entry.imageFile && current.get(entry.id) === entry.textHash) ids.add(entry.id)} console.log(ids.size)' "$source" "$@"
 }
 
+# The accepted images ready to publish: those the image manifest lists for a sentence that production still lacks
+# an image for, at the sentence's current text, whose file is inside IMAGE_ROOT and not empty. The wave preparer
+# publishes from the same manifest, so an image it doesn't list could never go out.
 accepted_count() {
-  "$NODE_BIN" -e 'const fs=require("fs"),crypto=require("crypto"),path=require("path"); const source=JSON.parse(fs.readFileSync(process.argv[1])); const imageRoot=process.argv[2]; console.log(source.sentences.filter(entry => entry.hasImage !== true && fs.existsSync(path.join(imageRoot, crypto.createHash("sha256").update(entry.id).digest("hex").slice(0,32)+".webp"))).length)' "$SOURCE" "$IMAGE_ROOT/images"
+  "$NODE_BIN" - "$SOURCE" "$IMAGE_ROOT" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+
+const [sourcePath, imageRoot] = process.argv.slice(2);
+const source = JSON.parse(fs.readFileSync(sourcePath, 'utf8'));
+const lacking = new Map(source.sentences.filter(entry => entry.hasImage !== true).map(entry => [entry.id, entry.textHash]));
+const root = path.resolve(imageRoot);
+const ready = new Set();
+for (const entry of JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8')).entries) {
+  if (typeof entry.imageFile !== 'string' || lacking.get(entry.id) !== entry.textHash) continue;
+  const file = path.resolve(root, entry.imageFile);
+  if (!file.startsWith(root + path.sep)) continue;
+  try {
+    if (fs.statSync(file).size > 0) ready.add(entry.id);
+  } catch {
+    // Not accepted yet, or deferred to a later cycle.
+  }
+}
+console.log(ready.size);
+NODE
 }
 
 if ! [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$BATCH_SIZE" -lt 1 ] || [ "$BATCH_SIZE" -gt 500 ]; then

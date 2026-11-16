@@ -210,29 +210,11 @@ test('example pool verification accepts a deferred image only when the cycle all
   assert.equal(result.deferredImages, 1);
 });
 
-test('example enrichment publication finishes without waiting for deferred images', () => {
-  const root = mkdtempSync(join(tmpdir(), 'dictprop-example-deferred-publish-'));
-  const sentences = ['The keeper caught it.', 'He fielded at gully.'].map(exampleSentence);
-  const imageFile = `images/${exampleImageFilename(sentences[0].id)}`;
-  mkdirSync(join(root, 'final-reconciliation'), { recursive: true });
-  mkdirSync(join(root, 'final-images', 'images'), { recursive: true });
-  writeJson(join(root, 'source.json'), { version: 1, exportedAt: 1, sentences });
-  writeJson(join(root, 'final-reconciliation', 'final-analysis.json'), { version: 1, entries: [] });
-  writeJson(join(root, 'final-images', 'manifest.json'), { version: 1, entries: [] });
-  writeFileSync(join(root, 'final-images', imageFile), 'accepted');
-  // The accepted image is already published, and the other one was deferred.
-  const wave = join(root, 'publish-state', 'wave-0001');
-  mkdirSync(wave, { recursive: true });
-  writeJson(join(wave, 'manifest.json'), {
-    version: 1,
-    generatedAt: 2,
-    entries: [{ id: sentences[0].id, textHash: sentences[0].textHash, imageFile }],
-  });
-  writeFileSync(join(wave, 'published'), 'published\n');
+/** Runs the example-enrichment publisher as the cycle does, after image generation, and returns its output. */
+function publishAcceptedExampleImages(root: string): string {
   const key = join(root, 'key');
   writeFileSync(key, 'test-key\n');
-
-  const output = execFileSync('bash', [
+  return execFileSync('bash', [
     repoPath('scripts', 'offline', 'dispatch-staged-example-enrichments.sh'), root, '100', 'test-sha',
   ], {
     cwd: REPO_ROOT,
@@ -247,8 +229,70 @@ test('example enrichment publication finishes without waiting for deferred image
       SENTENCE_BRIDGE_KEY_FILE: key,
     },
   });
+}
 
-  assert.match(output, /example-sentence enrichment publication complete: 1\/1/);
+/** Marks the first sentence's image published, as an earlier wave of this cycle did. */
+function publishedWave(root: string, sentence: { id: string; textHash: string }) {
+  const wave = join(root, 'publish-state', 'wave-0001');
+  mkdirSync(wave, { recursive: true });
+  writeJson(join(wave, 'manifest.json'), {
+    version: 1,
+    generatedAt: 2,
+    entries: [{ id: sentence.id, textHash: sentence.textHash, imageFile: `images/${exampleImageFilename(sentence.id)}` }],
+  });
+  writeFileSync(join(wave, 'published'), 'published\n');
+}
+
+test('example enrichment publication finishes without waiting for deferred images', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-example-deferred-publish-'));
+  const sentences = ['The keeper caught it.', 'He fielded at gully.'].map(exampleSentence);
+  mkdirSync(join(root, 'final-reconciliation'), { recursive: true });
+  mkdirSync(join(root, 'final-images', 'images'), { recursive: true });
+  writeJson(join(root, 'source.json'), { version: 1, exportedAt: 1, sentences });
+  writeJson(join(root, 'final-reconciliation', 'final-analysis.json'), { version: 1, entries: [] });
+  // The image manifest lists both sentences, as prepare-sentence-images.mjs writes it.
+  writeJson(join(root, 'final-images', 'manifest.json'), {
+    version: 1,
+    entries: sentences.map(sentence => ({
+      id: sentence.id, textHash: sentence.textHash, imageFile: `images/${exampleImageFilename(sentence.id)}`,
+    })),
+  });
+  // The accepted image is already published, and the other one was deferred.
+  writeFileSync(join(root, 'final-images', 'images', exampleImageFilename(sentences[0].id)), 'accepted');
+  publishedWave(root, sentences[0]);
+
+  assert.match(publishAcceptedExampleImages(root), /example-sentence enrichment publication complete: 1\/1/);
+});
+
+test('example enrichment publication counts only the images its manifest lists for the current text, inside the bundle and not empty', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-example-accepted-count-'));
+  const [published, outside, empty, stale] = [
+    'The keeper caught it.', 'He fielded at gully.', 'She bowled a maiden.', 'They declared at tea.',
+  ].map(exampleSentence);
+  const images = join(root, 'final-images', 'images');
+  const imageFile = (sentence: { id: string }) => `images/${exampleImageFilename(sentence.id)}`;
+  mkdirSync(join(root, 'final-reconciliation'), { recursive: true });
+  mkdirSync(images, { recursive: true });
+  writeJson(join(root, 'source.json'), { version: 1, exportedAt: 1, sentences: [published, outside, empty, stale] });
+  writeJson(join(root, 'final-reconciliation', 'final-analysis.json'), { version: 1, entries: [] });
+  writeJson(join(root, 'final-images', 'manifest.json'), {
+    version: 1,
+    entries: [
+      { id: published.id, textHash: published.textHash, imageFile: imageFile(published) },
+      // None of these three could go out: the file is outside the bundle, empty, or made for older text.
+      { id: outside.id, textHash: outside.textHash, imageFile: '../outside.webp' },
+      { id: empty.id, textHash: empty.textHash, imageFile: imageFile(empty) },
+      { id: stale.id, textHash: sha256('older text'), imageFile: imageFile(stale) },
+    ],
+  });
+  writeFileSync(join(root, 'final-images', imageFile(published)), 'accepted');
+  writeFileSync(join(root, 'final-images', '..', 'outside.webp'), 'accepted');
+  writeFileSync(join(root, 'final-images', imageFile(empty)), '');
+  writeFileSync(join(root, 'final-images', imageFile(stale)), 'accepted');
+  publishedWave(root, published);
+
+  // Only the published image counts, so publication is complete without another wave.
+  assert.match(publishAcceptedExampleImages(root), /example-sentence enrichment publication complete: 1\/1/);
 });
 
 test('example enrichment publication excludes published and production-covered images', () => {
