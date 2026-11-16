@@ -8,11 +8,10 @@ import {
 } from '../../server/src/local-enrichment-markers.ts';
 
 // Cards enriched by either local harness count as current; the marker records which one ran.
-export { hasCurrentLocalAdvancedEnrichment, LOCAL_ADVANCED_ENRICHMENT_PROVIDERS };
-export const advancedCardContentHash = advancedVocabContentHash;
+export { hasCurrentLocalAdvancedEnrichment };
 
-export const LOCAL_ADVANCED_ENRICHMENT_VERSION = 1;
-export const LOCAL_ADVANCED_ENRICHMENT_PROVIDER = 'codex-harness';
+const LOCAL_ADVANCED_ENRICHMENT_VERSION = 1;
+const LOCAL_ADVANCED_ENRICHMENT_PROVIDER = 'codex-harness';
 
 export function markLocalAdvancedEnrichment(
   card,

@@ -152,5 +152,3 @@ export function useAutoPlay() {
     rearmAutoPlay, remainingMs,
   };
 }
-
-export type AutoPlay = ReturnType<typeof useAutoPlay>;

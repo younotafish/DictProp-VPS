@@ -23,23 +23,23 @@ import { parseArgs, promisify } from 'node:util';
 import { createGunzip } from 'node:zlib';
 
 export const MAGIC = Buffer.from('DPB1', 'ascii');
-export const SALT_BYTES = 16;
-export const IV_BYTES = 12;
+const SALT_BYTES = 16;
+const IV_BYTES = 12;
 export const TAG_BYTES = 16;
 export const HEADER_BYTES = MAGIC.length + SALT_BYTES + IV_BYTES;
-export const PBKDF2_ITERATIONS = 600_000;
+const PBKDF2_ITERATIONS = 600_000;
 const PURPOSE_PATTERN = /^[A-Za-z0-9._:-]{1,300}$/;
 const pbkdf2Async = promisify(pbkdf2);
 
 export class BridgeCryptoError extends Error {}
 
-export function defaultKeyFile() {
+function defaultKeyFile() {
   return join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'dictprop', 'sentence_bridge_key');
 }
 
 // The key is the first line of the key file, as `openssl -pass file:` read it, so the same key file
 // and the SENTENCE_BRIDGE_KEY secret keep working across the format change.
-export function normalizeKey(text) {
+function normalizeKey(text) {
   const key = String(text ?? '').split(/\r?\n/, 1)[0];
   if (!key) throw new BridgeCryptoError('SENTENCE_BRIDGE_KEY is empty');
   return key;
@@ -62,7 +62,7 @@ function deriveKey(passphrase, salt) {
   return pbkdf2Async(Buffer.from(passphrase, 'utf8'), salt, PBKDF2_ITERATIONS, 32, 'sha256');
 }
 
-export async function* encryptChunks(source, { passphrase, purpose }) {
+async function* encryptChunks(source, { passphrase, purpose }) {
   const purposeBytes = checkPurpose(purpose);
   const salt = randomBytes(SALT_BYTES);
   const iv = randomBytes(IV_BYTES);
@@ -82,7 +82,7 @@ export async function* encryptChunks(source, { passphrase, purpose }) {
 // The last TAG_BYTES of the stream are held back until the input ends, since only then is it known
 // which bytes are the tag. Plaintext chunks are yielded before the tag is checked, so callers must
 // treat everything yielded as provisional until the generator finishes without throwing.
-export async function* decryptChunks(source, { passphrase, purpose }) {
+async function* decryptChunks(source, { passphrase, purpose }) {
   const purposeBytes = checkPurpose(purpose);
   let pending = Buffer.alloc(0);
   let decipher = null;
@@ -251,7 +251,7 @@ function usable(command, values) {
   return false;
 }
 
-export async function main(argv) {
+async function main(argv) {
   let parsed;
   try {
     parsed = parseArgs({

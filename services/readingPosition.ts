@@ -25,7 +25,7 @@ export interface ReadingPosition {
   f?: 1;
 }
 
-export const MAX_READING_POSITIONS = 8;
+const MAX_READING_POSITIONS = 8;
 export const MAX_ENCODED_POSITIONS = 1024;
 const MAX_TITLE = 60;
 

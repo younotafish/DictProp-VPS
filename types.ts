@@ -70,11 +70,8 @@ export interface SearchResult {
 }
 
 export type {
-  AmericanEnglishStatus,
   SentenceAnalysis,
   SentenceAnalysisTerm,
-  SentenceGrammarAnalysis,
-  SentenceGrammarPoint,
   SentencePronunciationGuide,
 } from './server/src/sentence-analysis';
 

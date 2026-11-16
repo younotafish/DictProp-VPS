@@ -3,7 +3,7 @@ import vm from 'node:vm';
 // A stand-in for the browser around public/sw.js: in-memory Cache Storage, a scripted network, and install, activate
 // and fetch events that keep the lifetime rules the worker depends on. The worker runs unmodified in a vm context.
 
-export const ORIGIN = 'https://dictprop.online';
+const ORIGIN = 'https://dictprop.online';
 
 type RequestLike = string | { url: string };
 
@@ -22,7 +22,7 @@ interface StoredResponse {
 }
 
 /** One cache, keyed by URL. Like the browser's, put reads the response body to the end and match returns copies. */
-export class MemoryCache {
+class MemoryCache {
   private readonly entries = new Map<string, StoredResponse>();
   /** The paths whose puts have completed, in order. */
   readonly stored: string[] = [];
@@ -109,7 +109,7 @@ const CONTENT_TYPES: Record<string, string> = {
 };
 
 /** The content type a server sends for a path. */
-export const contentTypeOf = (path: string): string =>
+const contentTypeOf = (path: string): string =>
   CONTENT_TYPES[path.endsWith('/') ? 'html' : path.slice(path.lastIndexOf('.') + 1)] ?? 'application/octet-stream';
 
 /** The server: scripted responses by path, 404 for anything else, and a switch for going offline. */

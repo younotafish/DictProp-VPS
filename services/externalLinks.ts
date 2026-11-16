@@ -9,10 +9,10 @@ export { EXTERNAL_NAV_EVENT, noteExternalNavigation } from './externalNavigation
 export const youglishUrl = (word: string): string =>
   `https://youglish.com/pronounce/${encodeURIComponent(word)}/english/us`;
 
-export const vocabularyComUrl = (word: string): string =>
+const vocabularyComUrl = (word: string): string =>
   `https://www.vocabulary.com/dictionary/${encodeURIComponent(word)}`;
 
-export const youtubeSearchUrl = (word: string): string =>
+const youtubeSearchUrl = (word: string): string =>
   `https://www.youtube.com/results?search_query=${encodeURIComponent(word)}`;
 
 /** On iOS and iPadOS the /discover/ page is a universal link that opens the TikTok app; elsewhere, search. */
@@ -24,7 +24,7 @@ export const tiktokUrl = (word: string, isIOS: boolean): string =>
 export const playphraseUrl = (word: string): string =>
   `https://www.playphrase.me/#/search?q=${encodeURIComponent(word)}`;
 
-export const wiktionaryUrl = (word: string): string =>
+const wiktionaryUrl = (word: string): string =>
   `https://en.wiktionary.org/wiki/${encodeURIComponent(word)}`;
 
 const NGRAM_YEAR_START = 1800;

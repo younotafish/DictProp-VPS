@@ -87,7 +87,7 @@ const asRecord = (value: unknown): JsonRecord | null =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : null;
 const isStatus = (value: unknown): value is AmericanEnglishStatus => STATUSES.has(value as AmericanEnglishStatus);
 
-export function isSentencePronunciationGuide(value: unknown): value is SentencePronunciationGuide {
+function isSentencePronunciationGuide(value: unknown): value is SentencePronunciationGuide {
   const pronunciation = asRecord(value);
   if (!pronunciation) return false;
   return isString(pronunciation.slowIpa, 2_000) && SLASH_DELIMITED_IPA.test(pronunciation.slowIpa.trim()) &&

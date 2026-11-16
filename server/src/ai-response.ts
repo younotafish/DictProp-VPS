@@ -9,7 +9,6 @@ import {
 
 // The example rules live in an import-free module the offline scripts can load under plain node.
 export {
-  exampleIdentity,
   exampleIssues,
   exampleSetIssues,
   isValidGeneratedExample,

@@ -95,7 +95,7 @@ export interface BackfillTexts {
   library: string[];
 }
 
-export function defaultBackfillTexts(): BackfillTexts {
+function defaultBackfillTexts(): BackfillTexts {
   return {
     catalog: [...getAllRealLifeCatalogSentenceTexts(), ...getAllEssayCatalogSentenceTexts()],
     library: getAllSentenceTexts(),

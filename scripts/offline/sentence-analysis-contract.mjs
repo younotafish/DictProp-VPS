@@ -97,7 +97,7 @@ export function recoverExactGrammarExcerpt(text, excerpt) {
   return best || expanded;
 }
 
-export const sentenceGrammarSchema = {
+const sentenceGrammarSchema = {
   type: 'object',
   additionalProperties: false,
   required: ['structure', 'points'],

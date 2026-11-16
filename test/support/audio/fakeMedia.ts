@@ -99,7 +99,7 @@ export class FakeAudioElement {
   }
 }
 
-export class FakeUtterance {
+class FakeUtterance {
   lang = '';
   rate = 1;
   volume = 1;
@@ -111,7 +111,7 @@ export class FakeUtterance {
 }
 
 /** The parts of speechSynthesis the engine uses; a test fires the utterance's events itself. */
-export class FakeSpeechSynthesis {
+class FakeSpeechSynthesis {
   spoken: FakeUtterance[] = [];
   calls: string[] = [];
   paused = false;
@@ -127,7 +127,7 @@ export class FakeSpeechSynthesis {
 }
 
 /** An AudioBufferSourceNode that records how it was scheduled; a test fires its 'ended' itself. */
-export class FakeBufferSource {
+class FakeBufferSource {
   buffer: { length: number } | null = null;
   loop = false;
   onended: (() => void) | null = null;
@@ -194,7 +194,7 @@ export const installFakeMedia = (options: { speech?: boolean; userAgent?: string
 };
 
 /** navigator.mediaSession as the engine drives it: the state the lock screen shows and the actions it offers. */
-export class FakeMediaSession {
+class FakeMediaSession {
   playbackState: MediaSessionPlaybackState = 'none';
   metadata: unknown = null;
   readonly handlers = new Map<string, () => void>();

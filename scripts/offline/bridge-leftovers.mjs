@@ -29,10 +29,10 @@ const HOUR_MS = 60 * 60 * 1_000;
 // Each cycle's publishers give up after two hours and a manual publisher after four, and deadline.sh
 // caps any publisher at five; each deletes its release when it gives up, so a release idle for six hours
 // has no publisher left.
-export const RELEASE_MAX_AGE_MS = 6 * HOUR_MS;
-export const FAILED_WAVE_MAX_AGE_MS = 7 * 24 * HOUR_MS;
+const RELEASE_MAX_AGE_MS = 6 * HOUR_MS;
+const FAILED_WAVE_MAX_AGE_MS = 7 * 24 * HOUR_MS;
 // Encryption and decryption take minutes, so a temp file a day old belongs to no running one.
-export const BRIDGE_TEMP_MAX_AGE_MS = 24 * HOUR_MS;
+const BRIDGE_TEMP_MAX_AGE_MS = 24 * HOUR_MS;
 
 // Exactly the tags the dispatchers and the essay publisher create, so no other release is ever touched.
 export const PUBLISHER_TAG_PATTERN = new RegExp(
@@ -48,7 +48,7 @@ const CYCLE_DIRECTORY_PATTERN = /^(?:\d+|[0-9a-f]{16})$/;
 
 // GitHub dates a release by its tag's commit, which can be days older than the release itself, so a
 // release was last active at its newest timestamp, its publication and asset uploads included.
-export function releaseActivity(release) {
+function releaseActivity(release) {
   const times = [
     release?.created_at,
     release?.published_at,

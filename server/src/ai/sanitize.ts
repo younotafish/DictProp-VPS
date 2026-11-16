@@ -3,7 +3,7 @@
 import { AiError } from '../ai-client.js';
 
 // A vocabulary scan returns at most this many expressions (the scan prompt asks for no more than 12).
-export const MAX_EXTRACTED_WORDS = 12;
+const MAX_EXTRACTED_WORDS = 12;
 
 export const trimmedString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
@@ -41,7 +41,7 @@ export interface Comparison {
  * Keep only what the comparison view can render: string-only per-word maps, dimensions with a label
  * and some content, examples with at least one sentence. Null when no dimension survives.
  */
-export function sanitizeComparison(raw: Record<string, unknown>, requestedWords: string[]): Comparison | null {
+function sanitizeComparison(raw: Record<string, unknown>, requestedWords: string[]): Comparison | null {
   const dimensions = (Array.isArray(raw.dimensions) ? raw.dimensions : []).flatMap((dimension: unknown) => {
     if (!dimension || typeof dimension !== 'object') return [];
     const fields = dimension as Record<string, unknown>;
@@ -76,7 +76,7 @@ export interface DetectedWord {
 }
 
 /** Only the four scan fields, trimmed; the same expression (ignoring case and spacing) is kept once; at most 12. */
-export function sanitizeDetectedWords(value: unknown): DetectedWord[] {
+function sanitizeDetectedWords(value: unknown): DetectedWord[] {
   const seen = new Set<string>();
   const words: DetectedWord[] = [];
   for (const entry of Array.isArray(value) ? value : []) {

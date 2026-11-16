@@ -9,7 +9,7 @@ import type { SentenceData, StoredItem } from '../types';
 
 export type CatalogKind = 'real-life' | 'essay';
 
-export const CATALOG_PROGRESS_PREFIX: Readonly<Record<CatalogKind, string>> = {
+const CATALOG_PROGRESS_PREFIX: Readonly<Record<CatalogKind, string>> = {
   'real-life': 'real-life-sentence:',
   essay: 'essay-sentence:',
 };

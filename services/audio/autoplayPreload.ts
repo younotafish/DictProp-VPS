@@ -8,9 +8,9 @@ import type { TtsStyle } from '../ttsSettings';
 import { EMPTY_CARD_MS } from './autoplayController';
 
 /** A comfortable reading pace for the estimate, in words per second at normal speed. */
-export const WORDS_PER_SECOND = 2.6;
+const WORDS_PER_SECOND = 2.6;
 /** How much more than the time left the plan covers, for reads that go faster than the estimate. */
-export const PRELOAD_COVER = 1.25;
+const PRELOAD_COVER = 1.25;
 /** The fewest cards a plan covers, however little time is left. */
 export const PRELOAD_MIN_CARDS = 10;
 

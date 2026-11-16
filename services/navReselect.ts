@@ -14,7 +14,7 @@ export type TabReselect = 'scroll-top' | 'focus-search';
 export type TabTapAction = 'switch' | TabReselect | 'ignore';
 
 /** A reselect this soon after a tab switch or the previous reselect does nothing, so a double tap never raises the keyboard. */
-export const RESELECT_GUARD_MS = 500;
+const RESELECT_GUARD_MS = 500;
 
 const TABS_WITH_SEARCH: ReadonlySet<ViewState> = new Set<ViewState>(['notebook', 'sentences']);
 
