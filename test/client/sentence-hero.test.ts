@@ -32,7 +32,6 @@ test('the connected-speech IPA shows between the sentence and its speaker row, l
     assert.ok(line, `${layout}: one paragraph, ${between}`);
     const [, attributes, text] = line;
     assert.equal(text, IPA);
-    assert.match(attributes, /(^| )data-no-lookup="true"/);
     assert.match(attributes, /role="note"/);
     assert.match(attributes, new RegExp(`title="${LABEL.replace(/[()]/g, '\\$&')}"`));
     assert.match(attributes, new RegExp(`aria-label="${LABEL.replace(/[()]/g, '\\$&')}"`));
@@ -51,7 +50,6 @@ test('without the IPA nothing renders in its place, so the speaker row sits wher
     assert.equal(parts(without).between, '', `${layout}: no element, empty or not`);
     assert.equal(render({ layout, connectedIpa: '' }), without);
     assert.equal(render({ layout, connectedIpa: undefined }), without);
-    assert.ok(!without.includes('data-no-lookup'));
     assert.ok(!without.includes(LABEL));
   }
 });

@@ -77,7 +77,6 @@ export function SentenceHero({
       {/* No line, and no space for one, without the IPA. */}
       {connectedIpa && (
         <p
-          data-no-lookup
           role="note"
           className={split
             ? 'mt-3 text-center md:text-left font-mono text-sm sm:text-base leading-relaxed text-indigo-700 break-words'
