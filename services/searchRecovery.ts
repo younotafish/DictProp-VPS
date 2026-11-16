@@ -1,6 +1,7 @@
 import { comparisonKey } from '../types';
 import { defaultSessionStorage, parseJson, type StorageLike } from './browserStorage';
 import { HttpError } from './http';
+import { PENDING_REQUESTS_KEY, SEARCH_RETRIES_KEY } from './searchSessionKeys';
 
 /**
  * A request the search runs, as data: what is kept when a session expires, for running it again after signing in, and
@@ -11,7 +12,6 @@ export type SearchRequest =
   | { kind: 'analyze'; query: string; analyzeMode?: 'batch'; forceAI?: boolean }
   | { kind: 'compare'; words: string[] };
 
-const SEARCH_RETRIES_KEY = 'dictprop_pending_search_retry';
 /** At most this many requests are kept for later, the newest: to run after signing in again, and across a reload. */
 const MAX_KEPT = 20;
 
@@ -110,7 +110,6 @@ export interface PendingRequest {
   at: number;
 }
 
-const PENDING_REQUESTS_KEY = 'search_pending_v1';
 /** A request older than this isn't run again after a reload. */
 const PENDING_MAX_AGE_MS = 60 * 60 * 1000;
 

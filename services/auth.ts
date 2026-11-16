@@ -1,4 +1,5 @@
 import { fetchWithin } from './http';
+import { clearPendingSearches } from './searchSessionKeys';
 import { clearStoredStudySession } from './studySessionStore';
 
 export interface AuthUser {
@@ -129,12 +130,10 @@ export async function logout(): Promise<boolean> {
   }
   clearCachedAuth(); // drop the offline fallback so we don't resurrect the session
   clearStoredStudySession(); // and the study session a reload would bring back
-  // The reload keeps sessionStorage: drop the interrupted lookups and refresh retry so the next account in this tab
-  // doesn't run them. Session expiry doesn't come through here, so its retry after signing in again still works.
-  try {
-    sessionStorage.removeItem('search_pending_v1');
-    sessionStorage.removeItem('dictprop_pending_search_retry');
-  } catch { /* storage unavailable */ }
+  // The reload keeps sessionStorage: drop the interrupted search requests and the session-expiry retries, so the next
+  // account in this tab doesn't run them. Session expiry doesn't come through here, so its retries still run after
+  // signing in again.
+  clearPendingSearches();
   window.location.reload();
   return true;
 }
