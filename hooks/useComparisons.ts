@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { comparisonKey, type ComparisonResult, type StoredComparison } from '../types';
 import { loadComparisons, saveComparisonApi } from '../services/api/comparisons';
 import { warn } from '../services/logger';
+import { requestCompare } from '../services/searchRequests';
 import { mergeComparisons, readCachedComparisons, writeCachedComparisons } from '../components/search/storedComparisons';
 
 // ── Word comparisons (persisted server + local, keyed by the word-set) ──────
@@ -54,7 +55,7 @@ export function useComparisons(userId: string) {
     const key = comparisonKey(words);
     if (!key) return;
     const existing = comparisonsRef.current.find((c) => c.key === key);
-    window.dispatchEvent(new CustomEvent('global-compare', { detail: { words, result: existing?.data ?? null } }));
+    requestCompare({ words, cached: existing?.data ?? null });
   }, []);
 
   return { comparisons, handleCompareReady, handleCompare };

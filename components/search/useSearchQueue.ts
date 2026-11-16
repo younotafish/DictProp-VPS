@@ -7,6 +7,7 @@ import { consumeSearchRetry, describeSearchError, isAuthenticationError, isRetry
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
 import { looksLikeSentence } from '../../services/queryMode';
 import { useLatest } from '../../hooks/useStableValue';
+import { subscribeSearchRequests } from '../../services/searchRequests';
 import { runLookup } from './runLookup';
 import {
   createRefreshLog, findLiveComparison, findLiveLookup, isBusyOf, isQueued, queueUpdate, readyItemsOf, runningCountOf,
@@ -30,10 +31,11 @@ interface Options {
 }
 
 /**
- * The search queue's lifecycle. Lookups, comparisons and sentence scans join it from the search box, from the
- * window's 'global-search' and 'global-compare' events, and from a resume after signing in again; every pending
- * entry starts at once and runs once; each settles as ready, opening in the sheet when that was asked for, or as
- * failed, with the error toast. A finished scan queues a lookup of each expression it found.
+ * The search queue's lifecycle. Lookups, comparisons and sentence scans join it from the search box, from the rest of
+ * the app (services/searchRequests and, until App switches to it, the window's 'global-search' event), and from a
+ * resume after signing in again; every pending entry starts at once and runs once; each settles as ready, opening in
+ * the sheet when that was asked for, or as failed, with the error toast. A finished scan queues a lookup of each
+ * expression it found.
  */
 export function useSearchQueue({
   findSavedByWord, onRefreshReplace, onCompareReady, openWhenReady, showError, clearError, showStatus,
@@ -252,15 +254,14 @@ export function useSearchQueue({
     return () => window.removeEventListener('global-search', handleTrigger);
   }, [enqueue]);
 
-  // Listen for comparison triggers — same queue as search. detail = { words, result? } (result = cached).
-  useEffect(() => {
-    const handleCompareTrigger = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (Array.isArray(detail?.words)) enqueueCompare(detail.words, detail.result ?? null);
-    };
-    window.addEventListener('global-compare', handleCompareTrigger);
-    return () => window.removeEventListener('global-compare', handleCompareTrigger);
-  }, [enqueueCompare]);
+  // Requests from the rest of the app (services/searchRequests), including the ones made before the search loaded.
+  // They go through refs, so the subscription lasts as long as the search does.
+  const enqueueRef = useLatest(enqueue);
+  const enqueueCompareRef = useLatest(enqueueCompare);
+  useEffect(() => subscribeSearchRequests({
+    lookup: ({ query, forceAI }) => enqueueRef.current(query, { forceAI: !!forceAI }),
+    compare: ({ words, cached }) => enqueueCompareRef.current(words, cached),
+  }), [enqueueRef, enqueueCompareRef]);
 
   // Derived state — searches AND comparisons are both queue items, so every count of results includes both; a scan
   // running keeps the search busy without adding to the count.
