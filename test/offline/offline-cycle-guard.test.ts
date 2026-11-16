@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -250,6 +250,38 @@ test('the cycle exits 75 on an unvetted checkout before doing anything else, and
   assert.match(vetted.stdout, /PUBLISH_DEADLINE_SECONDS=86400 would outlast the sweep, .*; capping it at 18000s/);
   assert.match(`${vetted.stdout}${vetted.stderr}`, /Required incremental enrichment input is missing|deferring this cycle/);
   assert.equal(existsSync(join(cycleRoot, '.cycle.lock')), false);
+});
+
+test('the cycle stops at once when its GitHub CLI is missing, empty or not executable, and says how to install it', t => {
+  const { root, work } = setup(t);
+  // No other text job may look active, or the cycle would defer before it reached the check.
+  const bin = join(root, 'bin');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'pgrep'), '#!/bin/sh\nexit 1\n');
+  chmodSync(join(bin, 'pgrep'), 0o755);
+  const gh = join(root, 'gh');
+  const run = () => runCycle(root, work, { GH_BIN: gh, PATH: `${bin}:${process.env.PATH ?? '/usr/bin:/bin'}` });
+  const refusals: Array<[string, () => void]> = [
+    ['missing', () => rmSync(gh, { force: true })],
+    // The shell would run an empty file as an empty script, so every gh call would seem to succeed.
+    ['empty', () => { writeFileSync(gh, ''); chmodSync(gh, 0o755); }],
+    ['not executable', () => { writeFileSync(gh, '#!/bin/sh\nexit 0\n'); chmodSync(gh, 0o644); }],
+  ];
+  for (const [state, prepare] of refusals) {
+    prepare();
+    const refused = run();
+    assert.equal(refused.status, 1, `${state}: ${refused.stdout}${refused.stderr}`);
+    assert.ok(refused.stderr.includes(`Required incremental enrichment input is missing: ${gh} (a non-empty, executable GitHub CLI; ` +
+      "scripts/offline/README.md's Setup says how to install it)"), `${state}: ${refused.stderr}`);
+    assert.equal(existsSync(join(root, 'cycle', '.cycle.lock')), false, state);
+  }
+
+  // A CLI that is there gets the cycle past the check, to the bridge key it also lacks here.
+  chmodSync(gh, 0o755);
+  const passed = run();
+  assert.equal(passed.status, 1, passed.stderr);
+  assert.doesNotMatch(passed.stderr, /GitHub CLI/);
+  assert.ok(passed.stderr.includes(`Required incremental enrichment input is missing: ${join(root, 'no-key')}`), passed.stderr);
 });
 
 test('the cycle moves main up to a newer vps/main, and exits 75 when that changed its own code', t => {

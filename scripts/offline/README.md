@@ -9,6 +9,12 @@ This folder is the Mac's side of DictProp. It holds:
 
 Run everything from the repository root. Each file in this folder has exactly one entry below, under the heading that says how it runs. An entry is a line that starts with ``- `name` — ``. `test/offline/offline-script-index.test.ts` fails when a file has no entry, or when an entry names a file that no longer exists. When you add a script, give it an entry; when you delete one, remove its entry.
 
+## Setup
+
+The cycle and every publisher call the GitHub CLI at `.tools/gh` under the repository root; set `GH_BIN` to use another. Git ignores `.tools/`, so the binary stays out of the public repository and a fresh clone has none: put a `gh` binary there and make it executable. The cycle refuses to start while that file is missing, empty or not executable. The binary the repository tracked as `.gh` until 2026-11-15 can be restored from its history:
+
+    mkdir -p .tools && git cat-file blob f40102e:.gh > .tools/gh && chmod 755 .tools/gh
+
 ## The cycle
 
 The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` starts `run-incremental-example-enrichment.sh` every six hours. The paths in the stages below are relative to the cycle's root, `data/offline-backfill/incremental-example-enrichment/`. Each publishing step waits until production has imported what it sent. When a stage fails without crashing, the runner logs it and usually carries on with the remaining stages, and the cycle then exits 1. To find where the runner calls a script, search the runner for the script's name.

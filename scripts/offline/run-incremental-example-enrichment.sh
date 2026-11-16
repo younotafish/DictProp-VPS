@@ -576,8 +576,10 @@ if [ -n "$ACTIVE_TEXT_JOBS" ]; then
   exit 0
 fi
 
-if [ ! -x "$GH_BIN" ]; then
-  echo "Required incremental enrichment input is missing: $GH_BIN (an executable GitHub CLI)" >&2
+# Git doesn't track the GitHub CLI, so only this check notices it gone. An empty file is refused too: the
+# shell would run it as an empty script, and every gh call would succeed with no output.
+if [ ! -s "$GH_BIN" ] || [ ! -x "$GH_BIN" ]; then
+  echo "Required incremental enrichment input is missing: $GH_BIN (a non-empty, executable GitHub CLI; scripts/offline/README.md's Setup says how to install it)" >&2
   exit 1
 fi
 for required in "$KEY_FILE" "$BASE_SOURCE" "$BASE_ANALYSIS" "$BASE_IMAGE_ROOT/targets.json" "$TSX_BIN"; do
