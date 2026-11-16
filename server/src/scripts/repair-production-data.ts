@@ -178,8 +178,23 @@ const consolidatedIds = new Set([
   ...loserIds,
   ...duplicatePlans.map(plan => plan.survivor.data.id),
 ]);
-// Consolidation normalizes each survivor's SRS and deletes every loser, so neither needs a repair of its own.
-const invalidSrsItems = items.filter(item => !consolidatedIds.has(item.data.id) && (
+
+const sentenceRelinksBySurvivor = new Map<string, any[]>();
+for (const plan of duplicatePlans) {
+  if (!plan.semantic || plan.survivor.type !== 'vocab') continue;
+  const loserKeys = new Set(plan.losers.map((loser: any) => vocabSenseKey(loser.data.word, loser.data.sense)));
+  const survivorKey = vocabSenseKey(plan.survivor.data.word, plan.survivor.data.sense);
+  loserKeys.delete(survivorKey);
+  const linked = items.filter(item => item.type === 'sentence' && !item.isDeleted &&
+    loserKeys.has(vocabSenseKey(item.data.sourceWord, item.data.sourceSense)));
+  sentenceRelinksBySurvivor.set(plan.survivor.data.id, linked);
+}
+const relinkedSentences = [...sentenceRelinksBySurvivor.values()].flat();
+
+// Consolidation normalizes the SRS of each survivor and of each sentence it relinks, and deletes every loser, so none
+// of them needs a repair of its own: a second write from the copy read above would find its row changed and stop.
+const rewrittenIds = new Set([...consolidatedIds, ...relinkedSentences.map(sentence => sentence.data.id)]);
+const invalidSrsItems = items.filter(item => !rewrittenIds.has(item.data.id) && (
   !item.srs || item.srs.id !== item.data.id || item.srs.type !== item.type ||
   SRS_COUNTERS.some(field => finiteNonNegative(item.srs?.[field], -1) < 0)
 ));
@@ -211,17 +226,6 @@ function mergedExamplesFor(plan: (typeof duplicatePlans)[number]): string[] {
   return examples;
 }
 
-const sentenceRelinksBySurvivor = new Map<string, any[]>();
-for (const plan of duplicatePlans) {
-  if (!plan.semantic || plan.survivor.type !== 'vocab') continue;
-  const loserKeys = new Set(plan.losers.map((loser: any) => vocabSenseKey(loser.data.word, loser.data.sense)));
-  const survivorKey = vocabSenseKey(plan.survivor.data.word, plan.survivor.data.sense);
-  loserKeys.delete(survivorKey);
-  const linked = items.filter(item => item.type === 'sentence' && !item.isDeleted &&
-    loserKeys.has(vocabSenseKey(item.data.sourceWord, item.data.sourceSense)));
-  sentenceRelinksBySurvivor.set(plan.survivor.data.id, linked);
-}
-
 const transferImage = db.prepare(`
   INSERT INTO item_images (id, user_id, data, updated_at, mime_type, content_hash)
   SELECT ?, user_id, data, ?, mime_type, content_hash FROM item_images
@@ -229,9 +233,22 @@ const transferImage = db.prepare(`
   ON CONFLICT(id) DO NOTHING
 `);
 const deleteImage = db.prepare('DELETE FROM item_images WHERE id = ? AND user_id = ?');
+const liveRevision = db.prepare('SELECT revision FROM items WHERE id = ? AND user_id = ?');
+// Every row the repair writes or deletes, as it was read above.
+const touchedItems = [
+  ...duplicatePlans.flatMap(plan => [plan.survivor, ...plan.losers]),
+  ...relinkedSentences,
+  ...invalidSrsItems,
+];
 
 let deletedBlobCount = 0;
 const applyRepair = db.transaction(() => {
+  // The library was read before this transaction took the write lock, so a device may have saved one of these rows
+  // in between. Writing or deleting from the copy read above would undo that save: stop before writing anything.
+  for (const item of touchedItems) {
+    const live = liveRevision.get(item.data.id, owner.id) as { revision: number } | undefined;
+    if (live?.revision !== (item.serverRevision ?? 0)) throw new Error(`Item changed during repair: ${item.data.id}`);
+  }
   const now = Date.now();
   for (const plan of duplicatePlans) {
     const survivor = plan.survivor;
@@ -240,6 +257,9 @@ const applyRepair = db.transaction(() => {
       : survivor.data;
     const merged = {
       ...survivor,
+      // Each write carries the revision its copy was read at, 0 for a row stored before revisions existed, so it is
+      // judged by revision, never by clock, and can't replace what an earlier write of this repair made of the row.
+      serverRevision: survivor.serverRevision ?? 0,
       data: mergedData,
       srs: normalizedSrs(survivor, plan.learning.srs),
       savedAt: Math.min(...[survivor, ...plan.losers].map(item => finiteNonNegative(item.savedAt, now))),
@@ -254,6 +274,7 @@ const applyRepair = db.transaction(() => {
     for (const sentence of sentenceRelinksBySurvivor.get(survivor.data.id) || []) {
       const sentenceResult = upsertItem({
         ...sentence,
+        serverRevision: sentence.serverRevision ?? 0,
         data: {
           ...sentence.data,
           sourceWord: survivor.data.word,
@@ -272,6 +293,7 @@ const applyRepair = db.transaction(() => {
   for (const item of invalidSrsItems) {
     const result = upsertItem({
       ...item,
+      serverRevision: item.serverRevision ?? 0,
       srs: normalizedSrs(item),
       updatedAt: nextUpdatedAt(item.updatedAt, now),
     }, owner.id);
@@ -294,7 +316,7 @@ process.stdout.write(`${JSON.stringify({
   duplicateGroupCount: duplicatePlans.length,
   duplicateLoserCount: loserIds.size,
   semanticDuplicateGroupCount: duplicatePlans.filter(plan => plan.semantic).length,
-  relinkedSentenceCount: [...sentenceRelinksBySurvivor.values()].reduce((sum, linked) => sum + linked.length, 0),
+  relinkedSentenceCount: relinkedSentences.length,
   duplicateGroups: duplicatePlans.map(plan => ({
     survivorId: plan.survivor.data.id,
     learningSourceId: plan.learning.data.id,
