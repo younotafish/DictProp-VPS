@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { withoutImageFields } from '../../server/src/corpus-hash.ts';
 import { fileReady, writeJsonAtomic } from './atomic-file.mjs';
 
 export const LEDGER_VERSION = 1;
@@ -102,14 +103,8 @@ export function updateLedger(path, mutate, now = Date.now()) {
   return ledger;
 }
 
-function withoutImageFields(value) {
-  if (Array.isArray(value)) return value.map(withoutImageFields);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value)
-    .filter(([key]) => key !== 'imageUrl')
-    .map(([key, child]) => [key, withoutImageFields(child)]));
-}
-
+// Not corpusSourceHash: this one keeps what the server writes into a saved sentence. Ledger entries are keyed by it, so
+// its value must never change (test/offline/offline-server-imports.test.ts pins it).
 export function contentHash(value) {
   return createHash('sha256').update(JSON.stringify(withoutImageFields(value) ?? null)).digest('hex');
 }
