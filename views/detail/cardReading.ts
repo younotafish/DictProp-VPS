@@ -1,6 +1,6 @@
 import { getItemImageUrl, isPhraseItem, type SearchResult, type SentenceData, type StoredItem, type VocabCard } from '../../types';
 import type { PreloadSession } from '../../components/SessionPreload';
-import { getServerImageVersion, IMAGE_IDB_MARKER } from '../../services/libraryImages';
+import { getServerImageVersion, isLazyImageMarker } from '../../services/libraryImages';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 
 // The sentences a word or phrase card reads aloud. Each reader keeps the rule it has always had; they differ in
@@ -78,8 +78,7 @@ export const preloadSession = (items: readonly StoredItem[], sentenceReview: boo
   const images = new Map<string, string | undefined>();
   for (const item of items) {
     const imageUrl = getItemImageUrl(item);
-    const serverVersion = getServerImageVersion(imageUrl);
-    if (imageUrl === IMAGE_IDB_MARKER || serverVersion !== undefined) images.set(item.data.id, serverVersion);
+    if (isLazyImageMarker(imageUrl)) images.set(item.data.id, getServerImageVersion(imageUrl));
   }
   return { texts, images };
 };
