@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { db, getAllItems, getImageManifest, listAllUsers } from '../db.js';
+import { db, getAllItems, getImageManifest, listAllUsers, type StoredItemRecord } from '../db.js';
 import { detectImageMimeType } from '../image-format.js';
 import {
   collectExpectedExampleSentenceHashes,
@@ -50,11 +50,13 @@ const incompleteCardFields: Record<string, string[]> = Object.fromEntries(
 const usageStatusCounts = Object.fromEntries(USAGE_STATUSES.map(status => [status, 0])) as Record<string, number>;
 let auditedSenseCount = 0;
 
-const checkCardCompleteness = (id: string, card: any) => {
+const checkCardCompleteness = (id: string, card: unknown) => {
+  const fields = fieldsOf(card);
   for (const field of ['sense', 'definition', 'history', 'register', 'mnemonic']) {
-    if (typeof card?.[field] !== 'string' || !card[field].trim()) incompleteCardFields[field].push(id);
+    const value = fields[field];
+    if (typeof value !== 'string' || !value.trim()) incompleteCardFields[field].push(id);
   }
-  if (!Array.isArray(card?.examples) || card.examples.length === 0) incompleteCardFields.examples.push(id);
+  if (!Array.isArray(fields.examples) || fields.examples.length === 0) incompleteCardFields.examples.push(id);
 };
 
 const checkUsage = (id: string, value: unknown, archived: boolean, enforceArchive = true) => {
@@ -195,7 +197,7 @@ for (const row of storedEnrichmentRows()) {
 }
 const exampleSentenceCoverage = summarizeExampleEnrichmentCoverage(allItems, storedExampleCoverage);
 
-const duplicateGroups = (items: any[], keyOf: (item: any) => string) => {
+const duplicateGroups = (items: readonly StoredItemRecord[], keyOf: (item: StoredItemRecord) => string) => {
   const groups = new Map<string, string[]>();
   for (const item of items) {
     const key = keyOf(item);

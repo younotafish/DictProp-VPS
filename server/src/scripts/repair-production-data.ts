@@ -1,6 +1,9 @@
-import { db, deleteUnreferencedBlobs, getAllItems, softDeleteItem, upsertItem, type ItemRead } from '../db.js';
+import {
+  db, deleteUnreferencedBlobs, getAllItems, softDeleteItem, upsertItem, type StoredItemData, type StoredItemRecord,
+} from '../db.js';
 import { backupBeforeWrite, checkpointAfterWrite } from '../import-support.js';
 import { normalizeLabel, vocabSenseKey } from '../library-identity.js';
+import { fieldsOf } from '../local-enrichment-markers.js';
 import { requireOwner } from './support/run.js';
 import { finiteNonNegative, nextUpdatedAt, normalizedSrs, SRS_COUNTERS } from './support/stored-item.js';
 
@@ -83,27 +86,29 @@ const byId = new Map(items.map(item => [item.data.id, item]));
 const imageIds = new Set((db.prepare('SELECT id FROM item_images WHERE user_id = ?').all(owner.id) as Array<{ id: string }>).map(row => row.id));
 // The sentence identity the July duplicate groups were adjudicated by: text without its markers, and the source
 // card, compared as labels (no NFKC, no quote or dash folding).
-const julySentenceKey = (data: { text?: unknown; sourceWord?: unknown; sourceSense?: unknown }) => [
+const julySentenceKey = (data: StoredItemData) => [
   normalizeLabel(String(data.text || '').replace(/\{\{([^{}]+)\}\}/g, '$1').replace(/\[\[([^[\]]+)\]\]/g, '$1')),
   normalizeLabel(data.sourceWord),
   normalizeLabel(data.sourceSense),
 ].join('\u0000');
 
-function contentScore(item: any): number {
-  const data = item.data || {};
+function contentScore(item: StoredItemRecord): number {
+  const data = fieldsOf(item.data);
   let score = data.usageAudit ? 1_000 : 0;
   if (data.analysis) score += 2_000;
-  if (imageIds.has(data.id)) score += 500;
+  if (typeof data.id === 'string' && imageIds.has(data.id)) score += 500;
   for (const field of ['sense', 'chinese', 'ipa', 'definition', 'history', 'register', 'mnemonic', 'imagePrompt']) {
-    if (typeof data[field] === 'string' && data[field].trim()) score += Math.min(100, data[field].length);
+    const value = data[field];
+    if (typeof value === 'string' && value.trim()) score += Math.min(100, value.length);
   }
   for (const field of ['examples', 'synonyms', 'antonyms', 'confusables', 'forms', 'wordFamily']) {
-    if (Array.isArray(data[field])) score += data[field].length * 10;
+    const value = data[field];
+    if (Array.isArray(value)) score += value.length * 10;
   }
   return score;
 }
 
-function learningScore(item: any): [number, number, number] {
+function learningScore(item: StoredItemRecord): [number, number, number] {
   return [
     finiteNonNegative(item.srs?.lastReviewDate),
     finiteNonNegative(item.srs?.totalReviews),
@@ -119,11 +124,11 @@ function compareTuple(left: number[], right: number[]): number {
   return 0;
 }
 
-function assertSameIdentity(group: any[], allowSenseMismatch: boolean): void {
+function assertSameIdentity(group: readonly StoredItemRecord[], allowSenseMismatch: boolean): void {
   const first = group[0];
   if (group.some(item => item.type !== first.type)) throw new Error('Duplicate repair group changed item type');
   if (first.type === 'vocab') {
-    const identityOf = (item: any) => allowSenseMismatch
+    const identityOf = (item: StoredItemRecord) => allowSenseMismatch
       ? normalizeLabel(item.data.word)
       : vocabSenseKey(item.data.word, item.data.sense);
     const key = identityOf(first);
@@ -151,7 +156,8 @@ const duplicateGroups = [
   })),
 ];
 const duplicatePlans = duplicateGroups.flatMap(({ ids, semantic, preferredSurvivorId }) => {
-  const live = ids.map(id => byId.get(id)).filter((item): item is ItemRead => item !== undefined && !item.isDeleted);
+  const live = ids.map(id => byId.get(id))
+    .filter((item): item is StoredItemRecord => item !== undefined && !item.isDeleted);
   if (live.length < 2) return [];
   assertSameIdentity(live, semantic);
   const content = [...live].sort((left, right) =>
@@ -173,16 +179,16 @@ const duplicatePlans = duplicateGroups.flatMap(({ ids, semantic, preferredSurviv
   }];
 });
 
-const loserIds = new Set(duplicatePlans.flatMap(plan => plan.losers.map((item: any) => item.data.id)));
+const loserIds = new Set(duplicatePlans.flatMap(plan => plan.losers.map(item => item.data.id)));
 const consolidatedIds = new Set([
   ...loserIds,
   ...duplicatePlans.map(plan => plan.survivor.data.id),
 ]);
 
-const sentenceRelinksBySurvivor = new Map<string, any[]>();
+const sentenceRelinksBySurvivor = new Map<string, StoredItemRecord[]>();
 for (const plan of duplicatePlans) {
   if (!plan.semantic || plan.survivor.type !== 'vocab') continue;
-  const loserKeys = new Set(plan.losers.map((loser: any) => vocabSenseKey(loser.data.word, loser.data.sense)));
+  const loserKeys = new Set(plan.losers.map(loser => vocabSenseKey(loser.data.word, loser.data.sense)));
   const survivorKey = vocabSenseKey(plan.survivor.data.word, plan.survivor.data.sense);
   loserKeys.delete(survivorKey);
   const linked = items.filter(item => item.type === 'sentence' && !item.isDeleted &&
@@ -320,7 +326,7 @@ process.stdout.write(`${JSON.stringify({
   duplicateGroups: duplicatePlans.map(plan => ({
     survivorId: plan.survivor.data.id,
     learningSourceId: plan.learning.data.id,
-    loserIds: plan.losers.map((item: any) => item.data.id),
+    loserIds: plan.losers.map(item => item.data.id),
     semantic: plan.semantic,
   })),
   invalidSrsCount: invalidSrsItems.length,
