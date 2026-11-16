@@ -113,8 +113,8 @@ export function useSentencePlayback({
   // sentence's own voice, inside the tap. The speakers show the whole sentence; a clip of it already playing moves to
   // the word in place, else its clip starts there once its timings arrive within 400 ms, else the rest of the sentence
   // is read without starting the Kokoro download (services/neuralTts.ts speakNaturalAt). Auto-play owns the audio while
-  // it runs, so then the tap only moves its clip. Async for useSentenceGestures' sake; nothing is awaited.
-  const playFromWordOffset = useCallback(async (offset: number) => {
+  // it runs, so then the tap only moves its clip.
+  const playFromWordOffset = useCallback((offset: number) => {
     const s = currentSentenceRef.current;
     if (!s) return;
     const text = (s.data as SentenceData).text || '';

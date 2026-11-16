@@ -19,7 +19,7 @@ interface SentenceGesturesOptions {
   goToSentence: (nextIndex: number) => void;
   handleRemember: () => void;
   toggleSentencePlayback: () => void;
-  playFromWordOffset: (offset: number) => Promise<void>;
+  playFromWordOffset: (offset: number) => void;
 }
 
 /**
@@ -218,7 +218,7 @@ export function useSentenceGestures({
     e.stopPropagation();
     if (window.getSelection()?.toString().trim()) return; // finishing a text selection, not a tap
     const offset = Number(word.dataset.wordOffset);
-    if (Number.isFinite(offset)) void playFromWordOffset(offset);
+    if (Number.isFinite(offset)) playFromWordOffset(offset);
   };
 
   // Laptops mirror the phone gestures: a click plays from the clicked word, like a one-finger tap, and
