@@ -51,6 +51,12 @@ test('a tap on the auto-play button starts it, opens or closes its panel while i
   assert.equal(autoPlayFabAction({ autoPlaying: true, paused: true }), 'resume');
 });
 
+test('a long press on the auto-play button opens its panel, paused or not, and starts auto-play while it\'s off', () => {
+  assert.equal(autoPlayFabAction({ autoPlaying: true, paused: false, longPress: true }), 'open-panel');
+  assert.equal(autoPlayFabAction({ autoPlaying: true, paused: true, longPress: true }), 'open-panel');
+  assert.equal(autoPlayFabAction({ autoPlaying: false, paused: false, longPress: true }), 'start');
+});
+
 test('the panel\'s Duration stands still while auto-play is paused', () => {
   const panel = sentenceControls({ showPanel: true, paused: true, countdownFrozenMs: 125_000 });
   assert.match(panel, /Duration<\/span>2:05<\/button>/);

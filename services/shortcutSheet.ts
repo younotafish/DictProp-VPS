@@ -5,7 +5,8 @@ import { TAB_KEYS } from '../hooks/useAppShortcuts';
  * The gestures and shortcuts sheet (components/KeyboardHelpModal) as data, so a test can pin what it says. Each row
  * describes a live handler in that handler's terms; a change to a key or a gesture edits its row here in the same
  * commit. The rows come from:
- * - Touch: views/detail/useSentenceGestures.ts, useWordGestures.ts and touchGestures.ts; services/navReselect.ts.
+ * - Touch: views/detail/useSentenceGestures.ts, useWordGestures.ts and touchGestures.ts, the auto-play button's long press
+ *   (views/detail/SentencePlaybackControls.tsx); services/navReselect.ts.
  * - Navigation: hooks/useAppShortcuts.ts (TAB_KEYS, ?, Escape, ⌘Z), components/GlobalSearch.tsx (⌘F), views/Notebook.tsx
  *   (Escape), the Real Life and essay screens (Escape).
  * - Card view: views/detail/cardKeys.ts handleWordKey, hooks/useKeyboardNavigation.ts, views/detail/useWordGestures.ts.
@@ -73,6 +74,7 @@ const SECTIONS: readonly ShortcutSection[] = [
       { keys: ['Swipe up'], label: 'From the bottom of a card or sentence: the next one' },
       { keys: ['Swipe down'], label: 'From the top: the previous one; a short pull at a card’s top shows its header' },
       { keys: ['Tap the top of a card'], label: 'The top quarter reads example 1; the next quarter, example 2' },
+      { keys: ['Long-press auto-play'], label: 'In a sentence: open the auto-play panel (a tap resumes a paused auto-play)' },
       { keys: ['Tap the current tab'], label: 'Jump to its top; tap again at the top to search' },
     ],
   },

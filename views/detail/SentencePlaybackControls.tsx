@@ -1,7 +1,9 @@
+import { useRef } from 'react';
 import { AudioLines, Play, X } from 'lucide-react';
 import { SpeechStyleToggle } from '../../components/SpeechStyleToggle';
 import { PlaybackSpeedToggle } from '../../components/PlaybackSpeedToggle';
 import { AutoPlayCountdown } from '../../components/AutoPlayCountdown';
+import { useLongPress } from '../notebook/useLongPress';
 import type { TtsStyle } from '../../services/ttsSettings';
 
 interface SentencePlaybackControlsProps {
@@ -14,6 +16,8 @@ interface SentencePlaybackControlsProps {
   onAutoPlayButton: () => void;
   /** Resumes paused auto-play. */
   onResume?: () => void;
+  /** Opens the panel while auto-play runs, paused or not (a long press on the auto-play button). */
+  onOpenPanel?: () => void;
   showPanel: boolean;
   onClosePanel: () => void;
   /** When the running countdown began, moved on by the time spent paused; null while stopped or paused. */
@@ -30,11 +34,17 @@ interface SentencePlaybackControlsProps {
   onStop: () => void;
 }
 
-/** What a tap on the auto-play button does: start auto-play (and open its panel), resume it, or open or close its panel. */
-export type AutoPlayFabAction = 'start' | 'resume' | 'toggle-panel';
+/**
+ * What the auto-play button does: start auto-play (and open its panel); while it runs, a tap opens or closes the panel,
+ * or resumes it while paused, and a long press opens the panel either way.
+ */
+export type AutoPlayFabAction = 'start' | 'resume' | 'toggle-panel' | 'open-panel';
 
-export const autoPlayFabAction = ({ autoPlaying, paused }: { autoPlaying: boolean; paused: boolean }): AutoPlayFabAction =>
-  !autoPlaying ? 'start' : paused ? 'resume' : 'toggle-panel';
+export const autoPlayFabAction = ({ autoPlaying, paused, longPress = false }: {
+  autoPlaying: boolean;
+  paused: boolean;
+  longPress?: boolean;
+}): AutoPlayFabAction => !autoPlaying ? 'start' : longPress ? 'open-panel' : paused ? 'resume' : 'toggle-panel';
 
 /**
  * Sentence review's floating playback cluster: the speech style on the primary surface, and the auto-play button,
@@ -43,15 +53,27 @@ export const autoPlayFabAction = ({ autoPlaying, paused }: { autoPlaying: boolea
  * auto-play clears the search button, at any safe-area inset (test/client/card-float-geometry.test.ts).
  */
 export function SentencePlaybackControls({
-  onSpeechStyleChange, autoPlaying, paused = false, onAutoPlayButton, onResume, showPanel, onClosePanel,
+  onSpeechStyleChange, autoPlaying, paused = false, onAutoPlayButton, onResume, onOpenPanel, showPanel, onClosePanel,
   countdownStartedAt, countdownFrozenMs = null, timerMinutes, onCycleTimer, repeats, onCycleRepeats, gap, onCycleGap,
   onStop,
 }: SentencePlaybackControlsProps) {
   const pausedAutoPlay = autoPlaying && paused;
-  const onFabClick = () => {
-    if (autoPlayFabAction({ autoPlaying, paused }) === 'resume') onResume?.();
-    else onAutoPlayButton();
+  const onFab = (longPress: boolean) => {
+    switch (autoPlayFabAction({ autoPlaying, paused, longPress })) {
+      case 'resume': onResume?.(); return;
+      case 'open-panel': onOpenPanel?.(); return;
+      case 'start': case 'toggle-panel': onAutoPlayButton(); return;
+    }
   };
+  // A long press (500 ms) opens the panel; the click that ends it is not also a tap. A touch can report one press twice
+  // (its timer and the context menu), and a second start would turn auto-play off again, so a press acts once.
+  const lastLongPressAt = useRef(-Infinity);
+  const { pressHandlers, isClickSuppressed } = useLongPress(() => {
+    const now = Date.now();
+    if (now - lastLongPressAt.current < 1000) return;
+    lastLongPressAt.current = now;
+    onFab(true);
+  });
   return (
     <div className="fixed bottom-[max(2.75rem,calc(env(safe-area-inset-bottom)+2.25rem))] right-4 z-[80] flex items-center gap-2">
       <SpeechStyleToggle
@@ -98,7 +120,8 @@ export function SentencePlaybackControls({
           </div>
         )}
         <button
-          onClick={onFabClick}
+          {...pressHandlers}
+          onClick={() => { if (!isClickSuppressed()) onFab(false); }}
           className={`w-11 h-11 rounded-full shadow-lg flex items-center justify-center transition-all ${
             autoPlaying
               ? 'bg-emerald-500 text-white hover:bg-emerald-600'

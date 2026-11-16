@@ -537,6 +537,7 @@ export function SentenceReviewView({
         paused={sentenceAutoPlayPaused}
         onAutoPlayButton={handleSentenceAutoPlayFab}
         onResume={autoPlayReader.resume}
+        onOpenPanel={() => setShowSentenceAutoPlayPanel(true)}
         showPanel={showSentenceAutoPlayPanel}
         onClosePanel={() => setShowSentenceAutoPlayPanel(false)}
         countdownStartedAt={countdownStartedAt}
