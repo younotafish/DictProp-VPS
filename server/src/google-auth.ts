@@ -1,16 +1,21 @@
 import {
   createLocalJWKSet,
+  errors,
   jwtVerify,
   type JSONWebKeySet,
   type JWTPayload,
 } from 'jose';
 import { createHash, randomBytes } from 'crypto';
-import { proxyFetch } from './proxy-fetch.js';
+import { proxyFetch, type FetchLike } from './proxy-fetch.js';
 
 const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
 const GOOGLE_ISSUERS = ['accounts.google.com', 'https://accounts.google.com'];
+const JWKS_TIMEOUT_MS = 10_000;
 
-let cachedJwks: { value: JSONWebKeySet; expiresAt: number } | null = null;
+/** Google's signing keys couldn't be had: a Google or network failure, not a bad token. */
+export class GoogleKeysUnavailableError extends Error {
+  name = 'GoogleKeysUnavailableError';
+}
 
 export interface GoogleIdentity extends JWTPayload {
   sub: string;
@@ -23,28 +28,6 @@ export interface GoogleIdentity extends JWTPayload {
 function cacheMaxAge(header: string | null): number {
   const seconds = Number(header?.match(/(?:^|,)\s*max-age=(\d+)/i)?.[1]);
   return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 60 * 60 * 1000;
-}
-
-async function loadGoogleJwks(forceRefresh = false): Promise<JSONWebKeySet> {
-  if (!forceRefresh && cachedJwks && cachedJwks.expiresAt > Date.now()) return cachedJwks.value;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
-  let response: Response;
-  try {
-    response = await proxyFetch(GOOGLE_JWKS_URL, {
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-  if (!response.ok) throw new Error(`Google signing keys unavailable: ${response.status}`);
-  const value = await response.json() as JSONWebKeySet;
-  if (!value || !Array.isArray(value.keys) || value.keys.length === 0) {
-    throw new Error('Google signing keys response is invalid');
-  }
-  cachedJwks = { value, expiresAt: Date.now() + cacheMaxAge(response.headers.get('cache-control')) };
-  return value;
 }
 
 export async function verifyGoogleIdTokenWithJwks(
@@ -67,20 +50,60 @@ export async function verifyGoogleIdTokenWithJwks(
   return payload as GoogleIdentity;
 }
 
-export async function verifyGoogleIdToken(idToken: string, audience: string): Promise<GoogleIdentity> {
-  const firstKeys = await loadGoogleJwks();
-  try {
-    return await verifyGoogleIdTokenWithJwks(idToken, audience, firstKeys);
-  } catch (error) {
-    // Google rotates keys. Refresh once before treating a signature failure as invalid.
-    const refreshedKeys = await loadGoogleJwks(true);
+export interface GoogleIdTokenVerifierDependencies {
+  fetch?: FetchLike;
+  now?: () => number;
+}
+
+/** Verify Google id_tokens against Google's signing keys, which it caches for as long as Google says. */
+export function createGoogleIdTokenVerifier({ fetch = proxyFetch, now = Date.now }: GoogleIdTokenVerifierDependencies = {}) {
+  let cached: { value: JSONWebKeySet; expiresAt: number } | null = null;
+
+  async function loadKeys(forceRefresh: boolean): Promise<JSONWebKeySet> {
+    if (!forceRefresh && cached && cached.expiresAt > now()) return cached.value;
+    // The deadline covers reading the keys, not only the response headers.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), JWKS_TIMEOUT_MS);
     try {
-      return await verifyGoogleIdTokenWithJwks(idToken, audience, refreshedKeys);
-    } catch {
-      throw error;
+      const response = await fetch(GOOGLE_JWKS_URL, { headers: { Accept: 'application/json' }, signal: controller.signal });
+      if (!response.ok) throw new GoogleKeysUnavailableError(`Google signing keys unavailable: ${response.status}`);
+      const value = await response.json() as JSONWebKeySet;
+      if (!value || !Array.isArray(value.keys) || value.keys.length === 0) {
+        throw new GoogleKeysUnavailableError('Google signing keys response is invalid');
+      }
+      cached = { value, expiresAt: now() + cacheMaxAge(response.headers.get('cache-control')) };
+      return value;
+    } catch (error) {
+      if (error instanceof GoogleKeysUnavailableError) throw error;
+      throw new GoogleKeysUnavailableError(`Google signing keys unavailable: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      clearTimeout(timeout);
     }
   }
+
+  async function verify(idToken: string, audience: string): Promise<GoogleIdentity> {
+    const firstKeys = await loadKeys(false);
+    try {
+      return await verifyGoogleIdTokenWithJwks(idToken, audience, firstKeys);
+    } catch (error) {
+      // Google rotates its keys, so a token signed with a key this copy lacks earns one fresh copy. Any other
+      // failure, an expired token or a wrong audience, is the token's.
+      if (!(error instanceof errors.JWKSNoMatchingKey) && !(error instanceof errors.JWSSignatureVerificationFailed)) {
+        throw error;
+      }
+      const refreshedKeys = await loadKeys(true);
+      try {
+        return await verifyGoogleIdTokenWithJwks(idToken, audience, refreshedKeys);
+      } catch {
+        throw error;
+      }
+    }
+  }
+
+  return { verify };
 }
+
+export const verifyGoogleIdToken = createGoogleIdTokenVerifier().verify;
 
 /**
  * A PKCE (S256) pair: the login sends the challenge, the token exchange the verifier, so an intercepted

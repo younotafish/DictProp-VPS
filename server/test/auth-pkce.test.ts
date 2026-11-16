@@ -109,7 +109,7 @@ test('at most four token exchanges run at once; a fifth is told to retry and kee
   const failing = callback(app, state, cookieHeader);
   await until(() => exchanges.length === 5);
   exchanges[4].release(new Response('denied', { status: 400 }));
-  assert.equal((await failing).status, 500);
+  assert.equal((await failing).status, 502);
   const retried = callback(app, state, cookieHeader);
   await until(() => exchanges.length === 6);
   exchanges[5].release(Response.json({ id_token: 'signed-by-google' }));

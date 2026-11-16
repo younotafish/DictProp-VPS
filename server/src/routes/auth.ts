@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto';
 import { env } from '../env.js';
 import { proxyFetch, type FetchLike } from '../proxy-fetch.js';
 import { resolveSession, SESSION_COOKIE } from '../middleware/auth.js';
-import { createPkcePair, verifyGoogleIdToken, type GoogleIdentity } from '../google-auth.js';
+import { createPkcePair, GoogleKeysUnavailableError, verifyGoogleIdToken, type GoogleIdentity } from '../google-auth.js';
 import { CANONICAL_ORIGIN, forwardedHost, forwardedProto, isWwwHost } from '../canonical-host.js';
 import {
   findUserByGoogleId,
@@ -21,6 +21,9 @@ import { sanitizeAuthReturnTo } from '../auth-return.js';
 const MAX_TOKEN_EXCHANGES = 4;
 // The state cookie is "<state>.<PKCE verifier>": the state's UUID and 32 random bytes in base64url.
 const OAUTH_STATE_COOKIE = /^([0-9a-f-]{36})\.([A-Za-z0-9_-]{43})$/;
+const TOKEN_EXCHANGE_TIMEOUT_MS = 30_000;
+// Google's side of sign-in failed: its token endpoint or its signing keys, not anything the visitor sent.
+const GOOGLE_UNAVAILABLE = 'Google sign-in is unavailable';
 
 export interface AuthRouteDependencies {
   fetch?: FetchLike;
@@ -93,14 +96,20 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
 
   // GET /api/auth/callback — Google redirects here with ?code=...&state=...
   authRoutes.get('/callback', async (c) => {
-    const code = c.req.query('code');
-    const state = c.req.query('state');
-    const saved = getCookie(c, 'oauth_state')?.match(OAUTH_STATE_COOKIE);
-    const returnTo = sanitizeAuthReturnTo(getCookie(c, 'oauth_return_to'));
     const clearSignInCookies = () => {
       deleteCookie(c, 'oauth_state', { path: '/api/auth/callback' });
       deleteCookie(c, 'oauth_return_to', { path: '/api/auth/callback' });
     };
+    // A cancelled or refused sign-in comes back with ?error= and no code: return to the app's sign-in screen.
+    // Not to returnTo: a private site would send the visitor straight back to Google.
+    if (c.req.query('error')) {
+      clearSignInCookies();
+      return c.redirect('/');
+    }
+    const code = c.req.query('code');
+    const state = c.req.query('state');
+    const saved = getCookie(c, 'oauth_state')?.match(OAUTH_STATE_COOKIE);
+    const returnTo = sanitizeAuthReturnTo(getCookie(c, 'oauth_return_to'));
 
     // Without the cookie its own login set there is no verifier, so a callback can't redeem a code it didn't
     // start, even an intercepted one.
@@ -119,12 +128,13 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
     let payload: GoogleIdentity;
     tokenExchanges++;
     try {
-      // Exchange code for tokens — MUST use proxyFetch (system firewall blocks native fetch)
+      // Exchange code for tokens — MUST use proxyFetch (system firewall blocks native fetch). The deadline
+      // covers reading the response, not only its headers.
+      let idToken: string | undefined;
       const tokenController = new AbortController();
-      const tokenTimeout = setTimeout(() => tokenController.abort(), 30_000);
-      let tokenRes: Response;
+      const tokenTimeout = setTimeout(() => tokenController.abort(), TOKEN_EXCHANGE_TIMEOUT_MS);
       try {
-        tokenRes = await fetchToken('https://oauth2.googleapis.com/token', {
+        const tokenRes = await fetchToken('https://oauth2.googleapis.com/token', {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({
@@ -137,24 +147,29 @@ export function createAuthRoutes(deps: AuthRouteDependencies = {}) {
           }).toString(),
           signal: tokenController.signal,
         });
+        if (!tokenRes.ok) {
+          console.error(`Google token exchange refused (${tokenRes.status}):`, await tokenRes.text());
+          return c.json({ error: GOOGLE_UNAVAILABLE }, 502);
+        }
+        idToken = (await tokenRes.json() as { id_token?: string }).id_token;
+      } catch (error) {
+        console.error('Google token exchange did not complete:', error instanceof Error ? error.message : error);
+        return c.json({ error: GOOGLE_UNAVAILABLE }, 502);
       } finally {
         clearTimeout(tokenTimeout);
       }
-
-      if (!tokenRes.ok) {
-        const err = await tokenRes.text();
-        console.error('Google token exchange failed:', err);
-        return c.json({ error: 'OAuth token exchange failed' }, 500);
-      }
-
-      const tokens = await tokenRes.json() as { id_token?: string };
-      if (!tokens.id_token) {
-        return c.json({ error: 'No id_token in response' }, 500);
+      if (!idToken) {
+        console.error('Google token exchange returned no id_token');
+        return c.json({ error: GOOGLE_UNAVAILABLE }, 502);
       }
 
       try {
-        payload = await verifyIdToken(tokens.id_token, env.GOOGLE_CLIENT_ID);
+        payload = await verifyIdToken(idToken, env.GOOGLE_CLIENT_ID);
       } catch (error) {
+        if (error instanceof GoogleKeysUnavailableError) {
+          console.error('Google id_token not checked:', error.message);
+          return c.json({ error: GOOGLE_UNAVAILABLE }, 502);
+        }
         console.warn('Google id_token verification failed:', error instanceof Error ? error.message : error);
         return c.json({ error: 'Invalid id_token claims' }, 400);
       }
