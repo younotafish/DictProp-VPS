@@ -192,7 +192,7 @@ const SECTIONS: readonly ShortcutSection[] = [
       { keys: ['←', '→'], label: 'Meanings' },
       { keys: ['↑', '↓'], label: 'Results' },
       { keys: ['S'], label: 'Save' },
-      { keys: ['Shift', 'S'], label: 'Save all' },
+      { keys: ['Shift', 'S'], label: 'Save every meaning' },
       { keys: ['P'], label: 'Pronounce' },
       { keys: ['E'], label: 'Examples' },
       { keys: ['Space'], label: 'Play or pause' },

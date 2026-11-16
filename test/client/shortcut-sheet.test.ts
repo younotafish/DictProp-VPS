@@ -97,10 +97,11 @@ test('each change that shipped with this release has its row', () => {
     [['Esc'], 'Leave the answer box; then end the session early, or close the summary'],
     [['R'], 'Resume an ended session'],
   ] as const) assert.ok(hasRow(at('study'), [...keys], label), label);
-  // The search sheet's keys (UX-27), and Enter's deliberate lookup in the box (d9d042a).
+  // The search sheet's keys (UX-27), and Enter's deliberate lookup in the box (d9d042a). Shift S saves every meaning of
+  // the open result, as the header's 'Save all N' does, not every result, as the strip's 'Save all' does.
   for (const [keys, label] of [
     [['⌘', 'F'], 'Look up'], [['Enter'], 'In the box: look up what you typed'], [['Enter'], 'On an empty box: open the results'],
-    [['←', '→'], 'Meanings'], [['↑', '↓'], 'Results'], [['S'], 'Save'], [['Shift', 'S'], 'Save all'], [['P'], 'Pronounce'],
+    [['←', '→'], 'Meanings'], [['↑', '↓'], 'Results'], [['S'], 'Save'], [['Shift', 'S'], 'Save every meaning'], [['P'], 'Pronounce'],
     [['E'], 'Examples'], [['Space'], 'Play or pause'], [['⌘', '1–4'], 'Read example 1–4'], [['Esc'], 'Close'],
   ] as const) assert.ok(hasRow(at('search'), [...keys], label), label);
   // Paging a sentence with the trackpad (UX-06).
