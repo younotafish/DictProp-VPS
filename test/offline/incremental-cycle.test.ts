@@ -177,6 +177,8 @@ interface Scenario {
   // Files an earlier cycle left in the cycle root, with their contents.
   seed?: Record<string, string>;
   env?: Record<string, string>;
+  // The baseline image root under the fixture's base/, final-images unless given.
+  baseImageRoot?: string;
 }
 
 const writeFile = (path: string, value: unknown) => {
@@ -226,9 +228,8 @@ while getopts f:p: opt; do case "$opt" in f) file=$OPTARG ;; p) pid=$OPTARG ;; *
   writeFileSync(join(root, 'key'), 'test-key\n');
   writeFile(join(root, 'base', 'source.json'), { sentences: [] });
   writeFile(join(root, 'base', 'final-reconciliation', 'final-analysis.json'), { entries: [] });
-  // The bulk pool expects two images and has accepted one.
-  writeFile(join(root, 'base', 'final-images', 'targets.json'), { targets: [{ imageId: 'a' }, { imageId: 'b' }] });
-  mkdirSync(join(root, 'base', 'final-images', 'images'));
+  // The baseline's accepted images, which the example image stage links in.
+  mkdirSync(join(root, 'base', 'final-images', 'images'), { recursive: true });
   writeFileSync(join(root, 'base', 'final-images', 'images', 'a.webp'), 'image');
   return { root, work, bin, stub, head: git(work, 'rev-parse', 'HEAD') };
 }
@@ -251,7 +252,7 @@ async function runCycle(fixture: Fixture, name: string, scenario: Scenario) {
     'scripts/offline/run-incremental-example-enrichment.sh',
     join(scenarioRoot, 'cycle'),
     join(fixture.root, 'base', 'source.json'),
-    join(fixture.root, 'base', 'final-images'),
+    join(fixture.root, 'base', scenario.baseImageRoot ?? 'final-images'),
   ], {
     cwd: fixture.work,
     env: {
@@ -322,6 +323,7 @@ const SCENARIOS: Record<string, Scenario> = {
     seed: { 'item-images/images/item-image-0.webp': 'image' },
   },
   'bad-setting': { env: { INCREMENTAL_VOCAB_LOOKBACK_HOURS: 'week' } },
+  'no-base-images': { baseImageRoot: 'missing-images' },
   previous: {
     seed: {
       'unfiltered-source.json': '{}\n',
@@ -466,7 +468,6 @@ test('a full cycle completes, reconciles and publishes every stage in order', as
     'publishing 2 locally generated saved-word/phrase/sentence image(s)',
     'generating detailed Claude claude-opus-5-5 explanations for 2 production gap(s)',
     'publishing validated explanations before their images',
-    'bulk image pipeline has 1/2 accepted; continuing with incremental images',
     'generating 2 missing example image(s) locally and judging them with Claude claude-opus-5-5',
     'publishing verified incremental explanation-image pairs',
     'incremental example-enrichment cycle complete: 3 post-baseline sentence(s)',
@@ -599,6 +600,14 @@ test('a setting that is not a positive integer stops the cycle before it takes t
   assert.deepEqual(result.stderr, ['INCREMENTAL_VOCAB_LOOKBACK_HOURS must be a positive integer']);
   assert.deepEqual(result.trace, []);
   assert.equal(existsSync(join(fixture.root, 'bad-setting', 'cycle')), false);
+});
+
+test('a baseline image root without its images folder stops the cycle before it exports anything', async () => {
+  const result = await cycle('no-base-images');
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.stderr, ['Required incremental enrichment input is missing: <root>/base/missing-images/images']);
+  assert.deepEqual(result.trace, []);
+  assert.equal(result.lock, false);
 });
 
 test('a model that stops answering after a failed stage ends the cycle there', async () => {

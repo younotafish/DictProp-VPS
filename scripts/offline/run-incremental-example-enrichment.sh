@@ -41,6 +41,8 @@ IMAGE_MODEL="${IMAGE_MODEL:-krea2}"
 IMAGE_MODEL_LABEL="${IMAGE_MODEL_LABEL:-krea/Krea-2-Turbo}"
 IMAGE_MODEL_QUANTIZE="${IMAGE_MODEL_QUANTIZE:-}"
 IMAGE_STEPS="${IMAGE_STEPS:-8}"
+# Both image stages render 16:9 candidates at this size, numbered from 1, and judge them in chunks of 64.
+readonly IMAGE_WIDTH=1024 IMAGE_HEIGHT=576 IMAGE_FIRST_CANDIDATE=1 IMAGE_CHUNK_SIZE=64
 VOCAB_COMPLETION_BATCH_SIZE="${VOCAB_COMPLETION_BATCH_SIZE:-8}"
 SENTENCE_ANALYSIS_BATCH_SIZE="${SENTENCE_ANALYSIS_BATCH_SIZE:-4}"
 INCREMENTAL_VOCAB_BATCH_SIZE="${INCREMENTAL_VOCAB_BATCH_SIZE:-100}"
@@ -135,6 +137,8 @@ stage_failed() {
 
 # What the cycle's last log line says; the example stage, which runs last, sets it.
 CYCLE_MESSAGE=""
+# How many sentences the running sentence stage works on: those of its source not waiting out a failure backoff.
+SENTENCE_COUNT=0
 finish_cycle() {
   log "$1"
   "$NODE_BIN" scripts/offline/failure-ledger.mjs summary "$FAILURE_LEDGER" || true
@@ -180,19 +184,63 @@ ensure_analysis_cache() {
   fi
 }
 
-# run_image_stage LEDGER_STAGE TARGETS IMAGES STAGE LOOP...: runs the image loop LOOP within the image
-# stage's time and records each target's outcome in the failure ledger, so images deferred after too many
-# rejected candidates stop being rendered every cycle. A loop that failed fails STAGE, and the model must
-# still answer.
+# run_image_stage LEDGER_STAGE TARGETS ROOT STAGE: renders TARGETS with the image loop within the image stage's
+# time, keeping its candidates, the accepted images and this cycle's working state under ROOT, and records each
+# target's outcome in the failure ledger, so images deferred after too many rejected candidates stop being
+# rendered every cycle. A loop that failed fails STAGE, and the model must still answer.
 run_image_stage() {
-  local ledger_stage="$1" targets="$2" images="$3" stage="$4" status=0
-  shift 4
-  run_stage "$IMAGE_STAGE_TIMEOUT_SECONDS" "$@" || status=$?
+  local ledger_stage="$1" targets="$2" root="$3" stage="$4" status=0
+  run_stage "$IMAGE_STAGE_TIMEOUT_SECONDS" env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" \
+    CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" IMAGE_MODEL="$IMAGE_MODEL" IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" \
+    IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
+    bash scripts/offline/run-streaming-image-quality-loop.sh \
+      "$targets" "$root/candidates" "$root/images" "$root/streaming-quality/$CYCLE_ID" \
+      "$IMAGE_WIDTH" "$IMAGE_HEIGHT" "$IMAGE_STEPS" "$IMAGE_FIRST_CANDIDATE" "$IMAGE_CHUNK_SIZE" || status=$?
   "$NODE_BIN" scripts/offline/failure-ledger.mjs record-image-outcomes \
-    "$FAILURE_LEDGER" "$ledger_stage" "$targets" "$images" "$status"
+    "$FAILURE_LEDGER" "$ledger_stage" "$targets" "$root/images" "$status"
   if [ "$status" -ne 0 ]; then
     stage_failed "$stage"
     require_model
+  fi
+}
+
+# filter_sentences LEDGER_STAGE SOURCE CYCLE_SOURCE: writes to CYCLE_SOURCE the sentences of SOURCE that are not
+# waiting out a failure backoff in LEDGER_STAGE, and sets SENTENCE_COUNT to their number.
+filter_sentences() {
+  SENTENCE_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-sentences "$FAILURE_LEDGER" "$1" "$2" "$3")"
+}
+
+# analyze_and_reconcile NOUN LEDGER_STAGE SOURCE CYCLE_SOURCE ANALYSES RECONCILIATION WORK_ROOT BASE [ALLOW_BASIC]:
+# the analysis half of a sentence stage. It reconciles CYCLE_SOURCE, which filter_sentences made from SOURCE, with
+# the analysis manifest ANALYSES into RECONCILIATION. When some sentences lack an analysis, the model writes theirs
+# under WORK_ROOT, keeping grammar from BASE and recording failures under LEDGER_STAGE; then the sentences that
+# just failed wait out their backoff, so SOURCE is filtered again and the rest are reconciled with the new
+# analyses. NOUN names the missing sentences in the log, and ALLOW_BASIC=1 lets reconciliation keep a basic
+# analysis production already covers. The caller checks SENTENCE_COUNT and RECONCILIATION afterwards.
+analyze_and_reconcile() {
+  local noun="$1" ledger_stage="$2" source="$3" cycle_source="$4" analyses="$5" reconciliation="$6"
+  local work_root="$7" base="$8" new_analysis="$7/new-analysis.json" missing status=0
+  local reconcile=("$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs "$cycle_source" "$analyses" "$reconciliation")
+  if [ "${9:-}" = 1 ]; then reconcile=(env ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 "${reconcile[@]}"); fi
+  # Reconciliation writes final-analysis.json only when it is complete and never removes an old one.
+  rm -f "$reconciliation/final-analysis.json"
+  "${reconcile[@]}"
+  missing="$(json_value "$reconciliation/report.json" .missing)"
+  if [ "$missing" -eq 0 ]; then return 0; fi
+  log "generating detailed $MODEL_LABEL explanations for $missing $noun"
+  rm -f "$new_analysis"
+  run_stage "$TEXT_STAGE_TIMEOUT_SECONDS" env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$(sentence_batch_size "$missing")" \
+    ENRICHMENT_FAILURE_LEDGER="$FAILURE_LEDGER" ENRICHMENT_FAILURE_STAGE="$ledger_stage" \
+    "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
+      "$reconciliation/missing-source.json" "$new_analysis" "$work_root/analysis-work" "$base" || status=$?
+  check_stage "$ledger_stage analysis" "$status" || true
+  # Sentences that just failed now wait out their backoff, so the rest can still be published.
+  filter_sentences "$ledger_stage" "$source" "$cycle_source"
+  if [ "$SENTENCE_COUNT" -eq 0 ]; then return 0; fi
+  if [ -s "$new_analysis" ]; then
+    "${reconcile[@]}" "$new_analysis" || true
+  else
+    "${reconcile[@]}"
   fi
 }
 
@@ -312,37 +360,11 @@ stage_saved_sentences() {
   mv "$SAVED_SOURCE.tmp" "$SAVED_SOURCE"
   # The source keeps every sentence, so the next cycle still sees each one's first identity; this cycle
   # works on those that are not waiting out a failure backoff.
-  SAVED_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-sentences \
-    "$FAILURE_LEDGER" saved-sentence "$SAVED_SOURCE" "$SAVED_CYCLE_SOURCE")"
-  if [ "$SAVED_COUNT" -gt 0 ]; then
+  filter_sentences saved-sentence "$SAVED_SOURCE" "$SAVED_CYCLE_SOURCE"
+  if [ "$SENTENCE_COUNT" -gt 0 ]; then
     ensure_analysis_cache "$SAVED_ANALYSIS_CACHE"
-    # Reconciliation writes final-analysis.json only when it is complete and never removes an old one.
-    rm -f "$SAVED_RECONCILIATION/final-analysis.json"
-    "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
-      "$SAVED_CYCLE_SOURCE" "$SAVED_ANALYSIS_CACHE" "$SAVED_RECONCILIATION"
-    SAVED_MISSING_COUNT="$(json_value "$SAVED_RECONCILIATION/report.json" .missing)"
-    if [ "$SAVED_MISSING_COUNT" -gt 0 ]; then
-      log "generating detailed $MODEL_LABEL explanations for $SAVED_MISSING_COUNT saved sentence(s)"
-      SAVED_NEW_ANALYSIS="$SAVED_ROOT/new-analysis.json"
-      rm -f "$SAVED_NEW_ANALYSIS"
-      STAGE_STATUS=0
-      run_stage "$TEXT_STAGE_TIMEOUT_SECONDS" env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$(sentence_batch_size "$SAVED_MISSING_COUNT")" \
-        ENRICHMENT_FAILURE_LEDGER="$FAILURE_LEDGER" ENRICHMENT_FAILURE_STAGE=saved-sentence \
-        "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
-        "$SAVED_RECONCILIATION/missing-source.json" "$SAVED_NEW_ANALYSIS" \
-        "$SAVED_ROOT/analysis-work" "$SAVED_BASE_ANALYSIS" || STAGE_STATUS=$?
-      check_stage "saved-sentence analysis" "$STAGE_STATUS" || true
-      # Sentences that just failed now wait out their backoff, so the rest can still be published.
-      SAVED_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-sentences \
-        "$FAILURE_LEDGER" saved-sentence "$SAVED_SOURCE" "$SAVED_CYCLE_SOURCE")"
-      if [ "$SAVED_COUNT" -gt 0 ] && [ -s "$SAVED_NEW_ANALYSIS" ]; then
-        "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
-          "$SAVED_CYCLE_SOURCE" "$SAVED_ANALYSIS_CACHE" "$SAVED_RECONCILIATION" "$SAVED_NEW_ANALYSIS" || true
-      elif [ "$SAVED_COUNT" -gt 0 ]; then
-        "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
-          "$SAVED_CYCLE_SOURCE" "$SAVED_ANALYSIS_CACHE" "$SAVED_RECONCILIATION"
-      fi
-    fi
+    analyze_and_reconcile "saved sentence(s)" saved-sentence "$SAVED_SOURCE" "$SAVED_CYCLE_SOURCE" \
+      "$SAVED_ANALYSIS_CACHE" "$SAVED_RECONCILIATION" "$SAVED_ROOT" "$SAVED_BASE_ANALYSIS"
     if [ -s "$SAVED_RECONCILIATION/final-analysis.json" ]; then
       cp "$SAVED_RECONCILIATION/final-analysis.json" "$SAVED_ANALYSIS_CACHE.tmp"
       mv "$SAVED_ANALYSIS_CACHE.tmp" "$SAVED_ANALYSIS_CACHE"
@@ -354,7 +376,7 @@ stage_saved_sentences() {
           "$SAVED_ANALYSIS_CACHE" 2000 "$REQUIRED_DEPLOY_SHA"; then
         stage_failed "saved-sentence publication"
       fi
-    elif [ "$SAVED_COUNT" -gt 0 ]; then
+    elif [ "$SENTENCE_COUNT" -gt 0 ]; then
       echo "Incremental saved-sentence analysis reconciliation is incomplete" >&2
       stage_failed "saved-sentence reconciliation"
     fi
@@ -380,13 +402,7 @@ stage_item_images() {
   if [ "$ITEM_IMAGE_COUNT" -gt 0 ]; then
     if ! image_pipeline_busy "saved-item images"; then
       log "generating locally and judging with $MODEL_LABEL $ITEM_IMAGE_COUNT missing saved-word/phrase/sentence image(s)"
-      run_image_stage item-image "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT/images" "saved-item images" \
-        env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
-        IMAGE_MODEL="$IMAGE_MODEL" IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" \
-        IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
-        bash scripts/offline/run-streaming-image-quality-loop.sh \
-          "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT/candidates" "$ITEM_IMAGE_ROOT/images" \
-          "$ITEM_IMAGE_ROOT/streaming-quality/$CYCLE_ID" 1024 576 "$IMAGE_STEPS" 1 64
+      run_image_stage item-image "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT" "saved-item images"
     fi
     # The publisher waits for every manifest entry, so the images the loop didn't accept leave the manifest;
     # a later cycle targets them again.
@@ -420,9 +436,8 @@ stage_example_sentences() {
     "$CURRENT_POOL" "$BASE_SOURCE" "$SOURCE.tmp" "$PREVIOUS_SOURCE"
   mv "$SOURCE.tmp" "$UNFILTERED_SOURCE"
 
-  TOTAL_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-sentences \
-    "$FAILURE_LEDGER" example-sentence "$UNFILTERED_SOURCE" "$SOURCE")"
-  if [ "$TOTAL_COUNT" -eq 0 ]; then
+  filter_sentences example-sentence "$UNFILTERED_SOURCE" "$SOURCE"
+  if [ "$SENTENCE_COUNT" -eq 0 ]; then
     CYCLE_MESSAGE="no post-baseline example sentences need enrichment"
     return 0
   fi
@@ -430,36 +445,11 @@ stage_example_sentences() {
   ensure_analysis_cache "$ANALYSIS_CACHE"
   "$NODE_BIN" scripts/offline/merge-sentence-analysis-manifests.mjs \
     "$COMBINED_ANALYSIS_CACHE" "$BASE_ANALYSIS" "$ANALYSIS_CACHE"
-  rm -f "$RECONCILIATION/final-analysis.json"
-  ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
-  "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
-    "$SOURCE" "$COMBINED_ANALYSIS_CACHE" "$RECONCILIATION"
-  MISSING_COUNT="$(json_value "$RECONCILIATION/report.json" .missing)"
-  if [ "$MISSING_COUNT" -gt 0 ]; then
-    log "generating detailed $MODEL_LABEL explanations for $MISSING_COUNT production gap(s)"
-    NEW_ANALYSIS="$ROOT/new-analysis.json"
-    rm -f "$NEW_ANALYSIS"
-    STAGE_STATUS=0
-    run_stage "$TEXT_STAGE_TIMEOUT_SECONDS" env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" SENTENCE_ANALYSIS_BATCH_SIZE="$(sentence_batch_size "$MISSING_COUNT")" \
-      ENRICHMENT_FAILURE_LEDGER="$FAILURE_LEDGER" ENRICHMENT_FAILURE_STAGE=example-sentence \
-      "$NODE_BIN" scripts/offline/enrich-sentences.mjs \
-        "$RECONCILIATION/missing-source.json" "$NEW_ANALYSIS" "$ROOT/analysis-work" "$ANALYSIS_CACHE" || STAGE_STATUS=$?
-    check_stage "example-sentence analysis" "$STAGE_STATUS" || true
-    TOTAL_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-sentences \
-      "$FAILURE_LEDGER" example-sentence "$UNFILTERED_SOURCE" "$SOURCE")"
-    if [ "$TOTAL_COUNT" -eq 0 ]; then
-      CYCLE_MESSAGE="every post-baseline example sentence is waiting out a failure backoff"
-      return 0
-    fi
-    if [ -s "$NEW_ANALYSIS" ]; then
-      ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
-      "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
-        "$SOURCE" "$COMBINED_ANALYSIS_CACHE" "$RECONCILIATION" "$NEW_ANALYSIS" || true
-    else
-      ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1 \
-      "$NODE_BIN" scripts/offline/reconcile-sentence-analyses.mjs \
-        "$SOURCE" "$COMBINED_ANALYSIS_CACHE" "$RECONCILIATION"
-    fi
+  analyze_and_reconcile "production gap(s)" example-sentence "$UNFILTERED_SOURCE" "$SOURCE" \
+    "$COMBINED_ANALYSIS_CACHE" "$RECONCILIATION" "$ROOT" "$ANALYSIS_CACHE" 1
+  if [ "$SENTENCE_COUNT" -eq 0 ]; then
+    CYCLE_MESSAGE="every post-baseline example sentence is waiting out a failure backoff"
+    return 0
   fi
   if [ ! -s "$RECONCILIATION/final-analysis.json" ]; then
     echo "Incremental sentence analysis reconciliation is incomplete" >&2
@@ -494,22 +484,8 @@ example_images() {
 
   if [ "$IMAGE_TARGET_COUNT" -gt 0 ]; then
     if ! image_pipeline_busy "example images"; then
-      BASE_EXPECTED="$(json_value "$BASE_IMAGE_ROOT/targets.json" .targets.length)"
-      BASE_ACCEPTED="$(find "$BASE_IMAGE_ROOT/images" -maxdepth 1 -type f -name '*.webp' 2>/dev/null | wc -l | tr -d ' ')"
-      if [ "$BASE_ACCEPTED" -lt "$BASE_EXPECTED" ]; then
-        # A tiny hard tail may exhaust the independent bulk QA loop. It remains visible in production
-        # coverage reports, but must not permanently starve every example discovered afterwards.
-        log "bulk image pipeline has $BASE_ACCEPTED/$BASE_EXPECTED accepted; continuing with incremental images"
-      fi
       log "generating $IMAGE_TARGET_COUNT missing example image(s) locally and judging them with $MODEL_LABEL"
-      run_image_stage example-image "$IMAGE_TARGETS" "$IMAGE_ROOT/images" "example images" \
-        env CODEX_CONCURRENCY="$ANALYSIS_CONCURRENCY" CODEX_IMAGE_CONCURRENCY="$IMAGE_QA_CONCURRENCY" \
-        IMAGE_MODEL="$IMAGE_MODEL" \
-        IMAGE_MODEL_QUANTIZE="$IMAGE_MODEL_QUANTIZE" \
-        IMAGE_QUALITY_DEFER_AFTER="$IMAGE_MAX_CANDIDATES" \
-        bash scripts/offline/run-streaming-image-quality-loop.sh \
-        "$IMAGE_TARGETS" "$IMAGE_ROOT/candidates" "$IMAGE_ROOT/images" \
-        "$IMAGE_ROOT/streaming-quality/$CYCLE_ID" 1024 576 "$IMAGE_STEPS" 1 64
+      run_image_stage example-image "$IMAGE_TARGETS" "$IMAGE_ROOT" "example images"
     fi
   else
     log "no example image needs generating this cycle"
@@ -526,7 +502,7 @@ example_images() {
     scripts/offline/dispatch-staged-example-enrichments.sh "$ROOT" 100 "$REQUIRED_DEPLOY_SHA"; then
     stage_failed "example enrichment publication"
   fi
-  CYCLE_MESSAGE="incremental example-enrichment cycle complete: $TOTAL_COUNT post-baseline sentence(s)"
+  CYCLE_MESSAGE="incremental example-enrichment cycle complete: $SENTENCE_COUNT post-baseline sentence(s)"
 }
 
 mkdir -p "$ROOT"
@@ -581,12 +557,17 @@ if [ ! -s "$GH_BIN" ] || [ ! -x "$GH_BIN" ]; then
   echo "Required incremental enrichment input is missing: $GH_BIN (a non-empty, executable GitHub CLI; scripts/offline/README.md's Setup says how to install it)" >&2
   exit 1
 fi
-for required in "$KEY_FILE" "$BASE_SOURCE" "$BASE_ANALYSIS" "$BASE_IMAGE_ROOT/targets.json" "$TSX_BIN"; do
+for required in "$KEY_FILE" "$BASE_SOURCE" "$BASE_ANALYSIS" "$TSX_BIN"; do
   if [ ! -s "$required" ]; then
     echo "Required incremental enrichment input is missing: $required" >&2
     exit 1
   fi
 done
+# The example image stage links in the images the baseline already accepted, from its images/ folder.
+if [ ! -d "$BASE_IMAGE_ROOT/images" ]; then
+  echo "Required incremental enrichment input is missing: $BASE_IMAGE_ROOT/images" >&2
+  exit 1
+fi
 
 # A publisher that was killed leaves its release, and the encrypted archive in it, on the public
 # repository; this deletes publisher releases idle for six hours, which none of this cycle's publishers
