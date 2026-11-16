@@ -4,6 +4,7 @@ import { X, ScanText, Loader2, Check, CheckCheck, ClipboardPaste, Trash2, Chevro
 import { detectVocabulary, DetectedWord, analyzeInput } from '../services/api/ai';
 import { ensureTTS } from '../services/neuralTts';
 import { makeVocabStoredItem } from '../services/items';
+import { modifierKeyLabel } from '../services/platform';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -362,7 +363,7 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
 
             {inputText.trim() && !isScanning && (
               <p className="text-[11px] text-slate-400 mt-2 text-center">
-                {inputText.trim().split(/\s+/).length} words &middot; {(navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform === 'macOS' || navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+Enter
+                {inputText.trim().split(/\s+/).length} words &middot; {modifierKeyLabel()}+Enter
               </p>
             )}
 
