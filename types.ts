@@ -309,15 +309,3 @@ export interface StoredComparison {
 /** Normalized key for a comparison: words lowercased, trimmed, de-duped, sorted, joined with '|'. */
 export const comparisonKey = (words: string[]): string =>
   Array.from(new Set(words.map((w) => w.toLowerCase().trim()).filter(Boolean))).sort().join('|');
-
-/**
- * Authenticated application user exposed to UI components: AuthUser (services/auth.ts) under Firebase-era field
- * names, which App.tsx translates for the Notebook and UserMenu.
- * @deprecated Pass AuthUser instead (client-data-15); this goes once those two take it.
- */
-export interface AppUser {
-  uid: string;
-  displayName?: string | null;
-  photoURL?: string | null;
-  email?: string | null;
-}
