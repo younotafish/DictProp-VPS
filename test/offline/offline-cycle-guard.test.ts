@@ -52,7 +52,7 @@ function setup(t: test.TestContext) {
   write(work, 'server/package.json', '{}\n');
   write(work, 'package.json', '{}\n');
   write(work, 'notes.md', 'notes\n');
-  for (const file of ['deadline.sh', 'vetted-checkout.sh', 'run-incremental-example-enrichment.sh']) {
+  for (const file of ['deadline.sh', 'vetted-checkout.sh', 'check-installed-dependencies.mjs', 'run-incremental-example-enrichment.sh']) {
     copyFileSync(join(offlineDir, file), join(work, 'scripts/offline', file));
   }
   git(work, 'add', '.');
@@ -86,6 +86,46 @@ function guard(work: string) {
   assert.equal(result.status, 0, result.stderr);
   const lines = result.stdout.trim().split('\n');
   return { status: Number(lines.pop()?.replace('status=', '')), log: lines.join('\n'), stderr: result.stderr };
+}
+
+// check-installed-dependencies.mjs, which holds the checkout's node_modules trees to their lockfiles.
+const dependencyChecker = join(offlineDir, 'check-installed-dependencies.mjs');
+
+/** Installs packages (lockfile key -> version) under root, as npm would, each as its package.json. */
+function installPackages(root: string, installed: Record<string, string>) {
+  for (const [key, version] of Object.entries(installed)) {
+    write(root, `${key}/package.json`, `${JSON.stringify({ name: key.split('node_modules/').at(-1), version })}\n`);
+  }
+}
+
+/** Writes a package-lock.json locking `locked`, and installs `installed` beside it. */
+function dependencyTree(root: string, locked: Record<string, object>, installed: Record<string, string> = {}) {
+  write(root, 'package-lock.json', `${JSON.stringify({
+    name: 'tree', lockfileVersion: 3, requires: true, packages: { '': { name: 'tree' }, ...locked },
+  }, null, 2)}\n`);
+  installPackages(root, installed);
+}
+
+function checkDependencies(cwd: string, ...trees: string[]) {
+  const result = spawnSync(process.execPath, [dependencyChecker, ...trees], { cwd, encoding: 'utf8', timeout: 30_000 });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+/** The line the checker prints, and the guard logs, for a tree that differs from its lockfile. */
+const mismatch = (tree: string, differences: string) =>
+  `node_modules in ${tree} does not match its package-lock.json (${differences}); run npm ci there, holding the cycle lock`;
+
+/** Commits lockfiles for the checkout's root and server trees and pushes them, as a deploy would. */
+function lockDependencies(work: string) {
+  dependencyTree(work, {
+    'node_modules/sharp': { version: '0.34.5', dev: true },
+    // sharp's Linux binary, which npm leaves out on a Mac.
+    'node_modules/@img/sharp-linux-x64': { version: '0.34.5', dev: true, optional: true, os: ['linux'], cpu: ['x64'] },
+  });
+  dependencyTree(join(work, 'server'), { 'node_modules/hono': { version: '4.13.12' } });
+  git(work, 'add', 'package-lock.json', 'server/package-lock.json');
+  git(work, 'commit', '--quiet', '-m', 'lock dependencies');
+  git(work, 'push', '--quiet', 'vps', 'main');
 }
 
 test('a clean checkout at vps/main passes, untracked files and changes outside the code included', t => {
@@ -213,6 +253,57 @@ test('a failed fetch falls back to the vps/main fetched last, and no fetched vps
   assert.match(missing.log, /no fetched vps\/main to check this checkout against/);
 });
 
+test('a node_modules tree that differs from its package-lock.json is refused, naming the folder and packages, until npm ci mends it', t => {
+  const { work } = setup(t);
+  lockDependencies(work);
+  const tree = realpathSync(work);
+  installPackages(work, { 'node_modules/sharp': '0.34.5' });
+  installPackages(join(work, 'server'), { 'node_modules/hono': '4.13.12' });
+  const matching = guard(work);
+  assert.equal(matching.status, 0, matching.log);
+  assert.equal(matching.log, '');
+
+  // The lockfile moved on and server/node_modules did not.
+  installPackages(join(work, 'server'), { 'node_modules/hono': '4.12.30' });
+  const stale = guard(work);
+  assert.equal(stale.status, 1);
+  assert.equal(stale.log, mismatch(join(tree, 'server'), 'hono is 4.12.30, locked at 4.13.12'));
+
+  // Both trees are checked, each on a line of its own.
+  rmSync(join(work, 'node_modules', 'sharp'), { recursive: true });
+  const both = guard(work);
+  assert.equal(both.status, 1);
+  assert.equal(both.log, [mismatch(tree, 'sharp is missing'), mismatch(join(tree, 'server'), 'hono is 4.12.30, locked at 4.13.12')].join('\n'));
+
+  installPackages(work, { 'node_modules/sharp': '0.34.5' });
+  installPackages(join(work, 'server'), { 'node_modules/hono': '4.13.12' });
+  const mended = guard(work);
+  assert.equal(mended.status, 0, mended.log);
+  assert.equal(mended.log, '');
+});
+
+test('the code is vetted before its packages, and a fast-forward that changed code leaves their check to the next run', t => {
+  const { root, remote, work } = setup(t);
+  lockDependencies(work);
+  installPackages(work, { 'node_modules/sharp': '0.34.5' });
+  installPackages(join(work, 'server'), { 'node_modules/hono': '4.12.30' });
+
+  write(work, 'scripts/offline/stage.sh', 'echo unreviewed\n');
+  const dirty = guard(work);
+  assert.equal(dirty.status, 1);
+  assert.equal(dirty.log, 'uncommitted changes to code the cycle runs: scripts/offline/stage.sh');
+  git(work, 'checkout', '--', 'scripts/offline/stage.sh');
+
+  pushElsewhere(root, remote, 'scripts/offline/stage.sh', 'echo newer\n');
+  const moved = guard(work);
+  assert.equal(moved.status, 2);
+  assert.match(moved.log, /^fast-forwarded main from [0-9a-f]{12} to vps\/main \([0-9a-f]{12}\)$/);
+
+  const next = guard(work);
+  assert.equal(next.status, 1);
+  assert.equal(next.log, mismatch(join(realpathSync(work), 'server'), 'hono is 4.12.30, locked at 4.13.12'));
+});
+
 // Runs the cycle in the checkout. It finds no inputs, so once past the guard it stops at its next check.
 function runCycle(root: string, work: string, env: Record<string, string> = {}) {
   let path = process.env.PATH ?? '/usr/bin:/bin';
@@ -306,27 +397,27 @@ test('the cycle moves main up to a newer vps/main, and exits 75 when that change
   assert.equal(git(work, 'rev-parse', 'HEAD'), docs);
 });
 
-// check-installed-dependencies.mjs, which holds the checkout's node_modules trees to their lockfiles.
-const dependencyChecker = join(offlineDir, 'check-installed-dependencies.mjs');
+test('the cycle exits 75 while a node_modules tree differs from its lockfile, and releases its lock', t => {
+  const { root, work } = setup(t);
+  lockDependencies(work);
+  installPackages(work, { 'node_modules/sharp': '0.34.5' });
+  installPackages(join(work, 'server'), { 'node_modules/hono': '4.12.30' });
+  const refused = runCycle(root, work);
+  assert.equal(refused.status, 75, refused.stderr);
+  assert.ok(refused.stdout.includes(mismatch(join(realpathSync(work), 'server'), 'hono is 4.12.30, locked at 4.13.12')), refused.stdout);
+  assert.match(refused.stdout, /refusing to run code that differs from vps\/main; exiting 75/);
+  assert.equal(existsSync(join(root, 'cycle', '.cycle.lock')), false);
 
-/** Writes a package-lock.json locking `locked`, and installs `installed` (lockfile key -> version) beside it. */
-function dependencyTree(root: string, locked: Record<string, object>, installed: Record<string, string> = {}) {
-  write(root, 'package-lock.json', `${JSON.stringify({
-    name: 'tree', lockfileVersion: 3, requires: true, packages: { '': { name: 'tree' }, ...locked },
-  }, null, 2)}\n`);
-  for (const [key, version] of Object.entries(installed)) {
-    write(root, `${key}/package.json`, `${JSON.stringify({ name: key.split('node_modules/').at(-1), version })}\n`);
-  }
-}
+  // Once npm ci has run, the cycle gets past the guard and stops at its next check instead.
+  installPackages(join(work, 'server'), { 'node_modules/hono': '4.13.12' });
+  const passed = runCycle(root, work);
+  assert.notEqual(passed.status, 75);
+  assert.doesNotMatch(passed.stdout, /refusing to run|does not match/);
+  assert.match(`${passed.stdout}${passed.stderr}`, /Required incremental enrichment input is missing|deferring this cycle/);
+  assert.equal(existsSync(join(root, 'cycle', '.cycle.lock')), false);
+});
 
-function checkDependencies(cwd: string, ...trees: string[]) {
-  const result = spawnSync(process.execPath, [dependencyChecker, ...trees], { cwd, encoding: 'utf8', timeout: 30_000 });
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
-}
-
-const mismatch = (tree: string, differences: string) =>
-  `node_modules in ${tree} does not match its package-lock.json (${differences}); run npm ci there, holding the cycle lock\n`;
-
+// check-installed-dependencies.mjs on its own.
 test('a tree installed as locked passes, whatever optional packages it lacks or unlocked ones it holds', t => {
   const root = mkdtempSync(join(tmpdir(), 'dependency-check-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -365,7 +456,7 @@ test('a package missing or at another version than its lockfile says is named, a
   });
   assert.deepEqual(checkDependencies(root, root), {
     status: 1,
-    stdout: mismatch(root, 'a is 1.0.1, locked at 1.0.0; a/node_modules/c is missing; fsevents is 2.3.2, locked at 2.3.3'),
+    stdout: `${mismatch(root, 'a is 1.0.1, locked at 1.0.0; a/node_modules/c is missing; fsevents is 2.3.2, locked at 2.3.3')}\n`,
     stderr: '',
   });
 });
@@ -380,13 +471,13 @@ test('a tree with no node_modules is one difference, and a long list names five 
 
   const bare = checkDependencies(root, join(root, 'bare'));
   assert.equal(bare.status, 1, bare.stderr);
-  assert.equal(bare.stdout, mismatch(join(root, 'bare'), 'there is no node_modules folder'));
+  assert.equal(bare.stdout, `${mismatch(join(root, 'bare'), 'there is no node_modules folder')}\n`);
 
   const stale = checkDependencies(root, join(root, 'stale'));
   assert.equal(stale.status, 1, stale.stderr);
-  assert.equal(stale.stdout, mismatch(join(root, 'stale'),
+  assert.equal(stale.stdout, `${mismatch(join(root, 'stale'),
     'p1 is 0.9.0, locked at 1.0.0; p2 is 0.9.0, locked at 1.0.0; p3 is 0.9.0, locked at 1.0.0; '
-    + 'p4 is 0.9.0, locked at 1.0.0; p5 is 0.9.0, locked at 1.0.0; and 2 more'));
+    + 'p4 is 0.9.0, locked at 1.0.0; p5 is 0.9.0, locked at 1.0.0; and 2 more')}\n`);
 });
 
 test('every tree given is checked, relative to the working directory, and what cannot be checked exits 2', t => {
@@ -397,7 +488,7 @@ test('every tree given is checked, relative to the working directory, and what c
   // The checkout's trees, named as the cycle names them; the message gives the folder npm ci has to run in.
   assert.deepEqual(checkDependencies(root, '.', 'server'), {
     status: 1,
-    stdout: mismatch(join(realpathSync(root), 'server'), 'hono is 4.12.30, locked at 4.13.12'),
+    stdout: `${mismatch(join(realpathSync(root), 'server'), 'hono is 4.12.30, locked at 4.13.12')}\n`,
     stderr: '',
   });
 

@@ -1,23 +1,44 @@
 #!/usr/bin/env bash
 # Sourced by the incremental runner. The cycle runs this checkout's code against production, so it runs
 # only the code at vps/main, the code GitHub deployed: never an edit in progress, a local commit that was
-# not pushed, or an older commit that a later push replaced.
+# not pushed, or an older commit that a later push replaced. It runs that code only on the packages its
+# lockfiles describe.
 
 # The tracked files a cycle executes: its scripts, the server code tsx runs for the saved-sentence
-# source, and the package files behind both node_modules trees (the image check loads sharp from the root
-# one). The GitHub CLI it calls is not tracked: it lives in the ignored .tools/ folder (deadline.sh).
+# source, and the package files behind both node_modules trees (the wave image check loads sharp, a
+# declared root devDependency). The GitHub CLI it calls is not tracked: it lives in the ignored .tools/
+# folder (deadline.sh).
 VETTED_PATHS=(
   scripts/offline
   server/src server/package.json server/package-lock.json server/tsconfig.json
   package.json package-lock.json
 )
 
+# The node_modules trees the cycle loads, each held to the package-lock.json beside it by
+# check-installed-dependencies.mjs.
+DEPENDENCY_TREES=(. server)
+
 # Run from the repository root, as the cycle is. Logs why and returns 1 when VETTED_PATHS has uncommitted
-# changes or HEAD is not vps/main. A clean main that is behind vps/main is fast-forwarded to it first.
-# This run started from the old code, so it returns 2 when the move changed code the cycle runs: the
-# caller stops, and the next cycle runs the new code. A failed fetch is logged and the check uses the
-# vps/main fetched last. Needs the caller's log function and deadline.sh's run_bounded.
+# changes, HEAD is not vps/main, or a node_modules tree differs from its package-lock.json; only npm ci,
+# run holding the cycle lock, mends that last one. A clean main that is behind vps/main is fast-forwarded
+# to it first. This run started from the old code, so it returns 2 when the move changed code the cycle
+# runs: the caller stops, and the next cycle runs the new code, checking its dependencies first. A failed
+# fetch is logged and the check uses the vps/main fetched last. Needs the caller's log function and
+# deadline.sh's run_bounded.
 require_vetted_checkout() {
+  local status=0 output line
+  require_vetted_head || status=$?
+  if [ "$status" -ne 0 ]; then return "$status"; fi
+  if ! output="$("${NODE_BIN:-node}" scripts/offline/check-installed-dependencies.mjs "${DEPENDENCY_TREES[@]}" 2>&1)"; then
+    if [ -z "$output" ]; then output="could not check the node_modules trees against their package-lock.json"; fi
+    while IFS= read -r line; do log "$line"; done <<< "$output"
+    return 1
+  fi
+}
+
+# The part of require_vetted_checkout that vets the code: the status of VETTED_PATHS, and HEAD against
+# vps/main, fast-forwarding main when it can. Returns 0, 1 or 2 as above.
+require_vetted_head() {
   local changed head upstream branch output moved
   if ! changed="$(GIT_OPTIONAL_LOCKS=0 git status --porcelain --untracked-files=no -- "${VETTED_PATHS[@]}")"; then
     log "could not read the status of this checkout"

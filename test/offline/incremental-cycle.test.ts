@@ -143,7 +143,8 @@ const SHELL_STUBS = [
   'dispatch-staged-corpus-audit.sh', 'dispatch-staged-saved-sentence-analyses.sh', 'dispatch-staged-offline-images.sh',
   'dispatch-staged-example-analyses.sh', 'dispatch-staged-example-enrichments.sh',
 ];
-const RUNNER_FILES = ['run-incremental-example-enrichment.sh', 'deadline.sh', 'vetted-checkout.sh'];
+// The guard's dependency check finds no lockfile in this checkout, so it passes.
+const RUNNER_FILES = ['run-incremental-example-enrichment.sh', 'deadline.sh', 'vetted-checkout.sh', 'check-installed-dependencies.mjs'];
 
 const shellStub = (name: string, stub: string) =>
   `#!/bin/bash\nexec "$STUB_NODE" "${stub}" --as ${name} "$@"\n`;

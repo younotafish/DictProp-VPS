@@ -20,7 +20,7 @@ The cycle and every publisher call the GitHub CLI at `.tools/gh` under the repos
 The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` starts `run-incremental-example-enrichment.sh` every six hours. The paths in the stages below are relative to the cycle's root, `data/offline-backfill/incremental-example-enrichment/`. Each publishing step waits until production has imported what it sent. When a stage fails without crashing, the runner logs it and usually carries on with the remaining stages, and the cycle then exits 1. To find where the runner calls a script, search the runner for the script's name.
 
 1. **Guards.**
-   - `vetted-checkout.sh` refuses to run code that differs from `vps/main`.
+   - `vetted-checkout.sh` refuses to run code that differs from `vps/main`, or to run it on packages that differ from its lockfiles.
    - `sweep-bridge-leftovers.sh` clears what killed runs left behind.
    - `check-structured-model.mjs` checks that the model answers, before any production data is exported.
 2. **Export.**
@@ -60,8 +60,8 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
 
 - `run-incremental-example-enrichment.sh` — Runs the whole cycle, in the stage order above, and holds `.cycle.lock` while it runs. Every model stage uses `ENRICHMENT_MODEL_PROVIDER` (`claude` or `codex`).
   `scripts/offline/run-incremental-example-enrichment.sh [root] [baseline-source.json] [baseline-image-root] [required-deploy-sha]`
-- `vetted-checkout.sh` — Sourced by the runner. If the checkout is a clean `main` behind `vps/main`, it fast-forwards it. The runner exits 75 when the code it runs has uncommitted changes, when the checkout has a local commit, is on another branch or has a detached HEAD, or when the fast-forward changed that code.
-- `check-installed-dependencies.mjs` — Checks that each tree's installed packages are the versions its `package-lock.json` locks, reading each installed `package.json`. A package the lockfile marks optional may be missing, since npm skips the platform packages that don't fit the machine, and packages installed but not locked are ignored. When a tree differs, it exits 1 and names up to five differences.
+- `vetted-checkout.sh` — Sourced by the runner. If the checkout is a clean `main` behind `vps/main`, it fast-forwards it. The runner exits 75 when the code it runs has uncommitted changes, when the checkout has a local commit, is on another branch or has a detached HEAD, when the fast-forward changed that code, or when the root's or `server/`'s `node_modules` differs from its `package-lock.json`.
+- `check-installed-dependencies.mjs` — Checks that each tree's installed packages are the versions its `package-lock.json` locks, reading each installed `package.json`. A package the lockfile marks optional may be missing, since npm skips the platform packages that don't fit the machine, and packages installed but not locked are ignored. When a tree differs, it exits 1 and names up to five differences. `vetted-checkout.sh` runs it for the repository root and `server/`, so once main moves to a commit that changes a lockfile, every cycle exits 75 until `npm ci` has run in that folder; run it holding the cycle lock.
   `node scripts/offline/check-installed-dependencies.mjs <tree>...`
 - `deadline.sh` — Sourced by the runner and by most of the shell scripts it calls, so that no wait holds the cycle lock forever. It provides wall-clock deadlines; `run_bounded` and `run_stage`, which run a command in its own process group under a time limit; `gh_bounded` for GitHub CLI calls; and `cap_publish_deadline`.
 - `sweep-bridge-leftovers.sh` — Deletes the leftovers of killed runs:
