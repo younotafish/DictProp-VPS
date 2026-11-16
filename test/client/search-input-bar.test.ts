@@ -18,6 +18,7 @@ const bar = (props: Partial<BarProps> = {}) => renderToStaticMarkup(createElemen
   onOpenSuggestion: () => {},
   onSubmit: () => {},
   canSaveSentence: false,
+  sentenceSaved: false,
   onSaveSentence: () => {},
   readyCount: 0,
   unseenCount: 0,
@@ -49,4 +50,24 @@ test('the box has no results pill before a result is ready, and nothing in it pu
   for (const props of [{}, { readyCount: 2, unseenCount: 2 }, { readyCount: 2 }]) {
     assert.doesNotMatch(bar({ query: 'gamut', ...props }), /animate-/);
   }
+});
+
+test('the box says it takes a word, a phrase or a sentence', () => {
+  const markup = bar();
+  assert.match(markup, /placeholder="Look up a word, phrase or sentence…"/);
+  assert.match(markup, /role="combobox" aria-label="Look up a word, phrase or sentence"/);
+});
+
+/** The button saving the typed sentence, or showing it saved: its attributes, or null when the box has neither. */
+const sentenceButtonOf = (markup: string) => /<button([^>]*(?:aria-label="Save this sentence"|aria-label="Sentence saved")[^>]*)>/.exec(markup)?.[1] ?? null;
+
+test('a typed sentence can be saved, and once saved the bookmark is a disabled "Sentence saved" check', () => {
+  const unsaved = sentenceButtonOf(bar({ query: 'It ran the gamut of emotions.', canSaveSentence: true }));
+  assert.match(unsaved ?? '', /title="Save this sentence to your Sentences list" aria-label="Save this sentence"/);
+  assert.doesNotMatch(unsaved ?? '', /disabled/);
+  const saved = sentenceButtonOf(bar({ query: 'It ran the gamut of emotions.', canSaveSentence: true, sentenceSaved: true }));
+  assert.match(saved ?? '', /^ disabled="" title="Saved to your Sentences list" aria-label="Sentence saved" class="[^"]*bg-violet-600 text-white/);
+  const markup = bar({ query: 'It ran the gamut of emotions.', canSaveSentence: true, sentenceSaved: true });
+  assert.match(markup, /aria-label="Analyze"/, 'Send still analyzes the saved sentence');
+  assert.equal(sentenceButtonOf(bar({ query: 'gamut' })), null, 'a word has neither');
 });

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search, X, Send, BookmarkPlus, MessageSquareQuote } from 'lucide-react';
+import { Search, X, Send, BookmarkPlus, BookmarkCheck, MessageSquareQuote } from 'lucide-react';
 import type { SentenceData, StoredItem } from '../../types';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { isImeKey } from '../keyboardTarget';
@@ -18,6 +18,8 @@ interface Props {
   onSubmit: () => void;
   /** The query reads as a sentence and can be saved to the Sentences list as typed. */
   canSaveSentence: boolean;
+  /** That sentence is in the Sentences list already: the bookmark is a disabled check, and Send still analyzes it. */
+  sentenceSaved: boolean;
   onSaveSentence: () => void;
   /** Every ready result, and those the sheet hasn't shown yet: the results pill reads "2 new", or the total. */
   readyCount: number;
@@ -29,7 +31,7 @@ interface Props {
 /** The search box: the query, its saved-sentence suggestions, and the save, analyze, results and close buttons. */
 export const SearchInputBar: React.FC<Props> = ({
   inputRef, query, setQuery, suggestions, highlightedIndex, setHighlightedIndex, suggestionsListRef, suggestionsId,
-  onOpenSuggestion, onSubmit, canSaveSentence, onSaveSentence, readyCount, unseenCount, onViewResults, onClose,
+  onOpenSuggestion, onSubmit, canSaveSentence, sentenceSaved, onSaveSentence, readyCount, unseenCount, onViewResults, onClose,
 }) => (
   <div className="fixed bottom-20 right-4 left-4 z-[56]">
     {/* Saved-sentence suggestions (fuzzy). ↑/↓ or hover to highlight; Enter/click opens the card. */}
@@ -100,17 +102,26 @@ export const SearchInputBar: React.FC<Props> = ({
           // Escape (clear and close) is handled by GlobalSearch's escape layer.
         }}
         role="combobox"
-        aria-label="Look up a word"
+        aria-label="Look up a word, phrase or sentence"
         aria-autocomplete="list"
         aria-expanded={suggestions.length > 0}
         aria-controls={suggestions.length > 0 ? suggestionsId : undefined}
         aria-activedescendant={suggestions[highlightedIndex] ? `${suggestionsId}-${highlightedIndex}` : undefined}
-        placeholder="Look up a word..."
+        placeholder="Look up a word, phrase or sentence…"
         className="flex-1 text-sm outline-none bg-transparent text-slate-800 placeholder:text-slate-400"
         autoComplete="off"
         autoCapitalize="off"
       />
-      {canSaveSentence && (
+      {canSaveSentence && (sentenceSaved ? (
+        <button
+          disabled
+          title="Saved to your Sentences list"
+          aria-label="Sentence saved"
+          className="shrink-0 w-8 h-8 rounded-full bg-violet-600 text-white flex items-center justify-center"
+        >
+          <BookmarkCheck size={15} />
+        </button>
+      ) : (
         <button
           onClick={onSaveSentence}
           title="Save this sentence to your Sentences list"
@@ -119,7 +130,7 @@ export const SearchInputBar: React.FC<Props> = ({
         >
           <BookmarkPlus size={15} />
         </button>
-      )}
+      ))}
       {query.trim() && (
         <button
           onClick={onSubmit}

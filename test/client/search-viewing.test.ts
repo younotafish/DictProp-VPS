@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { QueueItem } from '../../components/search/searchQueue.ts';
 import {
-  clampMeaning, meaningAfterRefresh, neighbourAfterDismiss, resolveViewing, stepMeaning,
+  clampMeaning, contextLine, meaningAfterRefresh, neighbourAfterDismiss, resolveViewing, stepMeaning,
 } from '../../components/search/searchViewing.ts';
 
 test('stepping forward through the meanings comes round to the first after the last', () => {
@@ -92,3 +92,26 @@ test('a refreshed result opens at its first meaning, and another open result kee
   assert.equal(meaningAfterRefresh(undefined, 'q-1', 2), 2, 'the sheet is closed');
 });
 
+
+test('a result with no source sentence has no context line', () => {
+  assert.equal(contextLine(undefined, 'gamut'), null);
+  assert.equal(contextLine('', 'gamut'), null);
+  assert.equal(contextLine('  \n ', 'gamut'), null);
+});
+
+test('a short sentence shows whole, its markers stripped and its spaces collapsed', () => {
+  assert.equal(contextLine('Her moods ran the {{gamut}} of [[emotions]].', 'gamut'), 'From your sentence: “Her moods ran the gamut of emotions.”');
+  assert.equal(contextLine('Her moods\n  ran   the gamut.', 'GAMUT'), 'From your sentence: “Her moods ran the gamut.”', 'whatever the case');
+});
+
+test('a long sentence shows about 40 characters each side of the word, cut between words', () => {
+  const sentence = 'After weeks of tense negotiations that went nowhere, the two delegations ran the gamut of emotions before they finally reached a fragile agreement at dawn.';
+  assert.equal(contextLine(sentence, 'gamut'), 'From your sentence: “…nowhere, the two delegations ran the gamut of emotions before they finally reached…”');
+  assert.equal(contextLine(sentence, 'After'), 'From your sentence: “After weeks of tense negotiations that went…”', 'nothing cut before the start');
+  assert.equal(contextLine(sentence, 'dawn'), 'From your sentence: “…finally reached a fragile agreement at dawn.”', 'nor after the end');
+});
+
+test('a word the sentence doesn\'t contain as written shows the sentence\'s start', () => {
+  const sentence = 'After weeks of tense negotiations that went nowhere, the two delegations ran the gamut of emotions.';
+  assert.equal(contextLine(sentence, 'run the gamut'), 'From your sentence: “After weeks of tense negotiations that went nowhere, the two delegations ran the…”');
+});

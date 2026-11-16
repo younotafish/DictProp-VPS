@@ -471,3 +471,13 @@ test('a reload would lose the requests still running and the results not seen ye
   ]);
   assert.deepEqual(pendingRequestsOf([], 0), []);
 });
+
+test('a lookup keeps the sentence it came from, through a refresh in place, but never in the request run again', () => {
+  const queue = run([add('q-1', 'gamut', { context: 'It ran the gamut.' }), { type: 'search-ready', id: 'q-1', results: result('gamut') }]);
+  assert.equal(queue[0].context, 'It ran the gamut.');
+  const refreshed = run([{ type: 'refresh-start', id: 'q-1' }, { type: 'refresh-ready', id: 'q-1', query: 'gamut', results: result('gamut') }], queue);
+  assert.equal(refreshed[0].context, 'It ran the gamut.');
+  assert.deepEqual(requestOf(queue[0]), { kind: 'analyze', query: 'gamut' });
+  assert.deepEqual(pendingRequestsOf(queue, 5), [{ request: { kind: 'analyze', query: 'gamut' }, at: 5 }]);
+  assert.equal('context' in run([add('q-2', 'impasse')])[0], false, 'a lookup without one carries none');
+});

@@ -4,7 +4,7 @@ import type { VocabCard } from '../../types';
 import { VocabCardDisplay } from '../VocabCard';
 import { EyesFreeZones, eyesFreeZoneAt, type ZoneFlash } from '../EyesFreeZones';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
-import { stepMeaning } from './searchViewing';
+import { contextLine, stepMeaning } from './searchViewing';
 
 const SWIPE_THRESHOLD = 50;
 
@@ -25,6 +25,8 @@ interface Props {
   onLazyLoadImage?: (itemId: string, imageVersion?: string) => Promise<string | null>;
   onSaveSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
+  /** The sentence the result came from, shown above its card (see contextLine). */
+  context?: string;
 }
 
 /**
@@ -33,7 +35,7 @@ interface Props {
  */
 export const SearchVocabPane: React.FC<Props> = ({
   vocabs, meaningIndex, onShowMeaning, zoneFlash, flashZone, playOrToggleSentence,
-  isVocabSaved, onSaveVocab, onSearch, onRefresh, onCompare, onLazyLoadImage, onSaveSentence, isSentenceSaved,
+  isVocabSaved, onSaveVocab, onSearch, onRefresh, onCompare, onLazyLoadImage, onSaveSentence, isSentenceSaved, context,
 }) => {
   const viewingVocab = vocabs[meaningIndex];
   const viewingVocabCount = vocabs.length;
@@ -45,6 +47,8 @@ export const SearchVocabPane: React.FC<Props> = ({
   );
   // A stable save handler, so the memoized card doesn't re-render for queue changes it doesn't show.
   const saveViewing = useCallback(() => onSaveVocab(viewingVocab), [onSaveVocab, viewingVocab]);
+  // The sentence the result came from scrolls with the card, so the sheet's header never changes height.
+  const sourceLine = contextLine(context, viewingVocab?.word ?? '');
 
   // Moves to the next or previous meaning. Each control keeps its own rule: the arrows wrap only forwards and
   // stay quiet; a swipe says the word, and wraps only forwards too.
@@ -94,6 +98,7 @@ export const SearchVocabPane: React.FC<Props> = ({
     <>
     <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4" onClick={handleCardZoneRead}>
       <div className="relative max-w-screen-md mx-auto">
+        {sourceLine && <p className="mb-2 text-xs italic text-slate-500">{sourceLine}</p>}
         {/* Navigation arrows for vocabs */}
         {viewingVocabCount > 1 && meaningIndex > 0 && (
           <button

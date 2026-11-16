@@ -109,6 +109,8 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
   const [selectedWords, setSelectedWords] = useState<Set<string>>(new Set());
   // A failed scan: what went wrong, and whether scanning again could work.
   const [scanError, setScanError] = useState<{ message: string; retryable: boolean } | null>(null);
+  // The last scan found nothing worth studying in the text as it is: a neutral note, not an error.
+  const [nothingFound, setNothingFound] = useState(false);
   const [translation, setTranslation] = useState(''); // English the AI scanned, shown when Chinese was pasted
 
   // Step 2: Analysis
@@ -135,12 +137,18 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
 
     setIsScanning(true);
     setScanError(null);
+    setNothingFound(false);
     setDetectedWords([]);
     setSelectedWords(new Set());
     setTranslation('');
 
     try {
       const { words, translation, sourceLang } = await detectVocabulary(inputText);
+      // Nothing to choose from: stay with the text, which can be edited and scanned again.
+      if (words.length === 0) {
+        setNothingFound(true);
+        return;
+      }
       setDetectedWords(words);
       setTranslation(sourceLang === 'zh' ? translation : '');
       // All selected by default
@@ -235,22 +243,28 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
     setTranslation('');
   }, []);
 
+  // A different text hasn't been scanned yet, so what the last scan found no longer applies.
+  const changeText = useCallback((text: string) => {
+    setInputText(text);
+    setNothingFound(false);
+  }, []);
+
   const handleStartOver = useCallback(() => {
-    setInputText('');
+    changeText('');
     setStep('input');
     setDetectedWords([]);
     setSelectedWords(new Set());
     setScanError(null);
     setTranslation('');
     setAnalyzedResults([]);
-  }, []);
+  }, [changeText]);
 
   const handlePaste = useCallback(async () => {
     try {
       const text = await navigator.clipboard.readText();
-      if (text) setInputText(text);
+      if (text) changeText(text);
     } catch { /* ignore */ }
-  }, []);
+  }, [changeText]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -310,7 +324,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
               <textarea
                 ref={textareaRef}
                 value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
+                onChange={(e) => changeText(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="Paste a paragraph, article excerpt, or any English text here...
 
@@ -325,7 +339,7 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
                   </button>
                 )}
                 {inputText && !isScanning && (
-                  <button onClick={() => setInputText('')} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-50 transition-colors" title="Clear">
+                  <button onClick={() => changeText('')} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-50 transition-colors" title="Clear">
                     <Trash2 size={14} />
                   </button>
                 )}
@@ -360,6 +374,13 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
             {!isOnline && (
               <p className="text-xs text-amber-600 bg-amber-50 rounded-lg p-2 mt-2 text-center">
                 Offline. Text analysis requires an internet connection.
+              </p>
+            )}
+
+            {/* Nothing found: a note, with nothing to retry */}
+            {nothingFound && (
+              <p role="status" className="mt-3 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-500 text-sm text-center">
+                No advanced vocabulary found in this text
               </p>
             )}
 

@@ -131,3 +131,8 @@ test('a scan keeps the server\'s statuses and the quota token', async () => {
   respondWith(() => json({ error: 'The model returned no usable expressions.' }, 502));
   await assert.rejects(detectVocabulary('It ran the gamut of emotions.'), (error: unknown) => error instanceof HttpError && error.status === 502);
 });
+
+test('a scan that finds nothing worth studying is an answer, not a failure', async () => {
+  respondWith(() => json({ error: 'No interesting vocabulary found in the text.' }, 404));
+  assert.deepEqual(await detectVocabulary('The cat sat on the mat.'), { words: [], translation: '', sourceLang: 'en' });
+});

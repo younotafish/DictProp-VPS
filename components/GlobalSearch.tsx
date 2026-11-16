@@ -317,7 +317,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
 
   // Save the raw typed sentence to the Sentences list (sentence mode). No analysis — we "just save the
   // sentence"; the already-saved expressions inside it are indexed/highlighted automatically wherever it's
-  // shown (HighlightedSentence scans each word against the library). sourceWord is '' (no single source).
+  // shown (HighlightedSentence scans each word against the library). sourceWord is '' (no single source). The text
+  // stays in the box, its bookmark now a "Sentence saved" check, so Send can still analyze it.
+  const sentenceTyped = !!(query.trim() && looksLikeSentence(query) && onSaveSentence);
+  const sentenceSaved = sentenceTyped && !!isSentenceSaved?.(query.trim());
   const handleSaveSentenceClick = useCallback(() => {
     const q = query.trim();
     if (!q || !onSaveSentence) return;
@@ -327,7 +330,6 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       onSaveSentence(q, '', undefined);
       showSaveToast('Sentence saved');
     }
-    setQuery('');
   }, [query, onSaveSentence, isSentenceSaved, showSaveToast]);
 
   // The sheet's Dismiss drops the open result and shows the next ready one, or the previous one after the last;
@@ -365,7 +367,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     }
   };
 
+  // X closes the box, keeping what was typed, unless it's a sentence just saved: that one has been dealt with.
+  // (Escape always clears it.)
   const handleClose = () => {
+    if (mode === 'input' && sentenceSaved) setQuery('');
     setMode('idle');
   };
 
@@ -440,7 +445,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           suggestionsId={suggestionsId}
           onOpenSuggestion={openSuggestion}
           onSubmit={handleSubmit}
-          canSaveSentence={!!(query.trim() && looksLikeSentence(query) && onSaveSentence)}
+          canSaveSentence={sentenceTyped}
+          sentenceSaved={sentenceSaved}
           onSaveSentence={handleSaveSentenceClick}
           readyCount={readyCount}
           unseenCount={unseenCount}
@@ -483,6 +489,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
               onLazyLoadImage={onLazyLoadImage}
               onSaveSentence={onSaveSentence}
               isSentenceSaved={isSentenceSaved}
+              context={viewing.item.context}
             />
           )}
         </SearchResultsSheet>

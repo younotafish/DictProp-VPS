@@ -123,13 +123,20 @@ export const detectVocabulary = async (text: string): Promise<VocabularyScan> =>
     throw new Error('Please provide some text to analyze.');
   }
 
-  const data = await postAi<ScanReply>(
-    '/api/extract-vocabulary',
-    { text },
-    'Vocabulary detection',
-    EXTRACT_TIMEOUT_MS,
-    'The model did not finish scanning this text before the timeout. Try a shorter text.',
-  );
+  let data: ScanReply;
+  try {
+    data = await postAi<ScanReply>(
+      '/api/extract-vocabulary',
+      { text },
+      'Vocabulary detection',
+      EXTRACT_TIMEOUT_MS,
+      'The model did not finish scanning this text before the timeout. Try a shorter text.',
+    );
+  } catch (error) {
+    // The server's 404 means only that the text had nothing worth studying: an answer, not a failure.
+    if (error instanceof HttpError && error.status === 404) return { words: [], translation: '', sourceLang: 'en' };
+    throw error;
+  }
   return {
     words: (Array.isArray(data.words) ? data.words : [])
       .filter((w: DetectedWordReply | null): w is DetectedWordReply & { word: string } =>

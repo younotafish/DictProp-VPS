@@ -75,16 +75,17 @@ export function useSearchQueue({
 
   // Add a lookup of `q` to the queue, to be analyzed (see processItem) and opened by itself as `openOnReady` says.
   // forceAI = a refresh: re-run the AI even if the word is saved, and replace any existing queue entry for it so the
-  // fresh result supersedes the old/reused one. A duplicate of a lookup still running or ready is skipped.
-  const enqueue = useCallback((q: string, opts: { forceAI?: boolean; analyzeMode?: 'batch'; scanId?: string; openOnReady: OpenPolicy }) => {
+  // fresh result supersedes the old/reused one. A duplicate of a lookup still running or ready is skipped. `context`
+  // is the sentence it came from, which the sheet shows above its meanings.
+  const enqueue = useCallback((q: string, opts: { forceAI?: boolean; analyzeMode?: 'batch'; scanId?: string; openOnReady: OpenPolicy; context?: string }) => {
     const trimmed = q.trim();
     if (!trimmed) return;
     const forceAI = !!opts.forceAI;
-    const { analyzeMode, scanId, openOnReady } = opts;
+    const { analyzeMode, scanId, openOnReady, context } = opts;
     const id = `q-${++queueIdCounter}`;
     if (forceAI) refreshLog.note(trimmed);
     setQueue(prev => {
-      const next = searchQueueReducer(prev, { type: 'add-search', id, query: trimmed, forceAI, analyzeMode, scanId, openOnReady });
+      const next = searchQueueReducer(prev, { type: 'add-search', id, query: trimmed, forceAI, analyzeMode, scanId, openOnReady, context });
       if (next === prev) log('🔍 Queue: skipping duplicate "' + trimmed + '"');
       else log('🔍 Queue: adding "' + trimmed + '"' + (forceAI ? ' (force refresh)' : '') + (analyzeMode ? ' (' + analyzeMode + ')' : ''));
       return next;
@@ -135,7 +136,7 @@ export function useSearchQueue({
       return false;
     }
     if (route.kind === 'scan') scan(query);
-    else enqueue(query, { forceAI: route.forceAI, analyzeMode: route.analyzeMode, openOnReady: route.forceAI ? 'any' : 'saved-hit' });
+    else enqueue(query, { forceAI: route.forceAI, analyzeMode: route.analyzeMode, openOnReady: route.forceAI ? 'any' : 'saved-hit', context: request.context });
     return true;
   }, [queueRef, isOnlineRef, findSavedByWordRef, openWhenReady, showNotice, scan, enqueue]);
 
@@ -225,7 +226,7 @@ export function useSearchQueue({
         // The status line reports what the scan found (see searchStatusLine), the English too when it read Chinese.
         const english = sourceLang === 'zh' && translation ? translation : undefined;
         setQueue(queueUpdate({ type: 'scan-done', id: itemId, found: words.length, translation: english, at: Date.now() }));
-        for (const w of words) enqueue(w.word, { analyzeMode: 'batch', scanId: itemId, openOnReady: 'never' });
+        for (const w of words) enqueue(w.word, { analyzeMode: 'batch', scanId: itemId, openOnReady: 'never', context: w.context || undefined });
       }).catch(err => {
         warn('🔍 Sentence scan failed "' + q + '":', (err as Error | undefined)?.message);
         setQueue(queueUpdate({ type: 'fail', id: itemId, failure: failureOf({ kind: 'scan', label: q }, err, Date.now()) }));

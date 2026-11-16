@@ -33,6 +33,9 @@ export interface QueueItem {
   seen: boolean;
   /** lookup: the scan that found this expression in a sentence. */
   scanId?: string;
+  /** lookup: the sentence it came from (a scan's snippet, or the sentence a word was picked in), shown above its
+   *  meanings. It stays on this device: never sent with the lookup, nor kept across a reload. */
+  context?: string;
   /** scan, once finished: how many expressions it found, and the sentence in English when it was written in Chinese. */
   found?: number;
   translation?: string;
@@ -54,7 +57,7 @@ export type QueueAction =
   /** A lookup of `query` (trimmed). A refresh (forceAI) replaces every entry for the same query; otherwise a
    *  duplicate that hasn't failed leaves the queue as it is, and a failed lookup of the query gives way to it. An
    *  expression a scan found carries the scan's id. Scans are never duplicates of a lookup, nor replaced by one. */
-  | { type: 'add-search'; id: string; query: string; forceAI: boolean; analyzeMode?: 'batch'; scanId?: string; openOnReady: OpenPolicy }
+  | { type: 'add-search'; id: string; query: string; forceAI: boolean; analyzeMode?: 'batch'; scanId?: string; openOnReady: OpenPolicy; context?: string }
   /** A comparison of `words` (trimmed, two or more): ready at once when it was saved before. A failed comparison of
    *  the same words gives way to it. */
   | { type: 'add-compare'; id: string; words: string[]; cached: ComparisonResult | null }
@@ -101,14 +104,17 @@ export const hasLiveDuplicate = (queue: readonly QueueItem[], query: string): bo
 export function searchQueueReducer(queue: QueueItem[], action: QueueAction): QueueItem[] {
   switch (action.type) {
     case 'add-search': {
-      const { id, query, forceAI, analyzeMode, scanId, openOnReady } = action;
+      const { id, query, forceAI, analyzeMode, scanId, openOnReady, context } = action;
       if (!forceAI && hasLiveDuplicate(queue, query)) return queue;
       const replaces = forceAI
         ? (item: QueueItem) => item.kind !== 'scan' && sameQuery(item.query, query)
         : (item: QueueItem) => item.kind === 'lookup' && item.status === 'failed' && sameQuery(item.query, query);
       return [
         ...queue.filter(item => !replaces(item)),
-        { id, kind: 'lookup', query, status: 'pending', results: null, seen: false, forceAI, analyzeMode, openOnReady, ...(scanId ? { scanId } : {}) },
+        {
+          id, kind: 'lookup', query, status: 'pending', results: null, seen: false, forceAI, analyzeMode, openOnReady,
+          ...(scanId ? { scanId } : {}), ...(context ? { context } : {}),
+        },
       ];
     }
     case 'add-compare': {

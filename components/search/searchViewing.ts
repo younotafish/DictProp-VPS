@@ -1,3 +1,4 @@
+import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import type { QueueItem } from './searchQueue';
 
 /** What the search shows: only the floating button, the search box, or the results sheet. */
@@ -45,4 +46,33 @@ export const clampMeaning = (index: number, count: number): number => Math.max(0
  */
 export function meaningAfterRefresh(openId: string | undefined, refreshedId: string, meaningIndex: number): number {
   return openId === refreshedId ? 0 : meaningIndex;
+}
+
+/** How many characters of the source sentence the context line shows on each side of the word. */
+const CONTEXT_REACH = 40;
+
+/**
+ * The line above a result's meanings that shows the sentence it came from: "From your sentence: “…ran the gamut of
+ * emotions…”", about 40 characters each side of the first place the word appears (or the sentence's start when it
+ * doesn't), cut at word boundaries with an ellipsis where it's cut. Null without a sentence.
+ */
+export function contextLine(context: string | undefined, word: string): string | null {
+  const text = stripSentenceMarkers(context ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  const needle = word.trim().toLowerCase();
+  const found = needle ? text.toLowerCase().indexOf(needle) : -1;
+  const at = Math.max(0, found);
+  const length = found < 0 ? 0 : needle.length;
+  let start = Math.max(0, at - CONTEXT_REACH);
+  let end = Math.min(text.length, at + length + (found < 0 ? 2 * CONTEXT_REACH : CONTEXT_REACH));
+  // Never show part of a word at a cut edge.
+  if (start > 0) {
+    const space = text.indexOf(' ', start);
+    if (space >= 0 && space < at) start = space + 1;
+  }
+  if (end < text.length) {
+    const space = text.lastIndexOf(' ', end);
+    if (space > at + length) end = space;
+  }
+  return `From your sentence: “${start > 0 ? '…' : ''}${text.slice(start, end).trim()}${end < text.length ? '…' : ''}”`;
 }
