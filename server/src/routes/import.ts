@@ -5,6 +5,7 @@ import { detectImageMimeType } from '../image-format.js';
 import type { AppEnv } from '../middleware/auth.js';
 import { readJsonArray } from '../middleware/json-body.js';
 import { fetchPublicHttpUrl } from '../safe-url.js';
+import { IMPORT_IMAGE_PHASE_MS } from '../shared/import-limits.js';
 import { runPool } from '../shared/pool.js';
 import { checkStoredItem, isItemId } from '../validation.js';
 import { isRecord } from '../validation-helpers.js';
@@ -13,9 +14,6 @@ import { MAX_IMAGE_BYTES } from './item-images.js';
 const IMAGE_FETCH_TIMEOUT_MS = 30_000;
 const MAX_IMPORT_IMAGES = 100;
 const IMAGE_FETCH_CONCURRENCY = 5;
-// The image phase's budget as a whole: past it no picture starts and those still downloading are cut off, so slow
-// picture hosts can't hold the cards and the reply past the client's 12-minute wait (services/api/jsonImport.ts).
-const IMAGE_PHASE_DEADLINE_MS = 8 * 60_000;
 
 async function readLimitedBody(response: Response, maxBytes: number): Promise<Buffer | null> {
   if (!response.body) return Buffer.alloc(0);
@@ -88,13 +86,13 @@ function wrapVocabCard(card: Record<string, unknown>) {
 export interface ImportRouteDependencies {
   /** Fetch a remote image as a data URI, or undefined when it can't be had or `signal` aborts first. */
   fetchImage?: (url: string, signal: AbortSignal) => Promise<string | undefined>;
-  /** How long the image phase may run in all; tests shorten it. */
+  /** How long the image phase may run in all (IMPORT_IMAGE_PHASE_MS); tests shorten it. */
   imagePhaseDeadlineMs?: number;
 }
 
 export function createImportRoutes({
   fetchImage = fetchImageAsBase64,
-  imagePhaseDeadlineMs = IMAGE_PHASE_DEADLINE_MS,
+  imagePhaseDeadlineMs = IMPORT_IMAGE_PHASE_MS,
 }: ImportRouteDependencies = {}) {
   const importRoutes = new Hono<AppEnv>();
 

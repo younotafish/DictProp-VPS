@@ -4,7 +4,8 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../src/middleware/auth.js';
 import { srs } from './support/fixtures.js';
 
-// POST /api/import's image phase has a deadline (IMAGE_PHASE_DEADLINE_MS, eight minutes), here shortened.
+// POST /api/import's image phase has a deadline (IMPORT_IMAGE_PHASE_MS in server/src/shared/import-limits.ts, eight
+// minutes), here shortened.
 
 const { createImportRoutes } = await import('../src/routes/import.js');
 const { getItemById, getItemImageBinary } = await import('../src/db.js');

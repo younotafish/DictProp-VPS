@@ -1,12 +1,12 @@
+import { IMPORT_IMAGE_PHASE_MS } from '../../server/src/shared/import-limits';
 import { fetchWithin } from '../http';
 
 // The bulk JSON import, which adds items (and fetches their remote pictures) on the server.
 
 // The server fetches an import's remote pictures before it saves the cards and replies: at most 100, five at a
-// time, for eight minutes at most (IMAGE_PHASE_DEADLINE_MS in server/src/routes/import.ts). Four minutes more cover
-// sending the request (up to 25 MB), saving the cards and the reply. Past that, the request is given up rather than
-// left spinning.
-const IMPORT_TIMEOUT_MS = 8 * 60_000 + 4 * 60_000;
+// time, for IMPORT_IMAGE_PHASE_MS (eight minutes) at most. Four minutes more cover sending the request (up to 25 MB),
+// saving the cards and the reply. Past that, the request is given up rather than left spinning.
+const IMPORT_TIMEOUT_MS = IMPORT_IMAGE_PHASE_MS + 4 * 60_000;
 
 /**
  * Imports items. A failure throws an Error whose message is the server's reply (a JSON error body or text), which
