@@ -14,13 +14,13 @@ export interface ConfirmModalProps {
   showCancel?: boolean;
 }
 
+// The header's tones. The confirm button is rose for a danger and indigo otherwise, as it has always rendered.
 const variantStyles = {
   danger: {
     bg: 'bg-rose-50',
     border: 'border-rose-100',
     iconBg: 'bg-rose-100',
     iconColor: 'text-rose-500',
-    buttonClass: 'bg-rose-500 hover:bg-rose-600 shadow-rose-200',
     Icon: AlertCircle
   },
   warning: {
@@ -28,7 +28,6 @@ const variantStyles = {
     border: 'border-amber-100',
     iconBg: 'bg-amber-100',
     iconColor: 'text-amber-500',
-    buttonClass: 'bg-amber-500 hover:bg-amber-600 shadow-amber-200',
     Icon: AlertCircle
   },
   success: {
@@ -36,7 +35,6 @@ const variantStyles = {
     border: 'border-emerald-100',
     iconBg: 'bg-emerald-100',
     iconColor: 'text-emerald-500',
-    buttonClass: 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-200',
     Icon: CheckCircle2
   },
   info: {
@@ -44,7 +42,6 @@ const variantStyles = {
     border: 'border-indigo-100',
     iconBg: 'bg-indigo-100',
     iconColor: 'text-indigo-500',
-    buttonClass: 'bg-indigo-500 hover:bg-indigo-600 shadow-indigo-200',
     Icon: Info
   }
 };
@@ -104,10 +101,12 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
                 {cancelText}
               </Button>
             )}
-            <Button 
-              variant="primary" 
-              onClick={onConfirm} 
-              className={`flex-1 border-0 ${style.buttonClass}`}
+            <Button
+              variant="plain"
+              onClick={onConfirm}
+              className={`flex-1 border-0 text-white shadow-lg ${variant === 'danger'
+                ? 'bg-rose-500 hover:bg-rose-600 shadow-rose-200'
+                : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200'}`}
             >
               {confirmText}
             </Button>
