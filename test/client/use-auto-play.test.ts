@@ -57,7 +57,8 @@ test('a pause that lasts 15 minutes ends sentence auto-play as the end of the Du
     await act(() => view.autoPlay().setSentenceAutoPlayPaused(true));
     t.mock.timers.tick(PAUSE_CAP_MS - 1_000);
     assert.equal(ended, 0, 'paused a second short of the cap');
-    assert.equal(view.autoPlay().countdownFrozenMs, 20 * 60_000 - 1_000, 'the Duration counted only the second between pauses');
+    const duration = view.autoPlay().autoPlayTimerMinutes * 60_000;
+    assert.equal(view.autoPlay().countdownFrozenMs, duration - 1_000, 'the Duration counted only the second between pauses');
     t.mock.timers.tick(1_000);
     assert.equal(ended, 1, 'the reading is told to end, as when the Duration runs out');
 
@@ -67,5 +68,28 @@ test('a pause that lasts 15 minutes ends sentence auto-play as the end of the Du
     assert.equal(view.autoPlay().isSentenceAutoPlaying, false);
   } finally {
     await view.close();
+  }
+});
+
+test('every card view has the same settings: a change on a sentence opened from a word card shows on the card under it', async () => {
+  const wordCard = await cardView();
+  const sentence = await cardView();
+  try {
+    const repeats = wordCard.autoPlay().sentenceRepeats;
+    await act(() => sentence.autoPlay().cycleRepeats());
+    assert.equal(sentence.autoPlay().sentenceRepeats, repeats === 5 ? 1 : repeats + 1);
+    assert.equal(wordCard.autoPlay().sentenceRepeats, sentence.autoPlay().sentenceRepeats);
+    await act(() => wordCard.autoPlay().cycleTimerDuration());
+    assert.equal(sentence.autoPlay().autoPlayTimerMinutes, wordCard.autoPlay().autoPlayTimerMinutes);
+    const next = await cardView();
+    assert.deepEqual(
+      [next.autoPlay().sentenceRepeats, next.autoPlay().autoPlayTimerMinutes],
+      [wordCard.autoPlay().sentenceRepeats, wordCard.autoPlay().autoPlayTimerMinutes],
+      'the next card opened starts with them',
+    );
+    await next.close();
+  } finally {
+    await sentence.close();
+    await wordCard.close();
   }
 });

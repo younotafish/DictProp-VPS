@@ -1,16 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { primeKeepAlive } from '../../services/neuralTts';
 import { createSessionClock, type SessionClock } from '../../services/audio/autoplayController';
+import { cycleAutoPlaySetting, getAutoPlaySettings, subscribeAutoPlaySettings } from '../../services/audio/autoplaySettings';
 import { useLatest } from '../../hooks/useStableValue';
 import { useWakeLock } from './useWakeLock';
-
-// The settings each auto-play control cycles through.
-const SPEED_PRESETS = [1000, 1500, 2000, 3000, 5000];   // ms each slide shows
-const TIMER_PRESETS = [5, 10, 15, 20, 25];               // minutes before auto-play stops itself
-const GAP_PRESETS = [2000, 3000, 5000, 10000];           // ms of silence between reads
-const REPEAT_PRESETS = [1, 2, 3, 4, 5];                  // times each sentence is read
-
-const nextPreset = <T,>(presets: readonly T[], current: T): T => presets[(presets.indexOf(current) + 1) % presets.length];
 
 /** Which auto-play runs: none, the word slideshow, or the sentence reader. One state, so the two never run at once. */
 export type AutoPlayMode = 'off' | 'slideshow' | 'examples';
@@ -18,20 +11,21 @@ export type AutoPlayMode = 'off' | 'slideshow' | 'examples';
 /**
  * The card view's two auto-play modes and their settings. The word slideshow (isAutoPlaying) steps through the
  * cards; sentence auto-play (isSentenceAutoPlaying) reads each card's example sentences, or in sentence review
- * the sentence itself. Only one runs at a time. Either keeps the screen awake, and stops itself when its timer
- * runs out. Sentence auto-play can pause (its reader reports it through setSentenceAutoPlayPaused): the timer stands
- * still meanwhile, the screen stays awake for the pause's first two minutes only, and a pause that lasts 15 minutes
+ * the sentence itself. Only one runs at a time, with the settings last chosen on the device
+ * (services/audio/autoplaySettings.ts). Either keeps the screen awake, and stops itself when its timer runs out.
+ * Sentence auto-play can pause (its reader reports it through setSentenceAutoPlayPaused): the timer stands still
+ * meanwhile, the screen stays awake for the pause's first two minutes only, and a pause that lasts 15 minutes
  * (PAUSE_CAP_MS) ends auto-play as the timer's end does.
  */
 export function useAutoPlay() {
   const [autoPlayMode, setAutoPlayMode] = useState<AutoPlayMode>('off');
   const isAutoPlaying = autoPlayMode === 'slideshow';
   const isSentenceAutoPlaying = autoPlayMode === 'examples';
-  const [autoPlaySpeed, setAutoPlaySpeed] = useState(2000); // ms
-  const [autoPlayTimerMinutes, setAutoPlayTimerMinutes] = useState(20);
   const isSentenceAutoPlayingRef = useLatest(isSentenceAutoPlaying);
-  const [sentenceGap, setSentenceGap] = useState(2000); // ms of silence between every read (repeats + distinct sentences)
-  const [sentenceRepeats, setSentenceRepeats] = useState(3); // times each sentence is read (total), 1–5
+  // Ms each slide shows, the Duration in minutes, ms of silence between every read (repeats and distinct sentences) and
+  // the times each sentence is read: shared by every card view, and a change shows in each.
+  const { slideMs: autoPlaySpeed, minutes: autoPlayTimerMinutes, gapMs: sentenceGap, repeats: sentenceRepeats } =
+    useSyncExternalStore(subscribeAutoPlaySettings, getAutoPlaySettings, getAutoPlaySettings);
   const [sentenceAutoPlayPaused, setPausedState] = useState(false);
 
   // The timer's clock, one per run of either mode: the time spent paused doesn't count.
@@ -62,13 +56,8 @@ export function useAutoPlay() {
   // How long each slide shows; useWordSlideshow reads it as each slide starts.
   const autoPlaySpeedRef = useLatest(autoPlaySpeed);
 
-  const cycleSpeed = useCallback(() => {
-    setAutoPlaySpeed(prev => nextPreset(SPEED_PRESETS, prev));
-  }, []);
-
-  const cycleTimerDuration = useCallback(() => {
-    setAutoPlayTimerMinutes(prev => nextPreset(TIMER_PRESETS, prev));
-  }, []);
+  const cycleSpeed = useCallback(() => cycleAutoPlaySetting('slideMs'), []);
+  const cycleTimerDuration = useCallback(() => cycleAutoPlaySetting('minutes'), []);
 
   const toggleAutoPlay = useCallback(() => {
     setAutoPlayMode(mode => mode === 'slideshow' ? 'off' : 'slideshow');
@@ -84,14 +73,9 @@ export function useAutoPlay() {
   const stopAutoPlay = useCallback(() => setAutoPlayMode('off'), []);
 
   // ── Sentence auto-play: read each card's example sentences (both) in turn (neural voice) ──
-  const cycleGap = useCallback(() => {
-    setSentenceGap(prev => nextPreset(GAP_PRESETS, prev));
-  }, []);
-
+  const cycleGap = useCallback(() => cycleAutoPlaySetting('gapMs'), []);
   // How many times each sentence is read (total), cycled 1 → 5 → 1.
-  const cycleRepeats = useCallback(() => {
-    setSentenceRepeats(prev => nextPreset(REPEAT_PRESETS, prev));
-  }, []);
+  const cycleRepeats = useCallback(() => cycleAutoPlaySetting('repeats'), []);
 
   const toggleSentenceAutoPlay = useCallback(() => {
     setAutoPlayMode(mode => mode === 'examples' ? 'off' : 'examples');
