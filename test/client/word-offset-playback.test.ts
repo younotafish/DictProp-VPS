@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { FakeAudioElement, FakeTtsServer, IPHONE_USER_AGENT, installFakeMedia, until } from '../support/audio/fakeMedia.ts';
 import { startAtForOffset } from '../../services/ttsAlignment.ts';
+import type { StoredItem } from '../../types.ts';
 
 // Playing a sentence from one of its words: services/ttsAlignment.ts startAtForOffset, which finds the word in the
-// clip's timings, and the engine's speakNaturalAt, which plays the sentence's own clip from there.
+// clip's timings, the engine's speakNaturalAt, which plays the sentence's own clip from there, and sentence review's
+// playFromWordOffset (views/detail/useSentencePlayback.ts), which a word tap calls.
 
 const MAC_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
 const media = installFakeMedia({ userAgent: IPHONE_USER_AGENT });
@@ -16,6 +18,9 @@ Object.assign(globalThis, { Worker: class { constructor() { workersStarted++; } 
 const engine = await import('../../services/neuralTts.ts');
 const { ttsKey } = await import('../../services/api/tts.ts');
 const { setTtsStyle } = await import('../../services/ttsSettings.ts');
+const { createElement } = await import('react');
+const { renderToStaticMarkup } = await import('react-dom/server');
+const { useSentencePlayback } = await import('../../views/detail/useSentencePlayback.ts');
 
 const TIMINGS = [
   { text: 'The', start: 0.1, end: 0.3 },
@@ -155,4 +160,46 @@ test('a read made up on the spot asks the server for nothing when it misses', as
   engine.speakNatural(text, { generateOnMiss: false });
   await until(() => media.synth.last?.text === text, 'the system voice reads');
   assert.equal(server.generated.length, before);
+});
+
+test('sentence review\'s word tap plays the sentence from the word inside the tap; during auto-play it starts nothing', async () => {
+  const text = await sentence({ Mia: true });
+  const item = { data: { id: 'sentence-1', text: `{{${text.slice(0, 3)}}}${text.slice(3)}` } } as unknown as StoredItem;
+  let autoPlaying = false;
+  let stops = 0;
+  const listened: string[] = [];
+  let playback: ReturnType<typeof useSentencePlayback> | undefined;
+  const Probe = () => {
+    playback = useSentencePlayback({
+      currentSentenceRef: { current: item },
+      sentenceItemsRef: { current: [item] },
+      currentGroupIndexRef: { current: 0 },
+      isSentenceAutoPlayingRef: { get current() { return autoPlaying; } },
+      stopAutoPlay: () => { stops++; },
+      setCurrentGroupIndex: () => {},
+      setCurrentItemIndex: () => {},
+      onListened: heard => listened.push(heard.data.id),
+    });
+    return null;
+  };
+  renderToStaticMarkup(createElement(Probe));
+  assert.ok(playback);
+
+  // Auto-play owns the audio: with nothing of this sentence playing, a word tap starts nothing.
+  autoPlaying = true;
+  void playback.playFromWordOffset(OFFSET_OF_BROWN);
+  assert.deepEqual(engine.getPlaybackState(), { text: null, status: 'idle' });
+  assert.equal(stops, 0);
+
+  autoPlaying = false;
+  void playback.playFromWordOffset(OFFSET_OF_BROWN);
+  assert.deepEqual(engine.getPlaybackState(), { text, status: 'loading' }, 'the whole sentence, before anything is awaited');
+  assert.equal(stops, 1, 'the slideshow stops');
+  const el = media.element();
+  await until(() => el.src.startsWith('blob:'), 'the clip is set');
+  el.loadMetadata(2);
+  assert.equal(el.currentTime, 0.75, 'from "brown"');
+  el.startPlaying();
+  el.finish();
+  assert.deepEqual(listened, ['sentence-1'], 'heard to its end, it\'s a listen');
 });

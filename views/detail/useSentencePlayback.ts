@@ -1,7 +1,6 @@
 import { useCallback, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { SentenceData, StoredItem } from '../../types';
-import { getPlaybackState, getTimingsFor, pauseCurrent, resumeCurrent, seekCurrent, speakNatural } from '../../services/neuralTts';
-import { alignWordsToStripped, seekTimeForOffset } from '../../services/ttsAlignment';
+import { getPlaybackState, pauseCurrent, resumeCurrent, speakNatural, speakNaturalAt } from '../../services/neuralTts';
 import { setTtsStyle } from '../../services/ttsSettings';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { readInTurnOrToggle } from './useExampleSpeech';
@@ -95,37 +94,19 @@ export function useSentencePlayback({
     });
   }, [noteListened, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
 
-  // Play the current sentence starting at a clicked/selected word (by its char offset in the stripped
-  // sentence). If this sentence's clip is already the active audio, seek it in place (seamless);
-  // otherwise (re)start the sentence and seek once it's playing. Falls back to reading the remainder
-  // when no word timings are available (legacy clip / in-browser / system voice).
+  // Play the current sentence from a tapped or selected word (its character offset in the sentence as shown), in the
+  // sentence's own voice, inside the tap. The speakers show the whole sentence; a clip of it already playing moves to
+  // the word in place, else its clip starts there once its timings arrive within 400 ms, else the rest of the sentence
+  // is read without starting the Kokoro download (services/neuralTts.ts speakNaturalAt). Auto-play owns the audio while
+  // it runs, so then the tap only moves its clip. Async for useSentenceGestures' sake; nothing is awaited.
   const playFromWordOffset = useCallback(async (offset: number) => {
     const s = currentSentenceRef.current;
     if (!s) return;
-    const stripped = stripSentenceMarkers((s.data as SentenceData).text || '').trim();
-    if (!stripped) return;
-    // Resolve timings up-front (instant if warmed on mount, else a quick fetch) and compute the start
-    // time BEFORE playing — avoids the start-from-zero-then-late-seek race.
-    const timings = await getTimingsFor(stripped);
-    const startAt = timings ? seekTimeForOffset(alignWordsToStripped(stripped, timings), offset) : null;
-    const pb = getPlaybackState();
-    if (pb.text === stripped && (pb.status === 'playing' || pb.status === 'paused') && startAt != null) {
-      seekCurrent(startAt); // already this sentence's clip → seek in place (seamless)
-      if (pb.status === 'paused') resumeCurrent();
-      return;
-    }
-    if (isSentenceAutoPlayingRef.current) return;
-    stopAutoPlay();
-    // Timings can be absent for a legacy/system-voice clip or during a flaky-network timeout. Reading
-    // the remaining text is a prosody compromise, but it preserves the interaction's core promise:
-    // Command-click starts audibly at the selected word rather than unexpectedly returning to word one.
-    const fallbackRemainder = stripped.slice(Math.max(0, offset)).trimStart();
-    const textToSpeak = startAt == null && fallbackRemainder ? fallbackRemainder : stripped;
-    speakNatural(textToSpeak, {
-      allowDownload: true,
-      startAt: startAt ?? undefined,
-      onEnd: () => noteListened(s.data.id),
-    }); // (re)start AT the word
+    const text = (s.data as SentenceData).text || '';
+    if (!stripSentenceMarkers(text).trim()) return;
+    const autoPlaying = !!isSentenceAutoPlayingRef.current;
+    if (!autoPlaying) stopAutoPlay();
+    speakNaturalAt(text, offset, { seekOnly: autoPlaying, onEnd: () => noteListened(s.data.id) });
   }, [noteListened, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
 
   // Enter: play from the word the caret/selection sits in. No-op if not in a word, so it never hijacks

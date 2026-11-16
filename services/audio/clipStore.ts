@@ -130,25 +130,27 @@ export const loadTimingsCached = (key: string): Promise<WordTiming[] | null> => 
 };
 
 
-/** Word timings for the CURRENT style's clip of `text` (device cache or server). Null if none exist.
- *  Both styles have timings now, so word-seek works on clear AND casual (keyed by the active style). */
+/** Word timings for the clip speakNatural plays for `text` in the current style (resolvePlayableClip: in the casual style
+ *  the clear clip stands in for a missing casual one), so a seek or a highlight lines up with what's heard. Null when
+ *  there's no clip or it has no timings. */
 export const getTimingsFor = async (text: string): Promise<WordTiming[] | null> => {
   const plain = stripSentenceMarkers(text).trim();
   if (!plain) return null;
-  for (const token of STYLE_VOICES[getTtsStyle()].play) {
-    const timings = await loadTimingsCached(await ttsKey(plain, token));
-    if (timings) return timings;
-  }
-  return null;
+  const clip = await resolvePlayableClip(plain, getTtsStyle());
+  return clip ? loadTimingsCached(clip.key) : null;
 };
 
-/** Ensure word timings exist for `text` (current style): warm them if present, else kick off background
- *  generation (whisper cold-start is ~a minute, so call this when a sentence is shown, not at click). */
+/** Ensure word timings exist for the current style's own clip of `text`: warm them if present, else kick off background
+ *  generation (whisper cold-start is ~a minute, so call this when a sentence is shown, not at click). The casual style's
+ *  clear stand-in doesn't count, so a missing casual clip is still asked for. */
 export const ensureTimings = async (text: string): Promise<void> => {
-  const t = await getTimingsFor(text);
-  if (t) return;
   const plain = stripSentenceMarkers(text).trim();
-  if (plain) requestTTSGeneration([{ text: plain, voice: STYLE_VOICES[getTtsStyle()].generate }]).catch(() => { /* best-effort backfill */ });
+  if (!plain) return;
+  const style = getTtsStyle();
+  for (const token of STYLE_VOICES[style].play) {
+    if (await loadTimingsCached(await ttsKey(plain, token))) return;
+  }
+  requestTTSGeneration([{ text: plain, voice: STYLE_VOICES[style].generate }]).catch(() => { /* best-effort backfill */ });
 };
 
 // Resolve word timings for playback WITHOUT letting a cold/slow network stall the tap. Trimming the
