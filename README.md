@@ -56,6 +56,7 @@ npm run check
 `npm run check` is the release gate; the deploy workflow runs it on every push to `main`, and `check.yml` runs it on pull requests. In order, it runs:
 
 - the client type check (`tsc --noEmit`, strict) and the server type check;
+- ESLint (`npm run lint`), where any warning fails the check;
 - the client, contract, offline-script and workflow tests in `test/`, then the server tests in `server/test/`;
 - the client build (`vite build`) and the server build (`tsc -p server/tsconfig.build.json`);
 - `scripts/check-bundle-budget.mjs`: the initial JavaScript must stay under 100 kB gzipped, and the service worker must precache every file the app needs to start offline;
@@ -65,7 +66,7 @@ npm run check
 npm run lint
 ```
 
-`npm run lint` runs ESLint over the client, the server, the scripts and the tests. `npm run check` doesn't run it, so run it before you push and don't add warnings.
+`npm run lint` runs ESLint over the client, the server, the scripts and the tests, and any warning fails it. `npm run check` runs it too.
 
 ## Tests
 

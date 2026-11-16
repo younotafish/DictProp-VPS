@@ -135,7 +135,7 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 ├── services/
 │   ├── api/                   # The server API by domain: library, images, ai, tts, comparisons, essays, JSON import
 │   ├── auth.ts                # Client auth helpers (calls /api/auth/*)
-│   ├── idb.ts                 # Opens PopDictDB; libraryStore.ts (per-item records + compatibility journal) and
+│   ├── idb.ts                 # Opens PopDictDB; libraryStore.ts (per-item records, folding older builds' stores) and
 │   │                          #   imageStore.ts (pictures) are the two stores in it
 │   ├── sync.ts                # mergeDatasets() for local↔server conflict resolution
 │   ├── srsAlgorithm.ts        # Deterministic FSRS v6 + lazy legacy migration
@@ -266,7 +266,7 @@ Enrichment runs on this Mac (`scripts/offline/`, LaunchAgent `com.dictprop.incre
 - `test/contracts/shared-contracts.test.ts` checks the folder's modules, the client's imports and the Dockerfile's copy of the folder ahead of the client build.
 
 ### Storage Keys (per-origin)
-- IndexedDB: `PopDictDB` v4 → `items_v2` per-item records; `item_updates` is the rollback-compatible journal
+- IndexedDB: `PopDictDB` v4 → `items_v2` per-item records. `item_updates` (a journal) and the full-library snapshot in `meta` are what older builds wrote: launch folds whatever they still hold into the records once and empties them (`services/libraryStore.ts`)
 - localStorage holds only small state (the `review_mutations_pending_*` outbox, settings); never mirror the library there — it doesn't fit, and stripped copies once overwrote full items on the server
 - **Each domain/origin has separate browser storage** — data on `localhost:3000` is separate from `dictprop.online` and `107.152.47.101:3000`
 
