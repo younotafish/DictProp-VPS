@@ -14,5 +14,5 @@ export {
 export { loadComparisons, saveComparisonApi } from './api/comparisons';
 export {
   fetchCachedTTS, fetchCachedTTSTimings, getTtsBackfillStatus, requestTTSGeneration, startTtsBackfill, ttsKey,
-  TTS_CASUAL_VOICE, TTS_LEGACY_CASUAL_VOICE, TTS_LEGACY_VOICE, TTS_VOICE, type TtsBackfillStatus, type WordTiming,
+  type TtsBackfillStatus, type WordTiming,
 } from './api/tts';

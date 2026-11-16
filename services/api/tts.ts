@@ -2,16 +2,8 @@ import { GENERATE_MAX_ITEMS } from '../../server/src/shared/ai-limits';
 import { fetchWithin, jsonRequest, requestJson } from '../http';
 import { sha256Hex } from '../sha256';
 
-// Server-side speech: the voices, cached clips and their word timings by key, generation, and the background
-// backfill.
-
-// MiMo remains the production default while the offline replacement undergoes a blinded
-// connected-speech benchmark. Imported Qwen clips retain their immutable cache keys on the server,
-// but the client must not prefer them until a perceptual recipe is approved.
-export const TTS_VOICE = 'Mia';
-export const TTS_CASUAL_VOICE = 'casual';
-export const TTS_LEGACY_VOICE = 'Mia';
-export const TTS_LEGACY_CASUAL_VOICE = 'casual';
+// Server-side speech: cached clips and their word timings by key, generation, and the background backfill. The
+// voice tokens each speech style uses are in services/audio/voices.ts.
 
 /** One word's playback timing within a cached clip (from the server's whisper word-alignment pass). */
 export interface WordTiming { start: number; end: number; text: string }
