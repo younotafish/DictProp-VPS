@@ -29,7 +29,7 @@ import { WordPlaybackControls } from './WordPlaybackControls';
 import { WordCardHeader } from './WordCardHeader';
 import { MeaningDots } from './MeaningDots';
 import { WordComparisons, comparisonsInvolving } from './WordComparisons';
-import { PhraseBody } from './PhraseBody';
+import { PhraseBody, useGrammarNotesPreload } from './PhraseBody';
 import { ExampleSentencePreview } from './ExampleSentencePreview';
 import { buildToReviewFrom, cardPositionLine } from './cardPosition';
 import { cardIds, liveIdsAmong, useLeaveGoneItems } from './goneItems';
@@ -86,6 +86,8 @@ export function WordDetailView(props: DetailViewBodyProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   // The page behind goes inert while a card is open; closing it gives focus back to what opened it.
   useOverlay();
+  // A phrase card's grammar notes load on their own; fetch them while the card is idle.
+  useGrammarNotesPreload();
 
   // State for 2D navigation
   const {

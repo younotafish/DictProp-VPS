@@ -27,6 +27,7 @@ import { lessonReviewPill, memorizedCount, sentenceRowState } from './sentenceRo
 import { PLATFORM } from '../../services/platform';
 import { RememberToast } from './RememberToast';
 import { SentenceHero } from './SentenceHero';
+import { useGrammarNotesPreload } from './PhraseBody';
 import { SentenceHeaderRow } from './SentenceHeaderRow';
 import { SentenceActionsRow } from './SentenceActionsRow';
 import { SentencePlaybackControls } from './SentencePlaybackControls';
@@ -80,6 +81,8 @@ export function SentenceReviewView({
 }: SentenceReviewViewProps) {
   // The page behind goes inert while a card is open; closing it gives focus back to what opened it.
   useOverlay();
+  // A phrase card opened after the lesson shows its grammar notes at once: their code loads while the lesson is idle.
+  useGrammarNotesPreload();
 
   const { isMobile, isMacDesktop } = PLATFORM;
 

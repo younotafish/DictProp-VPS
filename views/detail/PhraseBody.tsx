@@ -1,13 +1,31 @@
+import { Suspense, useEffect } from 'react';
 import { Search as SearchIcon, X } from 'lucide-react';
 import type { SearchResult, SentenceData, VocabCard } from '../../types';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { ExternalLinkChip, chipClassName } from '../../components/ExternalLinkChip';
 import { PronunciationBlock } from '../../components/PronunciationBlock';
 import { OfflineImage } from '../../components/OfflineImage';
-import { GrammarNotes } from './GrammarNotes';
+import { lazyScreen } from '../../components/lazyScreen';
 import { PhraseVocabCard } from './PhraseVocabCard';
 import { chatGptUrl, playphraseUrl } from '../../services/externalLinks';
 import { PLATFORM } from '../../services/platform';
+
+// The grammar notes render Markdown, and react-markdown is about half of the card view's code, so they come in a chunk
+// of their own. The card views fetch it once they're idle (useGrammarNotesPreload); a phrase card opened before it
+// arrives shows its notes a moment later.
+const GrammarNotes = lazyScreen('grammar-notes', () => import('./GrammarNotes').then(module => ({ default: module.GrammarNotes })));
+
+/** Fetches the grammar notes' code once the card view is up and the page is idle, so a phrase card shows them at once. */
+export function useGrammarNotesPreload(): void {
+  useEffect(() => {
+    if (typeof window.requestIdleCallback === 'function') {
+      const handle = window.requestIdleCallback(() => GrammarNotes.preload(), { timeout: 2_000 });
+      return () => window.cancelIdleCallback(handle);
+    }
+    const timer = window.setTimeout(() => GrammarNotes.preload(), 1_000);
+    return () => window.clearTimeout(timer);
+  }, []);
+}
 
 interface PhraseBodyProps {
   phrase: SearchResult;
@@ -76,7 +94,12 @@ export function PhraseBody({
           </div>
 
           <div className="prose prose-indigo prose-sm sm:prose-base xl:text-lg max-w-none text-slate-600">
-            <GrammarNotes markdown={phrase.grammar} />
+            {/* Notes whose code can't be fetched (a deploy replaced it) leave the rest of the card as it is. */}
+            <ErrorBoundary variant="inline" fallbackMessage="These grammar notes couldn’t be displayed.">
+              <Suspense fallback={null}>
+                <GrammarNotes markdown={phrase.grammar} />
+              </Suspense>
+            </ErrorBoundary>
           </div>
         </div>
       </div>{/* close md:flex */}
