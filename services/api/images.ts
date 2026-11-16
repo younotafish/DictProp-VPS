@@ -1,3 +1,4 @@
+import { runPool } from '../../server/src/shared/pool';
 import { dataUriToBlob } from '../dataUri';
 import { fetchWithin, requestJson } from '../http';
 import { publishServerMutation } from '../syncSignals';
@@ -37,19 +38,14 @@ export const loadItemImagesBatch = async (
 ): Promise<{ images: Map<string, Blob>; failed: string[] }> => {
   const images = new Map<string, Blob>();
   const failed: string[] = [];
-  let cursor = 0;
-  const worker = async () => {
-    while (cursor < ids.length) {
-      const id = ids[cursor++];
-      try {
-        const image = await loadItemImage(id, imageVersions?.get(id));
-        if (image) images.set(id, image);
-      } catch {
-        failed.push(id);
-      }
+  await runPool(ids, 4, async (id) => {
+    try {
+      const image = await loadItemImage(id, imageVersions?.get(id));
+      if (image) images.set(id, image);
+    } catch {
+      failed.push(id);
     }
-  };
-  await Promise.all(Array.from({ length: Math.min(4, ids.length) }, worker));
+  });
   return { images, failed };
 };
 
