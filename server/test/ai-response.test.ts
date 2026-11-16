@@ -6,7 +6,6 @@ import {
   hasCompleteGeneratedVocabMetadata,
   isValidGeneratedExample,
   isValidGeneratedExampleSet,
-  isValidUsageAudit,
   normalizeAnalysisResponse,
   normalizeVocabCard,
   repairGeneratedExample,
@@ -14,6 +13,7 @@ import {
   REGISTER_MINIMUM,
   vocabValidationIssues,
 } from '../src/ai-response.js';
+import { isUsageAudit } from '../src/usage-audit.js';
 
 const completeCard = (overrides: Record<string, unknown> = {}) => ({
   word: 'bank',
@@ -89,7 +89,7 @@ test('normalization keeps usable siblings, drops unusable cards, and orders sens
     'British meaning',
     'obsolete meaning',
   ]);
-  assert.ok(result.data.vocabs.every(vocab => isValidUsageAudit(vocab.usageAudit)));
+  assert.ok(result.data.vocabs.every(vocab => isUsageAudit(vocab.usageAudit)));
   assert.ok(result.data.vocabs.every(vocab => vocab.usageAudit.auditedAt === 5678));
 });
 
@@ -244,6 +244,24 @@ test('a register label shorter than 10 characters is dropped; live analysis acce
   // A note that is present still has to be a real one.
   assert.deepEqual(vocabValidationIssues({ ...card, register: 'formal' }, { optionalRegister: true }),
     ['"register" must be a string of at least 10 characters']);
+});
+
+test('a card\'s usage audit is judged by the stored-item contract in usage-audit.ts', () => {
+  const card = normalizeVocabCard(completeCard(), 'bank', 1234);
+  assert.ok(card);
+  assert.equal(hasCompleteGeneratedVocabMetadata(card), true);
+  assert.equal(hasCompleteGeneratedVocabMetadata({ ...card, usageAudit: { ...card.usageAudit, originalText: 'banks' } }), true);
+  const usageIssue = '"usageAudit" must have a valid status, reason and confidence';
+  for (const usageAudit of [
+    { ...card.usageAudit, reason: '   ' },
+    { ...card.usageAudit, reason: 'x'.repeat(1_001) },
+    { ...card.usageAudit, originalText: '' },
+    { ...card.usageAudit, auditedAt: '1234' },
+    { ...card.usageAudit, status: 'archaic' },
+    undefined,
+  ]) {
+    assert.ok(vocabValidationIssues({ ...card, usageAudit }).includes(usageIssue), JSON.stringify(usageAudit));
+  }
 });
 
 test('validation issues name every failing field of a card', () => {

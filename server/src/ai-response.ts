@@ -1,4 +1,5 @@
 import { exampleIdentity, exampleSetIssues } from './example-rules.js';
+import { isUsageAudit, USAGE_STATUSES, type UsageAudit, type UsageStatus } from './usage-audit.js';
 
 // The example rules live in an import-free module the offline scripts can load under plain node.
 export {
@@ -8,20 +9,6 @@ export {
   isValidGeneratedExample,
   isValidGeneratedExampleSet,
 } from './example-rules.js';
-
-export type UsageStatus =
-  | 'modern_american'
-  | 'current_general'
-  | 'british_only'
-  | 'rare_or_dated'
-  | 'narrow_specialized';
-
-export interface NormalizedUsageAudit {
-  status: UsageStatus;
-  reason: string;
-  confidence: 'high' | 'medium' | 'low';
-  auditedAt: number;
-}
 
 export interface WordFamilyEntry {
   word: string;
@@ -46,7 +33,7 @@ export interface GeneratedVocabCard {
   register: string;
   mnemonic: string;
   imagePrompt: string;
-  usageAudit: NormalizedUsageAudit;
+  usageAudit: UsageAudit;
 }
 
 /** A normalized analysis answer: the sentence-level fields (empty for a word) and the cards. */
@@ -61,16 +48,10 @@ export interface AnalysisData {
 
 type JsonObject = Record<string, unknown>;
 
-const isConfidence = (value: unknown): value is NormalizedUsageAudit['confidence'] =>
+const isConfidence = (value: unknown): value is UsageAudit['confidence'] =>
   value === 'high' || value === 'medium' || value === 'low';
 
-const USAGE_STATUSES = new Set<UsageStatus>([
-  'modern_american',
-  'current_general',
-  'british_only',
-  'rare_or_dated',
-  'narrow_specialized',
-]);
+const USAGE_STATUS_SET = new Set<string>(USAGE_STATUSES);
 
 const USAGE_ORDER: Record<UsageStatus, number> = {
   modern_american: 0,
@@ -155,7 +136,7 @@ function metadataIssues(value: unknown, options: VocabValidationOptions): string
   })) {
     issues.push('every "wordFamily" entry must have "word", "pos" and a Chinese "chinese"');
   }
-  if (!isValidUsageAudit(vocab.usageAudit)) issues.push('"usageAudit" must have a valid status, reason and confidence');
+  if (!isUsageAudit(vocab.usageAudit)) issues.push('"usageAudit" must have a valid status, reason and confidence');
   return issues;
 }
 
@@ -173,7 +154,7 @@ export function vocabValidationIssues(value: unknown, options: VocabValidationOp
 function parseUsageStatus(value: unknown): UsageStatus | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_');
-  if (USAGE_STATUSES.has(normalized as UsageStatus)) return normalized as UsageStatus;
+  if (USAGE_STATUS_SET.has(normalized)) return normalized as UsageStatus;
   if (/british|uk_only|chiefly_uk/.test(normalized)) return 'british_only';
   if (/rare|dated|archaic|obsolete|historical|literary/.test(normalized)) return 'rare_or_dated';
   if (/special|technical|jargon|domain|niche/.test(normalized)) return 'narrow_specialized';
@@ -193,7 +174,7 @@ function inferUsageStatus(registerNote: string): UsageStatus {
   return 'current_general';
 }
 
-function normalizeUsageAudit(raw: unknown, register: string, auditedAt: number): NormalizedUsageAudit {
+function normalizeUsageAudit(raw: unknown, register: string, auditedAt: number): UsageAudit {
   const rawObject: JsonObject = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as JsonObject : {};
   const explicitStatus = parseUsageStatus(
     typeof raw === 'string' ? raw : rawObject.status ?? rawObject.label ?? rawObject.category,
@@ -405,15 +386,6 @@ export function normalizeVocabCard(raw: unknown, fallbackWord: string, auditedAt
     imagePrompt: stringValue(source.imagePrompt ?? source.image_prompt),
     usageAudit: normalizeUsageAudit(source.usageAudit ?? source.usage ?? source.usageLabel, registerNote, auditedAt),
   };
-}
-
-export function isValidUsageAudit(value: unknown): value is NormalizedUsageAudit {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const audit = value as JsonObject;
-  return USAGE_STATUSES.has(audit.status as UsageStatus) &&
-    typeof audit.reason === 'string' && audit.reason.length > 0 &&
-    isConfidence(audit.confidence) &&
-    typeof audit.auditedAt === 'number' && Number.isFinite(audit.auditedAt) && audit.auditedAt > 0;
 }
 
 export function sortVocabsByUsage<T extends { usageAudit?: { status?: UsageStatus } }>(vocabs: T[]): T[] {
