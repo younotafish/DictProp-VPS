@@ -4,6 +4,7 @@ import { Button } from './Button';
 import { Modal } from './Modal';
 import { useRefusedReviews } from './RefusedReviews';
 import { clearRefusedReviews, dismissRefusedReviews } from '../services/refusedReviews';
+import { stripSentenceMarkers } from '../services/sentenceMarkers';
 
 interface Props {
   userId: string;
@@ -46,7 +47,8 @@ export const RefusedReviewsDialog: React.FC<Props> = ({ userId, onClose }) => {
           {newestFirst.map((entry, index) => (
             <li key={`${entry.recordedAt}:${index}`} className="py-2.5">
               <div className="flex items-baseline justify-between gap-3">
-                <span className="min-w-0 break-words font-semibold text-slate-800">{entry.word}</span>
+                {/* A sentence reads without its {{ }} and [[ ]] markers, which entries recorded by older builds still hold. */}
+                <span className="min-w-0 break-words font-semibold text-slate-800">{stripSentenceMarkers(entry.word)}</span>
                 <span className="shrink-0 text-xs text-slate-400">{new Date(entry.reviewedAt).toLocaleString()}</span>
               </div>
               <p className="mt-0.5 text-xs text-slate-500 break-words">{entry.reason}</p>
