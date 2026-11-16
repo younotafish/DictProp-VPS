@@ -4,6 +4,7 @@ import { reconcileReviewedItem } from '../services/sync';
 import { getItemContentHash, isItemDirty } from '../services/itemHash';
 import { applyReviewMutation, undoReviewMutation } from '../services/api/library';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
+import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { enqueuePendingReviewMutation, readPendingReviewMutations, removePendingReviewMutation, type PendingReviewMutation } from '../services/reviewQueue';
 import { describeRefusedReview, isRefusedReviewMutation, recordRefusedReview } from '../services/refusedReviews';
 import { drainReviewOutbox, reviewSeed } from '../services/reviewOutbox';
@@ -66,7 +67,8 @@ export function useReviewOutbox(
             const reviewed = latestItemsRef.current.find(item => item.data.id === mutation.event.itemId) ?? mutation.seedItem;
             recordRefusedReview(userId, {
               itemId: mutation.event.itemId,
-              word: reviewed ? getItemTitle(reviewed) : mutation.event.itemId,
+              // A sentence is listed as it reads, without its {{ }} and [[ ]] markers.
+              word: reviewed ? stripSentenceMarkers(getItemTitle(reviewed)) : mutation.event.itemId,
               reviewedAt: mutation.event.reviewedAt,
               reason: describeRefusedReview(error),
             });

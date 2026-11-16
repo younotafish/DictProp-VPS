@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { getItemTitle, type StoredItem } from '../types';
 import { logError } from '../services/logger';
+import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { findInDetailContext, nextDetailKey, type DetailContext, type DetailViewState } from './useDetailView';
 import type { Library } from './useLibrary';
 
@@ -20,6 +21,9 @@ export interface UndoOffer {
   onUndo?: () => void;
   view?: { before: DetailContext; version: number };
 }
+
+/** The undo pill's words for a change to one item, '{verb} “{title}”', a sentence's title read without its markers. */
+export const undoOfferMessage = (verb: string, item: StoredItem): string => `${verb} “${stripSentenceMarkers(getItemTitle(item))}”`;
 
 /** The undo pill: one offer at a time, which a new offer closes, sending the earlier change on. Every callback is stable. */
 export function useUndoOffer(
@@ -55,7 +59,7 @@ export function useUndoOffer(
 
   /** Offers to undo the change just made to `before`'s item, as '{verb} “{title}”'. Call it before that change's push. */
   const offerUndo = useCallback((verb: string, before: StoredItem, undo: (item: StoredItem) => StoredItem, view?: UndoOffer['view']) => {
-    offerUndoChange({ ids: [before.data.id], message: `${verb} “${getItemTitle(before)}”`, undo, view });
+    offerUndoChange({ ids: [before.data.id], message: undoOfferMessage(verb, before), undo, view });
   }, [offerUndoChange]);
 
   /** Offers to take back an action that changed no saved item; `onUndo` takes it back. */

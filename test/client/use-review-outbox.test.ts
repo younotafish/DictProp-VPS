@@ -4,6 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useReviewOutbox } from '../../hooks/useReviewOutbox.ts';
 import { HttpError } from '../../services/http.ts';
+import { readRefusedReviews } from '../../services/refusedReviews.ts';
 import { enqueuePendingReviewMutation, readPendingReviewMutations } from '../../services/reviewQueue.ts';
 import type { StoredItem } from '../../types.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
@@ -104,3 +105,27 @@ test('a failed undo request throws its own error, which the study screen puts in
   await assert.rejects(renderOutbox([card()]).outbox.undoSRSReview('e1'), (error: unknown) => error instanceof HttpError && error.status === 409);
 });
 
+test('a review the server refuses is listed under its sentence as it reads, without its markers', async t => {
+  const net = fakeNetwork(t);
+  const sentence: StoredItem = {
+    type: 'sentence',
+    data: { id: 's1', text: 'She {{ran}} to the [[station]].', sourceWord: 'run' },
+    srs: { ...card().srs, id: 's1', type: 'sentence' },
+    savedAt: 1,
+  };
+  const { outbox } = renderOutbox([sentence]);
+  enqueuePendingReviewMutation('u1', {
+    event: { id: 'e1', itemId: 's1', itemType: 'sentence', reviewedAt: NOW, previousStep: 0, nextStep: 1 },
+    itemIds: ['s1'],
+    optimisticSrs: { s1: sentence.srs },
+  });
+  t.mock.method(console, 'warn', () => {});
+  net.online = true;
+  net.answer = url => {
+    assert.match(url, /\/api\/reviews\/apply$/);
+    return Response.json({ error: 'Item not found' }, { status: 404 });
+  };
+  await outbox.flushPendingReviews();
+  assert.deepEqual(readRefusedReviews('u1').entries.map(entry => entry.word), ['She ran to the station.']);
+  assert.deepEqual(readPendingReviewMutations('u1'), [], 'the refused review leaves the outbox');
+});
