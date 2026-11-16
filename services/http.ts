@@ -9,6 +9,14 @@ export class HttpError extends Error {
   }
 }
 
+/** What every timed request rejects with once it runs out of time (see fetchWithin). */
+export class TimeoutError extends Error {
+  constructor(message = 'Request timed out') {
+    super(message);
+    this.name = 'TimeoutError';
+  }
+}
+
 export const AUTH_REQUIRED_EVENT = 'dictprop:auth-required';
 
 async function readErrorBody(response: Response): Promise<string> {
@@ -62,7 +70,7 @@ async function withTimeout<T>(
   run: (init: RequestInit) => Promise<T>,
 ): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), timeoutMs);
+  const timer = setTimeout(() => controller.abort(new TimeoutError()), timeoutMs);
   const callerSignal = init?.signal;
   const forwardAbort = () => controller.abort(callerSignal?.reason);
   if (callerSignal?.aborted) forwardAbort();

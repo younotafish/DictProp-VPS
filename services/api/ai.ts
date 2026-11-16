@@ -87,7 +87,7 @@ export const analyzeInput = async (text: string, options?: { mode?: 'batch' }): 
       originalQuery: data.originalQuery,
     };
   } catch (error) {
-    // Everything the request and the reading above throw is an Error (a timeout's DOMException is one).
+    // Everything the request and the reading above throw is an Error (a timeout's TimeoutError is one).
     const msg = (error as Error).message || '';
     if (msg === 'QUOTA_EXCEEDED') throw error;
     if (error instanceof HttpError) throw error;
