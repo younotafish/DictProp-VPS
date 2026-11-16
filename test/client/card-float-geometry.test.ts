@@ -100,7 +100,7 @@ const toggleButton = classList(tagOf(controls, /<button[^>]*aria-pressed[^>]*>/)
 const stack = classList(tagOf(renderToStaticMarkup(createElement(AppStatusPills, {
   userId: 'u1', onViewRefusedReviews: () => {}, imagePrefetchProgress: null, onStopImageDownload: () => {}, imageRestoreProgress: null,
   jobPills: null, undoMessage: null, onUndo: () => {}, stuckSyncPill: null, aboveTabBar: false, holdUpdate: false,
-  liftAbovePopup: false, writeFailed: false, offline: false, offlineChip: false, refusedChanges: 0,
+  liftAbovePopup: false, writeFailed: false, offline: false, offlineChip: false, refusedChangesNotice: null,
 })), /^<div[^>]*>/));
 const searchFab = classList(tagOf(renderToStaticMarkup(createElement(SearchFab, {
   unseenCount: 0, readyCount: 0, runningCount: 0, isBusy: false, aboveTabBar: false, onClick: () => {},

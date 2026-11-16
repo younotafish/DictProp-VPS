@@ -45,9 +45,10 @@ interface AppStatusPillsProps {
   /** The Offline chip shows (services/connectivityNotice): an outage has settled and nothing covers the tabs. */
   offlineChip: boolean;
   /**
-   * How many items stay on this device because the server refused what they hold (useLibrary's refusedChanges).
+   * The notice about changes the server refused, which stay on this device (components/RefusedChanges): App renders it,
+   * from its own chunk, only while there are some to tell of.
    */
-  refusedChanges: number;
+  refusedChangesNotice: React.ReactNode;
   /**
    * The tabs show, with the tab bar: the stack floats just above the bar (src/index.css's --nav-h) and above a footer
    * the visible tab sets (--tab-footer-h, Study's grade row). Otherwise a card covers the bar, and the stack starts at
@@ -80,7 +81,7 @@ interface AppStatusPillsProps {
  */
 export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
   userId, onViewRefusedReviews, imagePrefetchProgress, onStopImageDownload, imageRestoreProgress, jobPills, undoMessage,
-  onUndo, stuckSyncPill, writeFailed, offline, offlineChip, refusedChanges, aboveTabBar, holdUpdate, liftAbovePopup,
+  onUndo, stuckSyncPill, writeFailed, offline, offlineChip, refusedChangesNotice, aboveTabBar, holdUpdate, liftAbovePopup,
 }) => (
   <div className={`fixed ${aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+0.5rem)]' : 'bottom-[var(--card-float-bottom)]'} left-1/2 -translate-x-1/2 w-max ${liftAbovePopup ? 'z-[110]' : 'z-[80]'} flex flex-col items-center gap-2 pointer-events-none`}>
     {undoMessage && (
@@ -118,13 +119,7 @@ export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
     )}
     {stuckSyncPill}
     {offlineChip && <NoticePill tone="amber" icon={<WifiOff size={16} className="shrink-0" />}>Offline</NoticePill>}
-    {refusedChanges > 0 && (
-      <NoticePill tone="amber" wrap>
-        {refusedChanges === 1
-          ? '1 change stays on this device: the server refused it'
-          : `${refusedChanges} changes stay on this device: the server refused them`}
-      </NoticePill>
-    )}
+    {refusedChangesNotice}
     <RefusedReviewsNotice userId={userId} onView={onViewRefusedReviews} />
     <AppUpdateToast hold={holdUpdate} />
   </div>

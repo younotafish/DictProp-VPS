@@ -6,14 +6,17 @@ import * as AppStatus from '../../components/AppStatus.tsx';
 import { AppStatusPills } from '../../components/AppStatus.tsx';
 import { JobPills, StuckSyncPill } from '../../components/JobPills.tsx';
 import { NoticePill, type NoticeTone } from '../../components/NoticePill.tsx';
+import { RefusedChangesNotice } from '../../components/RefusedChanges.tsx';
 import { fetchImageBatch, type ImagePrefetchProgress } from '../../hooks/useOfflineImages.ts';
 import { announceUpdate, dismissUpdate } from '../../services/appUpdate.ts';
 import type { ImageToStore } from '../../services/imageStore.ts';
 import type { JobNotice } from '../../services/jobNotices.ts';
 import { clearRefusedReviews, recordRefusedReview } from '../../services/refusedReviews.ts';
+import type { StoredItem } from '../../types.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
 // components/AppStatus.tsx's notice stack, the job and stuck-sync pills App renders into it (components/JobPills.tsx),
+// where the refused-changes notice sits among them (components/RefusedChanges.tsx, tested in refused-changes.test.ts),
 // and components/NoticePill.tsx, rendered on the server; and the counts the offline-image download's pill reports
 // (hooks/useOfflineImages.ts). The refused-reviews notice reads this device's log from localStorage, and the update
 // notice reads services/appUpdate.
@@ -33,7 +36,7 @@ const quiet: StackProps = {
   writeFailed: false,
   offline: false,
   offlineChip: false,
-  refusedChanges: 0,
+  refusedChangesNotice: null,
   aboveTabBar: true,
   holdUpdate: false,
   liftAbovePopup: false,
@@ -172,17 +175,20 @@ test('the Offline chip shows only when told, below the couldn\'t-save alert and 
   assert.deepEqual([...order].sort((a, b) => a - b), order);
 });
 
-test('changes the server refused get one amber pill, worded for the count, after the Offline chip and before refused reviews', t => {
+/** A word the server refused. */
+const refusedWord = (word: string) => ({ type: 'vocab', data: { id: word, word }, savedAt: 1 }) as unknown as StoredItem;
+/** The refused-changes notice for `words`, as App renders it into the stack. */
+const refusedNotice = (...words: string[]) => createElement(RefusedChangesNotice, { items: words.map(refusedWord) });
+
+test('changes the server refused get one amber pill, with a × and no View, after the Offline chip and before refused reviews', t => {
   refuseOneReview();
   t.after(() => clearRefusedReviews('u1'));
   assert.doesNotMatch(renderStack(), /on this device: the server refused/, 'none by default');
-  assert.doesNotMatch(renderStack({ refusedChanges: 0 }), /on this device: the server refused/);
-  const one = renderStack({ refusedChanges: 1 });
-  assert.match(one, /<div role="status" class="[^"]*rounded-2xl bg-amber-600[^"]*"><span class="min-w-0 line-clamp-3">1 change stays on this device: the server refused it<\/span><\/div>/);
-  assert.match(renderStack({ refusedChanges: 3 }), />3 changes stay on this device: the server refused them</);
-  // Nothing to press: the change waits for its next edit, which goes to the server again.
-  assert.equal(one.match(/<button/g)?.length, 2, 'only the refused reviews\' View and ×');
-  const html = renderStack({ refusedChanges: 2, offlineChip: true, offline: true, writeFailed: true });
+  // The notice's words and its × are components/RefusedChanges' (refused-changes.test.ts).
+  const one = renderStack({ refusedChangesNotice: refusedNotice('gamut') });
+  assert.match(one, /<div role="status" class="[^"]*rounded-2xl bg-amber-600[^"]*"><span class="min-w-0 line-clamp-3">“gamut” stays on this device: the server refused it<\/span><button type="button" title="Dismiss" aria-label="Dismiss the refused changes notice"/);
+  assert.equal(one.match(/<button/g)?.length, 3, 'its ×, and the refused reviews\' View and ×');
+  const html = renderStack({ refusedChangesNotice: refusedNotice('gamut', 'atlas'), offlineChip: true, offline: true, writeFailed: true });
   const order = ['role="alert"', '>Offline<', '>2 changes stay on this device', '1 review wasn’t accepted'].map(text => html.indexOf(text));
   assert.ok(order.every(index => index >= 0), `every notice renders: ${order}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order);

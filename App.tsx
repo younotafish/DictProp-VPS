@@ -56,10 +56,11 @@ const EssaysView = lazyScreen('essays', () => import('./views/EssaysView').then(
 const DetailView = lazyScreen('detail', () => import('./views/DetailView').then(module => ({ default: React.memo(module.DetailView) })));
 const SignInScreen = lazyScreen('sign-in', () => import('./components/AppGateScreens').then(module => ({ default: module.SignInScreen })));
 const LibraryReadFailedScreen = lazyScreen('library-read-failed', () => import('./components/AppGateScreens').then(module => ({ default: module.LibraryReadFailedScreen })));
-// The background jobs' pills and the stuck-sync pill render only while they show, and their code loads after the
-// first screen with the rest.
+// The background jobs' pills, the stuck-sync pill and the refused-changes notice render only while they show, and their
+// code loads after the first screen with the rest.
 const JobPills = lazyScreen('job-pills', () => import('./components/JobPills').then(module => ({ default: module.JobPills })));
 const StuckSyncPill = lazyScreen('stuck-sync', () => import('./components/JobPills').then(module => ({ default: module.StuckSyncPill })));
+const RefusedChangesNotice = lazyScreen('refused-changes', () => import('./components/RefusedChanges').then(module => ({ default: module.RefusedChangesNotice })));
 const TAB_SCREENS = {
   notebook: NotebookView,
   study: StudyEnhanced,
@@ -259,7 +260,13 @@ function SignedInApp({ user }: { user: AuthUser }) {
         writeFailed={libraryWriteFailed}
         offline={offlineSettled}
         offlineChip={connectivityNotice({ offline: offlineSettled, onTab: !detailContext && !cardPopup }) === 'chip'}
-        refusedChanges={library.refusedChanges}
+        refusedChangesNotice={library.refusedChanges.length > 0 && (
+          <Suspense fallback={null}>
+            <ErrorBoundary variant="overlay">
+              <RefusedChangesNotice items={library.refusedChanges} />
+            </ErrorBoundary>
+          </Suspense>
+        )}
         aboveTabBar={!detailContext}
         holdUpdate={!!detailContext || !!cardPopup}
         liftAbovePopup={liftNoticesAbovePopup({ cardPopup, modalOpen, undoOffered: !!undoMessage, writeFailed: libraryWriteFailed })}
@@ -492,7 +499,7 @@ const App: React.FC = () => {
     const preloadRest = () => {
       for (const screen of [
         DetailView, ...Object.values(TAB_SCREENS), CardReviewPopup, DuplicatesModal, KeyboardHelpModal,
-        RefusedReviewsDialog, SignInScreen, LibraryReadFailedScreen, JobPills, StuckSyncPill,
+        RefusedReviewsDialog, SignInScreen, LibraryReadFailedScreen, JobPills, StuckSyncPill, RefusedChangesNotice,
       ]) {
         screen.preload();
       }

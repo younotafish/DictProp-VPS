@@ -103,7 +103,7 @@ type StackProps = ComponentProps<typeof AppStatusPills>;
 const stack = (props: Partial<StackProps>) => classOf(renderToStaticMarkup(createElement(AppStatusPills, {
   userId: 'u1', onViewRefusedReviews: () => {}, imagePrefetchProgress: null, onStopImageDownload: () => {}, imageRestoreProgress: null,
   jobPills: null, undoMessage: null, onUndo: () => {}, stuckSyncPill: null, writeFailed: false, offline: false,
-  offlineChip: false, refusedChanges: 0, aboveTabBar: true, holdUpdate: false, liftAbovePopup: false, ...props,
+  offlineChip: false, refusedChangesNotice: null, aboveTabBar: true, holdUpdate: false, liftAbovePopup: false, ...props,
 })), 'div');
 
 test('on the tabs the notice stack floats 8 px above the bar, and above a tab\'s footer', () => {

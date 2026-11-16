@@ -99,26 +99,30 @@ test('a push that finds only changes waiting on a queued review or an undo keeps
   }
 });
 
+/** The ids of the items that stay on this device because the server refused them. */
+const refusedIds = (library: Library): string[] => library.refusedChanges.map(item => item.data.id);
+
 test('an item the server refuses counts as staying on this device until it changes, and then goes to the server again', async () => {
   const library = await mountLibrary();
   const edit = (item: StoredItem): StoredItem => ({ ...item, data: { ...item.data, definition: 'shorter' } as StoredItem['data'] });
   try {
     await library.run(({ adoptStoredLibrary }) => adoptStoredLibrary([card('big'), synced(card('fine'))], null));
-    assert.equal(library.now().refusedChanges, 0);
+    assert.deepEqual(refusedIds(library.now()), []);
     answerPush = () => new Response(JSON.stringify({ error: 'Item too large' }), { status: 400 });
     assert.equal(await library.push(), 1);
-    assert.equal(library.now().refusedChanges, 1);
+    assert.deepEqual(refusedIds(library.now()), ['big']);
     assert.deepEqual(library.now().pushTrouble, NO_TROUBLE, 'a refusal is an answer, not a failure');
 
     // The same content would be refused again, so the next push leaves it on this device, still counted.
+    const refused = library.now().refusedChanges;
     assert.equal(await library.push(), 0);
-    assert.equal(library.now().refusedChanges, 1);
+    assert.equal(library.now().refusedChanges, refused, 'the same items in the same array, so the app doesn\'t render again');
 
     // Edited, it's a change to send again, no longer refused, whether or not that push gets through.
     answerPush = down;
     await library.run(({ replaceItem }) => replaceItem('big', edit));
     await library.push();
-    assert.equal(library.now().refusedChanges, 0);
+    assert.deepEqual(refusedIds(library.now()), []);
     assert.equal(library.now().pushTrouble.failures, 1, 'it was sent');
   } finally {
     answerPush = down;
