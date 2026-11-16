@@ -4,11 +4,8 @@ import { sortStoredSensesByUsage } from '../services/usageAudit';
 import type { DuplicateClusterView } from '../components/DuplicatesModal';
 import type { ConfirmModalProps } from '../components/ConfirmModal';
 
-/**
- * The confirm dialog on screen: ConfirmModal's props, whose Cancel closes it. `isOpen` means nothing, since a
- * dialog in the state is open; it's accepted until the callers that still pass it (useSpeechBackfill) stop.
- */
-export type ConfirmDialog = Omit<ConfirmModalProps, 'onCancel'> & { isOpen?: true };
+/** The confirm dialog on screen: ConfirmModal's props, whose Cancel closes it. */
+export type ConfirmDialog = Omit<ConfirmModalProps, 'onCancel'>;
 /** An acknowledgement: a titled message with one OK button. */
 export type Notice = Pick<ConfirmModalProps, 'title' | 'message'> & { variant: NonNullable<ConfirmModalProps['variant']> };
 

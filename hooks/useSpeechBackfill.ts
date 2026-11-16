@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { getTtsBackfillStatus, startTtsBackfill } from '../services/api/tts';
 import type { Overlays } from './useOverlays';
 
-export function useSpeechBackfill({ setConfirmModal }: Pick<Overlays, 'setConfirmModal'>) {
+export function useSpeechBackfill({ showNotice }: Pick<Overlays, 'showNotice'>) {
   // Bulk TTS pre-generation sweep progress (null = not running).
   const [ttsGenProgress, setTtsGenProgress] = useState<{ current: number; total: number; isRunning: boolean } | null>(null);
   const ttsGenAbortRef = useRef(false);
@@ -18,7 +18,7 @@ export function useSpeechBackfill({ setConfirmModal }: Pick<Overlays, 'setConfir
     try {
       status = await startTtsBackfill();
     } catch {
-      if (!silent) setConfirmModal({ isOpen: true, title: "Couldn't Start", message: 'Failed to reach the server to start generation.', confirmText: 'OK', variant: 'warning', onConfirm: () => setConfirmModal(null), showCancel: false });
+      if (!silent) showNotice({ title: "Couldn't Start", message: 'Failed to reach the server to start generation.', variant: 'warning' });
       return;
     }
     if (silent) return; // background trigger — the server handles it; no UI, app can close.
@@ -34,13 +34,12 @@ export function useSpeechBackfill({ setConfirmModal }: Pick<Overlays, 'setConfir
       if (!last.running) break;
     }
     setTtsGenProgress(null);
-    if (!ttsGenAbortRef.current) setConfirmModal({
-      isOpen: true,
+    if (!ttsGenAbortRef.current) showNotice({
       title: 'Speech Generated',
       message: `${last.generated} generated · ${Math.max(0, last.total - last.generated - last.failed)} already cached${last.failed ? `\n${last.failed} failed` : ''}`,
-      confirmText: 'OK', variant: 'success', onConfirm: () => setConfirmModal(null), showCancel: false,
+      variant: 'success',
     });
-  }, []);
+  }, [showNotice]);
 
   // Button handler: sweep ALL items, with modals. Wrapped so a click event isn't passed as `ids`.
   const handleGenerateAllSpeech = useCallback(() => { void runSpeechGeneration([], { silent: false }); }, [runSpeechGeneration]);
