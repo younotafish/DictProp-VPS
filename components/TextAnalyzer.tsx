@@ -1,15 +1,25 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { StoredItem } from '../types';
-import { X, ScanText, Loader2, Check, CheckCheck, ClipboardPaste, Trash2, ChevronLeft, CircleDot, Circle, Sparkles } from 'lucide-react';
+import { X, ScanText, Loader2, Check, CheckCheck, ClipboardPaste, Trash2, CircleDot, Circle, Sparkles } from 'lucide-react';
 import { detectVocabulary, DetectedWord, analyzeInput } from '../services/api/ai';
 import { ensureTTS } from '../services/neuralTts';
 import { modifierKeyLabel } from '../services/platform';
 import { saveNewSenses, savedSenseKeys } from '../services/senseSaving';
 import { describeSearchError, isRetryableSearchError } from '../services/searchRecovery';
+import { Sheet, type SheetButton } from './Sheet';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type AnalyzerStep = 'input' | 'selecting' | 'analyzing' | 'done';
+export type AnalyzerStep = 'input' | 'selecting' | 'analyzing' | 'done';
+
+/**
+ * The header's button on each step, which Escape presses too: Close on the text and on the summary, Back to the text
+ * while words are chosen, and none mid-analysis, where "Stop after current word" is the way out.
+ */
+export const analyzerHeaderButton = (step: AnalyzerStep, onClose: () => void, onBack: () => void): SheetButton | null =>
+  step === 'selecting' ? { kind: 'back', label: 'Back to the text', onClick: onBack }
+  : step === 'analyzing' ? null
+  : { kind: 'close', label: 'Close the text analyzer', onClick: onClose };
 
 interface AnalyzedResult {
   word: string;
@@ -273,46 +283,26 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
     }
   }, [handleScan]);
 
-  if (!isOpen) return null;
-
   // ── Render ───────────────────────────────────────────────────────────────
 
+  // Under the title: what the analyzer is doing now.
+  const subtitle = step === 'selecting' ? (
+    <p className="text-xs text-slate-400 mt-0.5">Select words to analyze in depth</p>
+  ) : step === 'analyzing' ? (
+    <p className="text-xs text-violet-500 mt-0.5 font-medium">
+      Analyzing {analysisCurrent}/{analysisTotal}...
+    </p>
+  ) : undefined;
+
   return (
-    <div className="fixed inset-0 z-50 bg-white flex flex-col">
-      {/* ─── Header ──────────────────────────────────────────────── */}
-      <div className="shrink-0 px-4 py-3 border-b border-slate-200 bg-white flex items-center gap-3">
-        {step === 'selecting' ? (
-          <button
-            onClick={handleBackToInput}
-            className="w-9 h-9 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-100 transition-colors"
-          >
-            <ChevronLeft size={20} />
-          </button>
-        ) : step === 'input' || step === 'done' ? (
-          <button
-            onClick={onClose}
-            className="w-9 h-9 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-100 transition-colors"
-          >
-            <X size={20} />
-          </button>
-        ) : null}
-
-        <div className="flex-1">
-          <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-            <ScanText size={20} className="text-violet-600" />
-            Text Analyzer
-          </h2>
-          {step === 'selecting' && (
-            <p className="text-xs text-slate-400 mt-0.5">Select words to analyze in depth</p>
-          )}
-          {step === 'analyzing' && (
-            <p className="text-xs text-violet-500 mt-0.5 font-medium">
-              Analyzing {analysisCurrent}/{analysisTotal}...
-            </p>
-          )}
-        </div>
-      </div>
-
+    <Sheet
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Text Analyzer"
+      icon={<ScanText size={20} className="text-violet-600" />}
+      subtitle={subtitle}
+      button={analyzerHeaderButton(step, onClose, handleBackToInput)}
+    >
       {/* ─── Content ─────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
 
@@ -334,12 +324,12 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
               />
               <div className="absolute top-2 right-2 flex flex-col gap-1">
                 {!inputText && (
-                  <button onClick={handlePaste} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors" title="Paste">
+                  <button onClick={handlePaste} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors" title="Paste" aria-label="Paste">
                     <ClipboardPaste size={16} />
                   </button>
                 )}
                 {inputText && !isScanning && (
-                  <button onClick={() => changeText('')} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-50 transition-colors" title="Clear">
+                  <button onClick={() => changeText('')} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-50 transition-colors" title="Clear" aria-label="Clear">
                     <Trash2 size={14} />
                   </button>
                 )}
@@ -622,6 +612,6 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
           </div>
         )}
       </div>
-    </div>
+    </Sheet>
   );
 };
