@@ -43,6 +43,7 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
    - `failure-ledger.mjs filter-image-targets` writes `item-images/cycle-targets.json`.
    - `run-streaming-image-quality-loop.sh` renders each image, has it judged, and puts the accepted ones in `item-images/images/`.
    - `failure-ledger.mjs record-image-outcomes` records the deferred images.
+   - `prepare-incremental-item-images.mjs prune-missing` leaves only the accepted images in the manifest.
    - `dispatch-staged-offline-images.sh` publishes the accepted images.
 6. **Example-sentence analyses.**
    - `build-example-sentence-pool.mjs` reads the corpus and the overlay and writes `current-source.json`.
@@ -91,6 +92,8 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
   `node scripts/offline/failure-ledger.mjs <filter-sentences|filter-image-targets|record-image-outcomes|summary> <ledger> ...`
 - `prepare-incremental-item-images.mjs` — Writes image targets, with their prompts, for the live saved sentences, words and phrases that have no image, or whose advanced rewrite has no matching local image yet. It also writes the manifest that the image dispatcher publishes. The manifest's hashes and the markers it checks are the server's own, imported from `server/src/corpus-hash.ts` and `server/src/local-enrichment-markers.ts`.
   `node scripts/offline/prepare-incremental-item-images.mjs <corpus-export.json> <sentence-analysis.json|-> <vocab-completion.json|-> <output-directory> [model]`
+  After the image loop, `prune-missing` drops the manifest entries whose image wasn't accepted, an empty file among them, and prints how many are left.
+  `node scripts/offline/prepare-incremental-item-images.mjs prune-missing <output-directory>`
 - `run-streaming-image-quality-loop.sh` — Each round renders the next numbered candidate for the targets that are still open, while `stream-image-quality-pass.mjs` judges the candidates as they appear. Rejected targets get a refined prompt for the next round. An image that fails `IMAGE_QUALITY_DEFER_AFTER` candidates is left for a later cycle, and its candidates are removed.
   `bash scripts/offline/run-streaming-image-quality-loop.sh <targets.json> <candidates-dir> <images-dir> <work-dir> [width=768] [height=432] [steps=6] [candidate=1] [chunk-size=128]`
 - `generate-krea-candidates.py` — Renders numbered candidates for each target in the local mflux runtime, with Krea-2-Turbo by default. It skips candidates that are already complete, so a killed batch resumes where it stopped. A target's `seedRound` sets its seeds.
@@ -104,7 +107,7 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
 - `build-example-sentence-pool.mjs` — Gathers every example sentence on a vocabulary or phrase card in the corpus export, with the completed vocabulary records laid over the corpus. It writes one record per normalized sentence, with production's coverage flags. Sentences that the user saved are left out.
   `node scripts/offline/build-example-sentence-pool.mjs <corpus-export-or-manifest.json> <output.json> [local-vocab-overlay.json|-]`
 - `prepare-incremental-example-source.mjs` — Keeps the sentences in the pool that production still lacks an analysis or an image for. A sentence keeps the identity the previous source gave it. A pool that has no production coverage is refused.
-  `node scripts/offline/prepare-incremental-example-source.mjs <current-source.json> <baseline-source.json> <output.json> [previous-incremental-source.json]`
+  `node scripts/offline/prepare-incremental-example-source.mjs <current-source.json> <baseline-source.json> <output.json> [previous-incremental-source.json|-]`
 - `merge-sentence-analysis-manifests.mjs` — Joins analysis manifests into one. For each sentence, the newest analysis wins.
   `node scripts/offline/merge-sentence-analysis-manifests.mjs <output.json> <analysis.json>...`
 - `verify-example-sentence-pool.mjs` — Checks that every sentence in the source has an analysis that is complete under the import contract. Given an image bundle, it also checks every image target and image file. With `ALLOW_DEFERRED_IMAGES=1`, a missing image is allowed.

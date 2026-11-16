@@ -43,7 +43,7 @@ const TRACED_ENV = [
 
 // One stub for every script: it records the call, then answers from the scenario. List-valued scenario
 // entries are consumed one call at a time, and the last value repeats.
-const STUB = `import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+const STUB = `import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
 const args = process.argv.slice(2);
@@ -109,6 +109,13 @@ switch (name) {
     finish(status);
   }
   case 'prepare-incremental-item-images.mjs':
+    if (args[0] === 'prune-missing') {
+      // The accepted images: the real script also drops the other entries from the manifest.
+      const accepted = entry => { try { return statSync(join(args[1], entry.imageFile)).size > 0; } catch { return false; } };
+      console.log(JSON.parse(readFileSync(join(args[1], 'manifest.json'), 'utf8')).entries.filter(accepted).length);
+      break;
+    }
+  // falls through
   case 'prepare-sentence-images.mjs': {
     const stage = name === 'prepare-sentence-images.mjs' ? 'example-image' : 'item-image';
     const count = scenario[stage === 'item-image' ? 'itemImages' : 'exampleImages'] ?? 0;
@@ -377,8 +384,10 @@ const savedFilter = `failure-ledger.mjs filter-sentences ${LEDGER} saved-sentenc
 const itemImagePrep = (savedAnalysis: string, overlay: string) =>
   `prepare-incremental-item-images.mjs ${C}/current-corpus.json ${savedAnalysis} ${overlay} ${C}/item-images krea/Krea-2-Turbo`;
 const itemImageFilter = `failure-ledger.mjs filter-image-targets ${LEDGER} item-image ${C}/item-images/targets.json ${C}/item-images/cycle-targets.json`;
+const itemImagePrune = `prepare-incremental-item-images.mjs prune-missing ${C}/item-images`;
 const pool = (overlay: string) => `build-example-sentence-pool.mjs ${C}/current-corpus.json ${C}/current-source.json.tmp ${overlay}`;
-const exampleSource = `prepare-incremental-example-source.mjs ${C}/current-source.json <root>/base/source.json ${C}/source.json.tmp`;
+const exampleSource = (previous = '-') =>
+  `prepare-incremental-example-source.mjs ${C}/current-source.json <root>/base/source.json ${C}/source.json.tmp ${previous}`;
 const exampleFilter = `failure-ledger.mjs filter-sentences ${LEDGER} example-sentence ${C}/unfiltered-source.json ${C}/source.json`;
 const summary = `failure-ledger.mjs summary ${LEDGER}`;
 
@@ -393,7 +402,7 @@ test('a cycle with nothing new exports the corpus, checks every stage and publis
     itemImagePrep('-', '-'),
     itemImageFilter,
     pool('-'),
-    exampleSource,
+    exampleSource(),
     exampleFilter,
     summary,
   ]);
@@ -426,9 +435,10 @@ test('a full cycle completes, reconciles and publishes every stage in order', as
     itemImageFilter,
     `run-streaming-image-quality-loop.sh ${C}/item-images/cycle-targets.json ${C}/item-images/candidates ${C}/item-images/images ${C}/item-images/streaming-quality/101 1024 576 8 1 64  [CODEX_CONCURRENCY=16 CODEX_IMAGE_CONCURRENCY=8 IMAGE_MODEL=krea2 IMAGE_MODEL_QUANTIZE= IMAGE_QUALITY_DEFER_AFTER=8]`,
     `failure-ledger.mjs record-image-outcomes ${LEDGER} item-image ${C}/item-images/cycle-targets.json ${C}/item-images/images 0`,
+    itemImagePrune,
     `dispatch-staged-offline-images.sh ${C}/item-images 100 <head>  [OFFLINE_IMAGE_WAVE_STATE_ROOT=${STATE}/item-images/101 OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30]`,
     pool(`${C}/vocabulary/completed.json`),
-    exampleSource,
+    exampleSource(),
     exampleFilter,
     `merge-sentence-analysis-manifests.mjs ${C}/combined-analysis-cache.json <root>/base/final-reconciliation/final-analysis.json ${C}/analysis-cache.json`,
     `reconcile-sentence-analyses.mjs ${C}/source.json ${C}/combined-analysis-cache.json ${C}/final-reconciliation  [ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1]`,
@@ -461,10 +471,8 @@ test('a full cycle completes, reconciles and publishes every stage in order', as
     'publishing verified incremental explanation-image pairs',
     'incremental example-enrichment cycle complete: 3 post-baseline sentence(s)',
   ]);
-  // The saved-sentence cache took the reconciled analyses, and deferred item images left the manifest.
-  const cycleRoot = join(fixture.root, 'full', 'cycle');
-  assert.ok(existsSync(join(cycleRoot, 'saved-sentences', 'analysis-cache.json')));
-  assert.equal(JSON.parse(readFileSync(join(cycleRoot, 'item-images', 'manifest.json'), 'utf8')).entries.length, 2);
+  // The saved-sentence cache took the reconciled analyses.
+  assert.ok(existsSync(join(fixture.root, 'full', 'cycle', 'saved-sentences', 'analysis-cache.json')));
   assert.equal(result.lock, false);
 });
 
@@ -488,9 +496,10 @@ test('stages that fail let the rest of the cycle run, and the cycle exits 1 nami
     `run-streaming-image-quality-loop.sh ${C}/item-images/cycle-targets.json ${C}/item-images/candidates ${C}/item-images/images ${C}/item-images/streaming-quality/101 1024 576 8 1 64  [CODEX_CONCURRENCY=16 CODEX_IMAGE_CONCURRENCY=8 IMAGE_MODEL=krea2 IMAGE_MODEL_QUANTIZE= IMAGE_QUALITY_DEFER_AFTER=8]`,
     `failure-ledger.mjs record-image-outcomes ${LEDGER} item-image ${C}/item-images/cycle-targets.json ${C}/item-images/images 1`,
     'check-structured-model.mjs',
+    itemImagePrune,
     `dispatch-staged-offline-images.sh ${C}/item-images 100 <head>  [OFFLINE_IMAGE_WAVE_STATE_ROOT=${STATE}/item-images/101 OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30]`,
     pool('-'),
-    exampleSource,
+    exampleSource(),
     exampleFilter,
     `merge-sentence-analysis-manifests.mjs ${C}/combined-analysis-cache.json <root>/base/final-reconciliation/final-analysis.json ${C}/analysis-cache.json`,
     `reconcile-sentence-analyses.mjs ${C}/source.json ${C}/combined-analysis-cache.json ${C}/final-reconciliation  [ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1]`,
@@ -522,9 +531,6 @@ test('stages that fail let the rest of the cycle run, and the cycle exits 1 nami
     'stages that did not complete this cycle: vocabulary completion, saved-sentence analysis, saved-sentence reconciliation, saved-item images, saved-item image publication, example-sentence analysis publication',
   ]);
   assert.deepEqual(result.stderr, ['Incremental saved-sentence analysis reconciliation is incomplete']);
-  // Only the accepted item image stays in the manifest the publisher reads: the empty file counts as missing.
-  const manifest = JSON.parse(readFileSync(join(fixture.root, 'failures', 'cycle', 'item-images', 'manifest.json'), 'utf8'));
-  assert.deepEqual(manifest.entries, [{ imageFile: 'images/item-image-0.webp' }]);
 });
 
 test('the example stage ends the cycle when every sentence is backing off or reconciliation is incomplete', async () => {
@@ -534,7 +540,7 @@ test('the example stage ends the cycle when every sentence is backing off or rec
     `merge-sentence-analysis-manifests.mjs ${C}/combined-analysis-cache.json <root>/base/final-reconciliation/final-analysis.json ${C}/analysis-cache.json`,
     `reconcile-sentence-analyses.mjs ${C}/source.json ${C}/combined-analysis-cache.json ${C}/final-reconciliation  [ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1]`,
   ];
-  const prefix = [...START, vocabSource, savedSource('-'), savedFilter, itemImagePrep('-', '-'), itemImageFilter, pool('-'), exampleSource];
+  const prefix = [...START, vocabSource, savedSource('-'), savedFilter, itemImagePrep('-', '-'), itemImageFilter, pool('-'), exampleSource()];
   const enrich = (count: number) =>
     `enrich-sentences.mjs ${C}/final-reconciliation/missing-source.json ${C}/new-analysis.json ${C}/analysis-work ${C}/analysis-cache.json  [CODEX_CONCURRENCY=16 SENTENCE_ANALYSIS_BATCH_SIZE=${count} ENRICHMENT_FAILURE_LEDGER=${LEDGER} ENRICHMENT_FAILURE_STAGE=example-sentence]`;
 
@@ -575,7 +581,7 @@ test('a cycle builds its sources on what the previous cycle left, and sets an ou
     itemImagePrep(`${C}/saved-sentences/analysis-cache.json`, '-'),
     itemImageFilter,
     pool('-'),
-    `${exampleSource} ${C}/unfiltered-source.json`,
+    exampleSource(`${C}/unfiltered-source.json`),
     exampleFilter,
     summary,
   ]);
@@ -629,9 +635,10 @@ test('another local job defers the cycle, and a busy image pipeline leaves new i
     itemImagePrep('-', '-'),
     itemImageFilter,
     // Neither image stage renders, or records outcomes for images it never tried; the accepted ones still go out.
+    itemImagePrune,
     `dispatch-staged-offline-images.sh ${C}/item-images 100 <head>  [OFFLINE_IMAGE_WAVE_STATE_ROOT=${STATE}/item-images/101 OFFLINE_IMAGE_WAVE_COOLDOWN_SECONDS=30]`,
     pool('-'),
-    exampleSource,
+    exampleSource(),
     exampleFilter,
     `merge-sentence-analysis-manifests.mjs ${C}/combined-analysis-cache.json <root>/base/final-reconciliation/final-analysis.json ${C}/analysis-cache.json`,
     `reconcile-sentence-analyses.mjs ${C}/source.json ${C}/combined-analysis-cache.json ${C}/final-reconciliation  [ALLOW_PRODUCTION_COVERED_BASIC_ANALYSIS=1]`,

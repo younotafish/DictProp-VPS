@@ -7,7 +7,7 @@ import { readJson, writePrivateJson } from './offline-io.mjs';
 const [currentArg, baselineArg, outputArg, previousArg] = process.argv.slice(2);
 if (!currentArg || !baselineArg || !outputArg) {
   throw new Error(
-    'Usage: prepare-incremental-example-source.mjs <current-source.json> <baseline-source.json> <output.json> [previous-incremental-source.json]',
+    'Usage: prepare-incremental-example-source.mjs <current-source.json> <baseline-source.json> <output.json> [previous-incremental-source.json|-]',
   );
 }
 
@@ -29,7 +29,8 @@ const readSource = (path, label, allowEmpty = false) => {
 
 const current = readSource(currentArg, 'Current sentence source');
 const baseline = readSource(baselineArg, 'Baseline sentence source');
-const previous = previousArg
+// '-', like no argument, means there is no previous source: the cycle's first run.
+const previous = previousArg && previousArg !== '-'
   ? readSource(previousArg, 'Previous incremental sentence source', true)
   : { source: null, byId: new Map() };
 

@@ -388,11 +388,9 @@ stage_item_images() {
           "$ITEM_IMAGE_TARGETS" "$ITEM_IMAGE_ROOT/candidates" "$ITEM_IMAGE_ROOT/images" \
           "$ITEM_IMAGE_ROOT/streaming-quality/$CYCLE_ID" 1024 576 "$IMAGE_STEPS" 1 64
     fi
-    # The publisher waits for every manifest entry, so deferred images leave the manifest. They are still
-    # missing in production, so a later cycle targets them again. An empty file counts as missing, as it
-    # does for the judge: published, it would fail its wave's image check.
-    ITEM_IMAGE_READY="$("$NODE_BIN" -e 'const f=require("fs"),p=require("path"),file=p.join(process.argv[1],"manifest.json"),m=JSON.parse(f.readFileSync(file,"utf8")),ready=path=>{try{return f.statSync(path).size>0}catch{return false}};m.entries=m.entries.filter(e=>ready(p.join(process.argv[1],e.imageFile)));f.writeFileSync(file,JSON.stringify(m,null,2)+"\n",{mode:0o600});console.log(m.entries.length)' \
-      "$ITEM_IMAGE_ROOT")"
+    # The publisher waits for every manifest entry, so the images the loop didn't accept leave the manifest;
+    # a later cycle targets them again.
+    ITEM_IMAGE_READY="$("$NODE_BIN" scripts/offline/prepare-incremental-item-images.mjs prune-missing "$ITEM_IMAGE_ROOT")"
     if [ "$ITEM_IMAGE_READY" -gt 0 ]; then
       log "publishing $ITEM_IMAGE_READY locally generated saved-word/phrase/sentence image(s)"
       if ! OFFLINE_IMAGE_WAVE_STATE_ROOT="$PUBLISH_STATE_ROOT/item-images/$CYCLE_ID" \
@@ -416,10 +414,10 @@ stage_example_sentences() {
   mv "$CURRENT_POOL.tmp" "$CURRENT_POOL"
   # The unfiltered source carries each sentence's first identity to the next cycle. source.json, which the
   # verifier and the publishers read, leaves out sentences waiting out a failure backoff.
-  PREVIOUS_SOURCE=""
+  PREVIOUS_SOURCE="-"
   if [ -s "$UNFILTERED_SOURCE" ]; then PREVIOUS_SOURCE="$UNFILTERED_SOURCE"; fi
   "$NODE_BIN" scripts/offline/prepare-incremental-example-source.mjs \
-    "$CURRENT_POOL" "$BASE_SOURCE" "$SOURCE.tmp" ${PREVIOUS_SOURCE:+"$PREVIOUS_SOURCE"}
+    "$CURRENT_POOL" "$BASE_SOURCE" "$SOURCE.tmp" "$PREVIOUS_SOURCE"
   mv "$SOURCE.tmp" "$UNFILTERED_SOURCE"
 
   TOTAL_COUNT="$("$NODE_BIN" scripts/offline/failure-ledger.mjs filter-sentences \
