@@ -112,10 +112,13 @@ export const JSONImport: React.FC<JSONImportProps> = ({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-4 pt-4 pb-8">
+        {/* Locked while an import runs, Clear and Paste with it: a second import can't start, and the box empties
+            when this one lands, so anything put in it meanwhile would be lost. */}
         <div className="relative">
           <textarea
             ref={textareaRef}
             value={inputText}
+            readOnly={status === 'importing'}
             onChange={(e) => { setInputText(e.target.value); setStatus('idle'); }}
             onKeyDown={handleKeyDown}
             placeholder={`Paste JSON from your AI tool. Accepts either:
@@ -147,7 +150,7 @@ export const JSONImport: React.FC<JSONImportProps> = ({
                 <ClipboardPaste size={16} />
               </button>
             )}
-            {inputText && (
+            {inputText && status !== 'importing' && (
               <button onClick={() => { setInputText(''); setStatus('idle'); }} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-50 transition-colors" title="Clear">
                 <Trash2 size={14} />
               </button>
