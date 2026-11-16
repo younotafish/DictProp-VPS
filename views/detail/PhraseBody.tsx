@@ -6,6 +6,7 @@ import { PronunciationBlock } from '../../components/PronunciationBlock';
 import { OfflineImage } from '../../components/OfflineImage';
 import { GrammarNotes } from './GrammarNotes';
 import { PhraseVocabCard } from './PhraseVocabCard';
+import { noteExternalNavigation } from '../../services/externalNavigation';
 import { PLATFORM } from '../../services/platform';
 
 interface PhraseBodyProps {
@@ -63,7 +64,7 @@ export function PhraseBody({
                 rel="noopener noreferrer"
                 onClick={(e) => {
                   e.stopPropagation();
-                  try { window.dispatchEvent(new Event('dictprop:before-external-nav')); } catch (_) {}
+                  noteExternalNavigation();
                 }}
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 hover:bg-purple-100 hover:border-purple-300 transition-all active:scale-95 shadow-sm"
                 title="Hear in movie & TV clips on PlayPhrase.me"
@@ -76,7 +77,7 @@ export function PhraseBody({
                 {...(!PLATFORM.isMobile && { target: '_blank', rel: 'noopener noreferrer' })}
                 onClick={(e) => {
                   e.stopPropagation();
-                  try { window.dispatchEvent(new Event('dictprop:before-external-nav')); } catch (_) {}
+                  noteExternalNavigation();
                 }}
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-teal-700 bg-teal-50 border border-teal-200 hover:bg-teal-100 hover:border-teal-300 transition-all active:scale-95 shadow-sm"
                 title="Ask ChatGPT (translator mode)"
