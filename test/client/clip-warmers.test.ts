@@ -82,7 +82,7 @@ test('a whole session checks the device first and downloads only what is missing
   assert.equal(await metaAt(noTimingsKey), now);
 });
 
-test('a session warm runs at most four downloads at once, and stopping it starts no more', async () => {
+test('a session warm runs at most four downloads at once, and stopping it stops them and starts no more', async () => {
   const texts = Array.from({ length: 12 }, sentence);
   for (const key of await Promise.all(texts.map(keyOf))) server.clips.set(key, clip());
   const gates: Array<() => void> = [];
@@ -91,6 +91,7 @@ test('a session warm runs at most four downloads at once, and stopping it starts
   const stop = new AbortController();
   const requestsBefore = server.requests.length;
   const generatedBefore = server.generated.length;
+  const abortedBefore = server.aborted;
   try {
     const warm = preloadAudio(texts, undefined, { intoMemory: false, signal: stop.signal });
     while (gates.length < WARM_CONCURRENCY) await new Promise(resolve => setImmediate(resolve));
@@ -102,7 +103,8 @@ test('a session warm runs at most four downloads at once, and stopping it starts
     await warm;
     assert.equal(server.maxInFlight, WARM_CONCURRENCY);
     const started = server.requests.slice(requestsBefore).filter(url => url.endsWith('.mp3')).length;
-    assert.equal(started, WARM_CONCURRENCY, 'the downloads under way finish, but no new one starts');
+    assert.equal(started, WARM_CONCURRENCY, 'no new download starts');
+    assert.equal(server.aborted, abortedBefore + WARM_CONCURRENCY, 'the downloads under way stop');
     assert.equal(server.generated.length, generatedBefore, 'nothing is generated after a stop');
   } finally {
     server.latency = null;
@@ -199,3 +201,62 @@ test('a warm-up counts each sentence once, a found clip once its timings settle'
   assert.deepEqual(progress, ['0/3', '1/3', '2/3', '3/3']);
 });
 
+
+test('a session warm fetches each sentence in the voice it will play in, and has missing ones made in that voice', async () => {
+  const [both, plain] = [sentence(), sentence()];
+  const clearKey = await keyOf(both);
+  const casualKey = await ttsKey(both, 'casual');
+  server.clips.set(clearKey, clip());
+  server.timings.set(clearKey, timings);
+  const progress: string[] = [];
+  // The same text in both voices counts twice; a plain text plays in the style now (clear).
+  await preloadAudio([{ text: both, style: 'casual' }, { text: both, style: 'clear' }, plain, { text: both, style: 'casual' }],
+    (done, total) => progress.push(`${done}/${total}`), { intoMemory: false });
+  assert.equal(progress[0], '0/3');
+  assert.equal(progress.at(-1), '3/3');
+  assert.deepEqual(server.generated.filter(item => item.text === both || item.text === plain),
+    [{ text: both, voice: 'casual' }, { text: plain, voice: 'Mia' }]);
+  assert.equal(mp3Requests(casualKey), 2, 'the casual clip is looked up, then fetched once made');
+  assert.deepEqual([...await cache.getStoredAudioKeys([clearKey, casualKey])].sort(), [clearKey, casualKey].sort());
+});
+
+test('only a clip the server answered it doesn\'t have is made; one that failed to download is left for the next warm', async () => {
+  const [absent, failing] = [sentence(), sentence()];
+  const failingKey = await keyOf(failing);
+  server.failing.add(failingKey);
+  try {
+    const progress: string[] = [];
+    await preloadAudio([absent, failing], (done, total) => progress.push(`${done}/${total}`), { intoMemory: false });
+    assert.equal(progress.at(-1), '2/2', 'the failed one still counts as done');
+    assert.deepEqual(server.generated.filter(item => item.text === absent || item.text === failing), [{ text: absent, voice: 'Mia' }]);
+    assert.equal(mp3Requests(failingKey), 1);
+    assert.equal((await cache.getStoredAudioKeys([failingKey])).size, 0);
+  } finally {
+    server.failing.delete(failingKey);
+  }
+});
+
+test('stopping a session warm leaves a download playback shares with it to finish for playback', async () => {
+  const [shared, own] = [sentence(), sentence()];
+  const [sharedKey, ownKey] = await Promise.all([shared, own].map(keyOf));
+  for (const key of [sharedKey, ownKey]) server.clips.set(key, clip());
+  const gates: Array<() => void> = [];
+  server.latency = () => new Promise<void>(resolve => gates.push(resolve));
+  const stop = new AbortController();
+  const abortedBefore = server.aborted;
+  try {
+    const warm = preloadAudio([shared, own], undefined, { intoMemory: false, signal: stop.signal });
+    await until(() => mp3Requests(sharedKey) === 1 && mp3Requests(ownKey) === 1, 'both downloads start');
+    const playback = loadClipUrl(sharedKey); // a tap on the shared sentence joins its download
+    await settle();
+    stop.abort();
+    await warm;
+    assert.equal(server.aborted, abortedBefore + 1, 'only the download nobody else waits for stops');
+    for (const release of gates.splice(0)) release();
+    assert.ok(await playback, 'playback still gets its clip');
+    assert.equal(mp3Requests(sharedKey), 1, 'from the same download');
+  } finally {
+    server.latency = null;
+    for (const release of gates.splice(0)) release();
+  }
+});

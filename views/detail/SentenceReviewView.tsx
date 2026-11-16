@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { getItemImageUrl, type SearchResult, type SentenceData, type StoredItem, type VocabCard } from '../../types';
 import { OfflineImage } from '../../components/OfflineImage';
 import { SentenceAnalysisView } from '../../components/SentenceAnalysisView';
-import { SessionPreload, type PreloadSession } from '../../components/SessionPreload';
+import { SessionPreload } from '../../components/SessionPreload';
 import { getMasteryColors } from '../../components/mastery';
 import { useEscapeLayer } from '../../components/escapeStack';
 import { isDialogOpenOutside } from '../../components/keyboardTarget';
@@ -17,7 +17,8 @@ import { styleChangeReplay } from '../../services/audio/playbackToggle';
 import { getTtsStyle, setTtsStyle, type TtsStyle } from '../../services/ttsSettings';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
-import { preloadSession } from './cardReading';
+import { preloadCards } from './cardReading';
+import { useAutoplayPreloadPlan } from './useAutoplayPreloadPlan';
 import { resolveSentenceUnderReview } from './sentenceUnderReview';
 import { withSpeechStyle } from './speechStyle';
 import { automaticWrite, ownSentenceIds, useLeaveGoneItems } from './goneItems';
@@ -98,7 +99,7 @@ export function SentenceReviewView({
     isSentenceAutoPlaying, isSentenceAutoPlayingRef, stopAutoPlay, stopSentenceAutoPlay, autoPlayTimerMinutes,
     cycleTimerDuration, countdownStartedAt, countdownFrozenMs, sentenceGap, sentenceGapRef, cycleGap, sentenceRepeats,
     sentenceRepeatsRef, cycleRepeats, toggleSentenceAutoPlay, sentenceAutoPlayPaused, setSentenceAutoPlayPaused,
-    setTimerExpiry, rearmAutoPlay,
+    setTimerExpiry, rearmAutoPlay, remainingMs,
   } = useAutoPlay();
   const [showSentenceAutoPlayPanel, setShowSentenceAutoPlayPanel] = useState(false);
   const speechStyle = useSpeechStyle();
@@ -246,12 +247,18 @@ export function SentenceReviewView({
     }
   }, [currentSentenceText, speechStyle]);
 
-  // Aggressively stage the next five sentence cards while the learner is reading the current one.
+  // Aggressively stage the next five sentence cards while the learner is reading the current one, each in the voice it
+  // will play in: its own, else the one the sentence before it leaves (as the style effect above sets them).
   // Audio (including word timings) is persisted in the dedicated IDB cache; their pictures are warmed below.
   useEffect(() => {
     if (sentencePreloadWindow.length <= 1) return;
-    const texts = sentencePreloadWindow.slice(1).map(item => (item.data as SentenceData).text).filter(Boolean);
-    const warm = () => { void preloadAudio(texts); };
+    let style = getTtsStyle();
+    const entries = sentencePreloadWindow.slice(1).flatMap((item) => {
+      const sentence = item.data as SentenceData;
+      style = sentence.preferredSpeechStyle ?? style;
+      return sentence.text ? [{ text: sentence.text, style }] : [];
+    });
+    const warm = () => { void preloadAudio(entries); };
     warm();
     // A failed warm-up is retried as soon as a flaky connection comes back, even if the learner has
     // stayed on the same sentence throughout the outage.
@@ -276,9 +283,20 @@ export function SentenceReviewView({
     if (!isSentenceAutoPlaying) setShowSentenceAutoPlayPanel(false);
   }, [isSentenceAutoPlaying]);
 
-  // The session to preload once sentence auto-play starts (see SessionPreload): the saved sentences and
-  // their pictures.
-  const getPreloadSession = (): PreloadSession => preloadSession(sentenceItems, true);
+  // What sentence auto-play preloads (see SessionPreload): the sentences it can reach in the time left, from the one on
+  // screen, in the voices they'll play in, and their pictures. A click on Clear or Casual plans the voices again.
+  const [styleTick, setStyleTick] = useState(0);
+  const preloadPlan = useAutoplayPreloadPlan({
+    active: isSentenceAutoPlaying,
+    getCards: () => preloadCards(sentenceItemsRef.current ?? [], true),
+    position: sentenceIndex,
+    timerMinutes: autoPlayTimerMinutes,
+    repeats: sentenceRepeats,
+    gapMs: sentenceGap,
+    cardGapMs: sentenceGap,
+    remainingMs,
+    styleTick,
+  });
 
   // Auto-play's pause for the taps and keys below, which are set up before its reader (whose listens they count).
   const autoPlayControlsRef = useRef<AutoPlayReaderControls | null>(null);
@@ -321,6 +339,7 @@ export function SentenceReviewView({
   // it stays paused); otherwise what was playing or loading starts again from the top in the new voice. The engine
   // has already stopped it; a programmatic change of style (moving to a sentence with its own voice) never replays.
   const handleStyleClicked = useCallback((_style: TtsStyle, before: PlaybackState) => {
+    setStyleTick(tick => tick + 1);
     if (isSentenceAutoPlayingRef.current) { autoPlayReader.restartRead(); return; }
     if (styleChangeReplay(before.status) !== 'replay' || !before.text) return;
     const sentence = currentSentenceRef.current;
@@ -539,8 +558,8 @@ export function SentenceReviewView({
         />
       )}
 
-      {/* Whole-session preload indicator (audio + images), bottom-left so it clears the autoplay cluster. */}
-      <SessionPreload active={isSentenceAutoPlaying} getSession={getPreloadSession} onLazyLoadImage={onLazyLoadImage} />
+      {/* Auto-play's preload; its progress shows in the notice stack. */}
+      <SessionPreload active={isSentenceAutoPlaying} plan={preloadPlan} onLazyLoadImage={onLazyLoadImage} />
 
       {/* Sentence playback controls. Keep speech style on the primary surface; only Auto-play-specific
           settings belong in the secondary panel. */}

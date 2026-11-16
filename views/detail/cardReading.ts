@@ -1,5 +1,5 @@
 import { getItemImageUrl, isPhraseItem, type SearchResult, type SentenceData, type StoredItem, type VocabCard } from '../../types';
-import type { PreloadSession } from '../../components/SessionPreload';
+import type { PreloadCard } from '../../services/audio/autoplayPreload';
 import { getServerImageVersion, isLazyImageMarker } from '../../services/libraryImages';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 
@@ -83,17 +83,15 @@ export const pronounceOnCardChange = ({ cardKey, lastKey, examplesPlaying }: {
 }): CardPronunciation => examplesPlaying ? 'handled' : cardKey === lastKey ? 'skip' : 'say';
 
 /**
- * What sentence auto-play preloads once it starts (see SessionPreload): the listed sentences in sentence review,
- * else every card's auto-play texts, and the pictures stored on the device or the server.
+ * The cards sentence auto-play may preload (services/audio/autoplayPreload.ts plans which): in sentence review each
+ * listed sentence, with the voice it keeps; on word cards each card's auto-play texts. A card's picture comes along
+ * when it's stored on the device or the server.
  */
-export const preloadSession = (items: readonly StoredItem[], sentenceReview: boolean): PreloadSession => {
-  const texts = sentenceReview
-    ? items.map(s => (s.data as SentenceData).text || '')
-    : items.flatMap(item => autoPlayTexts(item));
-  const images = new Map<string, string | undefined>();
-  for (const item of items) {
-    const imageUrl = getItemImageUrl(item);
-    if (isLazyImageMarker(imageUrl)) images.set(item.data.id, getServerImageVersion(imageUrl));
-  }
-  return { texts, images };
-};
+export const preloadCards = (items: readonly StoredItem[], sentenceReview: boolean): PreloadCard[] => items.map((item) => {
+  const imageUrl = getItemImageUrl(item);
+  const image = isLazyImageMarker(imageUrl) ? { id: item.data.id, version: getServerImageVersion(imageUrl) } : undefined;
+  if (!sentenceReview) return { id: item.data.id, texts: autoPlayTexts(item), image };
+  const sentence = item.data as SentenceData;
+  const text = stripSentenceMarkers(sentence.text || '').trim();
+  return { id: item.data.id, texts: text ? [text] : [], preferredStyle: sentence.preferredSpeechStyle, image };
+});

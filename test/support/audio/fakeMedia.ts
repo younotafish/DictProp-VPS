@@ -222,9 +222,14 @@ interface Timing { text: string; start: number; end: number }
 export class FakeTtsServer {
   readonly clips = new Map<string, Blob>();
   readonly timings = new Map<string, Timing[]>();
+  /** Keys whose clip and timings requests fail with a 503, as a server in trouble answers. */
+  readonly failing = new Set<string>();
   readonly generated: Array<{ text: string; voice?: string }> = [];
   readonly requests: string[] = [];
-  /** Awaited before a clip or timings request is answered, so a test can hold requests in flight. */
+  /** Requests that ended because their caller aborted them, as a browser's fetch rejects with an AbortError. */
+  aborted = 0;
+  /** Awaited before a clip or timings request is answered, so a test can hold requests in flight. A request whose
+   *  signal aborts meanwhile rejects at once. */
   latency: (() => Promise<void>) | null = null;
   /** Runs when a generation request arrives, before it's answered (to add the clips it makes, say). */
   onGenerate: ((items: Array<{ text: string; voice?: string }>) => Promise<void> | void) | null = null;
@@ -241,7 +246,16 @@ export class FakeTtsServer {
         this.inFlight++;
         this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
         try {
-          await this.latency?.();
+          const signal = init?.signal;
+          const aborted = new Promise<never>((_, reject) => {
+            const fail = () => { this.aborted++; reject(new DOMException('The operation was aborted.', 'AbortError')); };
+            if (signal?.aborted) fail();
+            else signal?.addEventListener('abort', fail, { once: true });
+          });
+          aborted.catch(() => {});
+          await Promise.race([this.latency?.() ?? Promise.resolve(), aborted]);
+          if (signal?.aborted) await aborted;
+          if (this.failing.has((clip ?? timings)![1])) return new Response('Unavailable', { status: 503 });
           if (clip) {
             const blob = this.clips.get(clip[1]);
             return blob ? new Response(blob) : new Response('Not found', { status: 404 });

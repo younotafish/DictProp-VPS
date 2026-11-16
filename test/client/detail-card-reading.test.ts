@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  autoPlayTexts, exampleAt, keyVocabExample, preloadSession, pronounceOnCardChange, readableExamples, wordZoneBands, zoneText,
+  autoPlayTexts, exampleAt, keyVocabExample, preloadCards, pronounceOnCardChange, readableExamples, wordZoneBands, zoneText,
   type CardPronunciation,
 } from '../../views/detail/cardReading.ts';
 import type { SearchResult, StoredItem, VocabCard } from '../../types.ts';
@@ -79,17 +79,27 @@ test('band taps read the examples the bands are counted from: after a blank firs
   assert.equal(zoneText(vocab('a', ['The {{cat}} sat.', 'A [[rare]] word.']), 1), 'A rare word.');
 });
 
-test('the auto-play preload takes listed sentences in sentence review, else each card\'s auto-play texts, and stored pictures', () => {
-  const sentence = (id: string, text: string, imageUrl?: string): StoredItem => ({
-    type: 'sentence', data: { id, text, sourceWord: 'w', ...(imageUrl ? { imageUrl } : {}) }, srs: srs(id, 'sentence'), savedAt: 1,
+test('the auto-play preload\'s cards: each listed sentence with its own voice, else each card\'s auto-play texts, and stored pictures', () => {
+  const sentence = (id: string, text: string, imageUrl?: string, preferredSpeechStyle?: 'clear' | 'casual'): StoredItem => ({
+    type: 'sentence',
+    data: { id, text, sourceWord: 'w', ...(imageUrl ? { imageUrl } : {}), ...(preferredSpeechStyle ? { preferredSpeechStyle } : {}) },
+    srs: srs(id, 'sentence'),
+    savedAt: 1,
   });
-  const review = preloadSession([sentence('s1', 'One {{x}}.', 'idb:stored'), sentence('s2', '', 'server:has_image:4'), sentence('s3', 'Three.', 'data:image/png;base64,AA')], true);
-  assert.deepEqual(review.texts, ['One {{x}}.', '', 'Three.']);
-  assert.deepEqual([...review.images], [['s1', undefined], ['s2', '4']]);
+  const review = preloadCards([
+    sentence('s1', ' One {{x}}. ', 'idb:stored', 'casual'), sentence('s2', '', 'server:has_image:4'), sentence('s3', 'Three.', 'data:image/png;base64,AA'),
+  ], true);
+  assert.deepEqual(review, [
+    { id: 's1', texts: ['One x.'], preferredStyle: 'casual', image: { id: 's1', version: undefined } },
+    { id: 's2', texts: [], preferredStyle: undefined, image: { id: 's2', version: '4' } },
+    { id: 's3', texts: ['Three.'], preferredStyle: undefined, image: undefined },
+  ]);
 
-  const cards = preloadSession([vocab('a', ['A {{b}}.', 'C.'], { imageUrl: 'server:has_image' }), phrase('q', [], { imageUrl: 'server:has_image:' })], false);
-  assert.deepEqual(cards.texts, ['A b.', 'C.', 'q']);
-  assert.deepEqual([...cards.images], [['p', '']], 'an unversioned server marker is not preloaded');
+  const cards = preloadCards([vocab('a', ['A {{b}}.', 'C.'], { imageUrl: 'server:has_image' }), phrase('q', [], { imageUrl: 'server:has_image:' })], false);
+  assert.deepEqual(cards, [
+    { id: 'a', texts: ['A b.', 'C.'], image: undefined },
+    { id: 'p', texts: ['q'], image: { id: 'p', version: '' } },
+  ], 'an unversioned server marker is not preloaded');
 });
 
 test('the word card says its word once per card, never over example auto-play, and not when auto-play stops on it', () => {

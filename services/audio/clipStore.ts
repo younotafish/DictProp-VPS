@@ -1,4 +1,7 @@
-import { ttsKey, fetchCachedTTS, fetchCachedTTSTimings, requestTTSGeneration, type WordTiming } from '../api/tts';
+import {
+  ttsKey, fetchCachedClipByKey, fetchCachedTimingsByKey, requestTTSGeneration, type CachedLookup, type CachedLookupOptions,
+  type WordTiming,
+} from '../api/tts';
 import { getAudioBlob, putAudioBlob, getTimings, putTimings } from '../audioCache';
 import { stripSentenceMarkers } from '../sentenceMarkers';
 import { getTtsStyle, type TtsStyle } from '../ttsSettings';
@@ -19,26 +22,76 @@ const ttsTimingsCache = new Lru<WordTiming[]>(MAX_TIMINGS);
 // (which revokes evicted URLs), so in-session memory management is unchanged — IDB is purely a durable
 // layer beneath it. Both are best-effort: an unavailable IDB (private mode) just falls through to network.
 // A lookup already under way is shared, so tapping a sentence whose clip is still prefetching joins that
-// download instead of starting a second one from scratch. So is the download itself (fetchClipOnce,
-// fetchTimingsOnce), which a session warm storing clips straight into IndexedDB (clipWarmers.ts) also goes
-// through: the warm joins a download playback started, and playback joins one the warm started.
+// download instead of starting a second one from scratch. So is the download itself (fetchClipShared,
+// fetchTimingsShared), which a session warm storing clips straight into IndexedDB (clipWarmers.ts) also goes
+// through: the warm joins a download playback started, and playback joins one the warm started. A warm that stops
+// lets go of its downloads; one is aborted only once nobody waits for it, so a stop never cuts off playback's.
 const clipLoads = new Map<string, Promise<string | null>>();
 const timingsLoads = new Map<string, Promise<WordTiming[] | null>>();
-const clipFetches = new Map<string, Promise<Blob | null>>();
-const timingsFetches = new Map<string, Promise<WordTiming[] | null>>();
 
-/** `fetch(key)`, or the call of it for `key` already under way. */
-const fetchOnce = <T>(fetches: Map<string, Promise<T>>, key: string, fetch: (key: string) => Promise<T>): Promise<T> => {
-  const pending = fetches.get(key);
-  if (pending) return pending;
-  const started = fetch(key).finally(() => fetches.delete(key));
-  fetches.set(key, started);
-  return started;
+interface SharedFetch<T> {
+  promise: Promise<CachedLookup<T>>;
+  abort: AbortController;
+  /** Waiters that may still give up (they came with a signal). */
+  abortable: number;
+  /** A waiter without a signal (playback) joined: the download always runs to its end. */
+  pinned: boolean;
+}
+const clipFetches = new Map<string, SharedFetch<Blob>>();
+const timingsFetches = new Map<string, SharedFetch<WordTiming[]>>();
+const GAVE_UP = { kind: 'failed' } as const;
+
+/**
+ * `fetch(key)`, or the call of it for `key` already under way. A waiter with `signal` stops waiting when it aborts,
+ * as failed; the download itself is aborted once every waiter has given up, unless one came without a signal.
+ */
+const joinFetch = <T>(
+  fetches: Map<string, SharedFetch<T>>,
+  key: string,
+  fetch: (key: string, options: CachedLookupOptions) => Promise<CachedLookup<T>>,
+  signal?: AbortSignal,
+): Promise<CachedLookup<T>> => {
+  if (signal?.aborted) return Promise.resolve(GAVE_UP);
+  let entry = fetches.get(key);
+  if (!entry) {
+    const abort = new AbortController();
+    const created: SharedFetch<T> = { promise: fetch(key, { signal: abort.signal }), abort, abortable: 0, pinned: false };
+    const forget = () => { if (fetches.get(key) === created) fetches.delete(key); };
+    created.promise.then(forget, forget);
+    fetches.set(key, created);
+    entry = created;
+  }
+  if (!signal) {
+    entry.pinned = true;
+    return entry.promise;
+  }
+  const joined = entry;
+  joined.abortable++;
+  return new Promise<CachedLookup<T>>((resolve) => {
+    const giveUp = () => {
+      joined.abortable--;
+      if (!joined.pinned && joined.abortable === 0) {
+        // Nobody waits for it any more: stop it, and let the next request start afresh.
+        if (fetches.get(key) === joined) fetches.delete(key);
+        joined.abort.abort();
+      }
+      resolve(GAVE_UP);
+    };
+    signal.addEventListener('abort', giveUp, { once: true });
+    void joined.promise.then((result) => {
+      signal.removeEventListener('abort', giveUp);
+      resolve(result);
+    });
+  });
 };
-/** Clip `key` from the server, or null on a miss or a failure, joining a download of it already under way. */
-export const fetchClipOnce = (key: string): Promise<Blob | null> => fetchOnce(clipFetches, key, fetchCachedTTS);
-/** Clip `key`'s word timings from the server, or null when there are none, joining a download already under way. */
-export const fetchTimingsOnce = (key: string): Promise<WordTiming[] | null> => fetchOnce(timingsFetches, key, fetchCachedTTSTimings);
+
+/** Clip `key` from the server, `missing` only on a 404, joining a download of it already under way (see joinFetch). */
+export const fetchClipShared = (key: string, signal?: AbortSignal): Promise<CachedLookup<Blob>> =>
+  joinFetch(clipFetches, key, fetchCachedClipByKey, signal);
+/** Clip `key`'s word timings from the server, `missing` only on a 404, joining a download already under way. */
+export const fetchTimingsShared = (key: string, signal?: AbortSignal): Promise<CachedLookup<WordTiming[]>> =>
+  joinFetch(timingsFetches, key, fetchCachedTimingsByKey, signal);
+const valueOf = <T>(lookup: CachedLookup<T>): T | null => (lookup.kind === 'hit' ? lookup.value : null);
 
 /** Whether clip `key` is open in memory, without counting as a use. */
 export const hasClipInMemory = (key: string): boolean => ttsUrlCache.has(key);
@@ -60,7 +113,7 @@ export const loadClipUrl = (key: string): Promise<string | null> => {
       ttsUrlCache.set(key, url);
       return url;
     }
-    const blob = await fetchClipOnce(key);
+    const blob = valueOf(await fetchClipShared(key));
     if (!blob) return null;
     void putAudioBlob(key, blob); // write-through (fire-and-forget; never blocks playback)
     const url = URL.createObjectURL(blob);
@@ -121,7 +174,7 @@ export const loadTimingsCached = (key: string): Promise<WordTiming[] | null> => 
   const load = (async () => {
     const stored = await getTimings(key);
     if (stored && stored.length) { ttsTimingsCache.set(key, stored); return stored; }
-    const t = await fetchTimingsOnce(key);
+    const t = valueOf(await fetchTimingsShared(key));
     if (t && t.length) { void putTimings(key, t); ttsTimingsCache.set(key, t); return t; }
     return null;
   })().finally(() => timingsLoads.delete(key));

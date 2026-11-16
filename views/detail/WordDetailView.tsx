@@ -4,7 +4,7 @@ import { X } from 'lucide-react';
 import { VocabCardDisplay } from '../../components/VocabCard';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { EyesFreeZones } from '../../components/EyesFreeZones';
-import { SessionPreload, type PreloadSession } from '../../components/SessionPreload';
+import { SessionPreload } from '../../components/SessionPreload';
 import { getMasteryColors } from '../../components/mastery';
 import { useEscapeLayer } from '../../components/escapeStack';
 import { isDialogOpenOutside } from '../../components/keyboardTarget';
@@ -19,7 +19,9 @@ import {
 } from '../../services/neuralTts';
 import { styleChangeReplay, wordCardSpaceAction } from '../../services/audio/playbackToggle';
 import type { TtsStyle } from '../../services/ttsSettings';
-import { autoPlayTexts, preloadSession, pronounceOnCardChange, wordZoneBands as countWordZoneBands } from './cardReading';
+import { autoPlayTexts, preloadCards, pronounceOnCardChange, wordZoneBands as countWordZoneBands } from './cardReading';
+import { useAutoplayPreloadPlan } from './useAutoplayPreloadPlan';
+import { CARD_GAP_MS } from '../../services/audio/autoplayController';
 import { PLATFORM } from '../../services/platform';
 import { RememberToast } from './RememberToast';
 import { DetailActionMenu } from './DetailActionMenu';
@@ -99,7 +101,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
     isAutoPlaying, isSentenceAutoPlaying, isSentenceAutoPlayingRef, stopAutoPlay, stopSlideshow, stopSentenceAutoPlay,
     autoPlaySpeed, autoPlaySpeedRef, cycleSpeed, autoPlayTimerMinutes, cycleTimerDuration, countdownStartedAt,
     countdownFrozenMs, sentenceGap, sentenceGapRef, cycleGap, sentenceRepeats, sentenceRepeatsRef, cycleRepeats,
-    toggleAutoPlay, toggleSentenceAutoPlay, setSentenceAutoPlayPaused, setTimerExpiry, rearmAutoPlay,
+    toggleAutoPlay, toggleSentenceAutoPlay, setSentenceAutoPlayPaused, setTimerExpiry, rearmAutoPlay, remainingMs,
   } = useAutoPlay();
   const speechStyle = useSpeechStyle();
   const { toast, tryRemember, showRemembered } = useRememberToast();
@@ -250,9 +252,25 @@ export function WordDetailView(props: DetailViewBodyProps) {
     setCurrentItemIndex, autoPlaySpeedRef, title,
   });
 
-  // The session to preload once sentence auto-play starts (see SessionPreload): every card's example
-  // sentences, and the pictures the session shows.
-  const getPreloadSession = (): PreloadSession => preloadSession(groups.flatMap(g => g.items), false);
+  // What example auto-play preloads (see SessionPreload): the cards it can reach in the time left, in reading order from
+  // the one on screen (every meaning of each word in turn), and their pictures. A click on Clear or Casual plans the
+  // voices again.
+  const [styleTick, setStyleTick] = useState(0);
+  const flatPosition = useMemo(() => {
+    const groupIndex = Math.min(currentGroupIndex, groups.length - 1);
+    return groups.slice(0, Math.max(0, groupIndex)).reduce((count, group) => count + group.items.length, 0) + currentItemIndex;
+  }, [groups, currentGroupIndex, currentItemIndex]);
+  const preloadPlan = useAutoplayPreloadPlan({
+    active: isSentenceAutoPlaying,
+    getCards: () => preloadCards(groups.flatMap(group => group.items), false),
+    position: flatPosition,
+    timerMinutes: autoPlayTimerMinutes,
+    repeats: sentenceRepeats,
+    gapMs: sentenceGap,
+    cardGapMs: CARD_GAP_MS,
+    remainingMs,
+    styleTick,
+  });
 
   const autoPlayReader = useAutoPlayReader({
     active: isSentenceAutoPlaying,
@@ -333,6 +351,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
   // repeats; otherwise the sentence that was playing or loading (only that one, in a two-example E run) starts again
   // from the top in the new voice.
   const handleStyleClicked = useCallback((_style: TtsStyle, before: PlaybackState) => {
+    setStyleTick(tick => tick + 1);
     if (isSentenceAutoPlayingRef.current) { autoPlayReader.restartRead(); return; }
     if (styleChangeReplay(before.status) === 'replay' && before.text) speakNatural(before.text, { allowDownload: true });
   }, [isSentenceAutoPlayingRef, autoPlayReader]);
@@ -485,8 +504,8 @@ export function WordDetailView(props: DetailViewBodyProps) {
       </div>
       </div>
 
-      {/* Whole-session preload indicator (audio + images), bottom-left so it clears the autoplay cluster. */}
-      <SessionPreload active={isSentenceAutoPlaying} getSession={getPreloadSession} onLazyLoadImage={onLazyLoadImage} />
+      {/* Auto-play's preload; its progress shows in the notice stack. */}
+      <SessionPreload active={isSentenceAutoPlaying} plan={preloadPlan} onLazyLoadImage={onLazyLoadImage} />
 
       {/* Playback controls: the word slideshow and the examples' auto-play. */}
       <WordPlaybackControls

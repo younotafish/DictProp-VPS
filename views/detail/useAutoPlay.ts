@@ -131,6 +131,13 @@ export function useAutoPlay() {
     return () => clearInterval(interval);
   }, [clock, durationMs]);
 
+  /** What's left of the Duration, the time spent paused not counted; all of it while auto-play is off. */
+  const durationMsRef = useLatest(durationMs);
+  const remainingMs = useCallback(() => {
+    const current = clockRef.current;
+    return current ? current.remainingMs(durationMsRef.current) : durationMsRef.current;
+  }, [durationMsRef]);
+
   // The countdown: while running, when its run began, moved on by the time spent paused (so it ends at start +
   // Duration); while paused, the time left, standing still.
   const runningDeadline = clock && !sentenceAutoPlayPaused ? clock.deadline(durationMs) : null;
@@ -142,7 +149,7 @@ export function useAutoPlay() {
     autoPlaySpeed, autoPlaySpeedRef, cycleSpeed, autoPlayTimerMinutes, cycleTimerDuration, countdownStartedAt,
     countdownFrozenMs, sentenceGap, sentenceGapRef, cycleGap, sentenceRepeats, sentenceRepeatsRef, cycleRepeats,
     toggleAutoPlay, toggleSentenceAutoPlay, sentenceAutoPlayPaused, setSentenceAutoPlayPaused, setTimerExpiry,
-    rearmAutoPlay,
+    rearmAutoPlay, remainingMs,
   };
 }
 

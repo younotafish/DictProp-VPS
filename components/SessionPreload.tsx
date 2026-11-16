@@ -1,63 +1,57 @@
 import { useEffect, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { runPool } from '../server/src/shared/pool';
 import { preloadAudio } from '../services/neuralTts';
 import { getStoredImageIds } from '../services/imageStore';
+import type { PreloadPlan } from '../services/audio/autoplayPreload';
 import { useLatest } from '../hooks/useStableValue';
-import { stripSentenceMarkers } from '../services/sentenceMarkers';
-
-export interface PreloadSession {
-  /** The sentences to voice. */
-  texts: string[];
-  /** The pictures to pull into IndexedDB, by item id, with the server's image version when known. */
-  images: Map<string, string | undefined>;
-}
+import { NoticePill } from './NoticePill';
+import { useNoticeSlot } from './noticeSlots';
 
 interface SessionPreloadProps {
-  /** Starts the preload; turning it off cancels what's left. */
+  /** Sentence auto-play is on; turning it off stops what's left. */
   active: boolean;
-  /** Reads the session when the preload starts. */
-  getSession: () => PreloadSession;
+  /** What the session can reach (views/detail/useAutoplayPreloadPlan.ts). A new plan stops the last one's downloads
+   *  and starts its own, which finds what's already stored at once. */
+  plan: PreloadPlan | null;
   onLazyLoadImage?: (itemId: string, imageVersion?: string) => Promise<string | null>;
 }
 
 const IMAGE_CONCURRENCY = 4;
 
 /**
- * Once auto-play is requested, preloads the whole session so a poor or unstable network can't interrupt
- * review: every sentence's audio and timings (into IndexedDB, a few at a time), and every picture the session
- * shows. Best-effort and cancellable; failures still advance the progress, so it always completes. The
- * progress pill keeps its state here, so the card doesn't re-render for every clip and picture that arrives.
+ * While sentence auto-play runs, preloads the part of the list it can reach, so a poor or unstable network can't
+ * interrupt it: each planned sentence's audio and timings in the voice it will play in (into IndexedDB, a few at a
+ * time), and the planned cards' pictures. Best-effort and cancellable; failures still advance the progress, so it
+ * always completes. Its 'Preloading k/N' notice goes into the notice stack's progress slot (components/AppStatus),
+ * and keeps its state here, so the card doesn't re-render for every clip and picture that arrives.
  */
-export function SessionPreload({ active, getSession, onLazyLoadImage }: SessionPreloadProps) {
+export function SessionPreload({ active, plan, onLazyLoadImage }: SessionPreloadProps) {
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const getSessionRef = useLatest(getSession);
   const onLazyLoadImageRef = useLatest(onLazyLoadImage);
+  const slot = useNoticeSlot('progress');
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || !plan) return;
     let cancelled = false;
     const stop = new AbortController();
-    const { texts, images } = getSessionRef.current();
     const loadImage = onLazyLoadImageRef.current;
-    const ids = [...images.keys()];
-
-    const audioTotal = new Set(texts.map(text => stripSentenceMarkers(text || '').trim()).filter(Boolean)).size;
-    const total = audioTotal + (loadImage ? ids.length : 0);
-    if (total === 0) return;
+    const ids = loadImage ? [...plan.images.keys()] : [];
 
     let audioDone = 0;
+    let audioTotal = 0;
     let imageDone = 0;
     const report = () => {
       if (cancelled) return;
       const done = audioDone + imageDone;
+      const total = audioTotal + ids.length;
       setProgress(done >= total ? null : { done, total });
     };
-    report();
 
-    // Audio: one progress-reporting batch, which dedupes and generates what's missing itself. Once it settles
-    // the audio part is done, even when the speech engine couldn't load, so the pill never sticks.
-    preloadAudio(texts, done => { audioDone = done; report(); }, { intoMemory: false, signal: stop.signal })
+    // Audio: one progress-reporting batch, which dedupes and generates what's missing itself (its first report, at
+    // once, gives the count). Once it settles the audio part is done, even when the speech engine couldn't load, so
+    // the notice never sticks.
+    preloadAudio(plan.clips, (done, total) => { audioDone = done; audioTotal = total; report(); }, { intoMemory: false, signal: stop.signal })
       .catch(() => {})
       .then(() => { audioDone = audioTotal; report(); });
 
@@ -66,7 +60,7 @@ export function SessionPreload({ active, getSession, onLazyLoadImage }: SessionP
     (async () => {
       if (!loadImage || ids.length === 0) return;
       const expected = new Map<string, string>();
-      for (const [id, version] of images) if (version) expected.set(id, version);
+      for (const [id, version] of plan.images) if (version) expected.set(id, version);
       const stored = await getStoredImageIds(ids, expected);
       if (cancelled) return;
       const missing = ids.filter(id => !stored.has(id));
@@ -74,7 +68,7 @@ export function SessionPreload({ active, getSession, onLazyLoadImage }: SessionP
       report();
       await runPool(missing, IMAGE_CONCURRENCY, async (id) => {
         try {
-          await loadImage(id, images.get(id));
+          await loadImage(id, plan.images.get(id));
         } catch { /* best-effort */ }
         imageDone++;
         report();
@@ -86,13 +80,11 @@ export function SessionPreload({ active, getSession, onLazyLoadImage }: SessionP
       stop.abort();
       setProgress(null);
     };
-  }, [active, getSessionRef, onLazyLoadImageRef]);
+  }, [active, plan, onLazyLoadImageRef]);
 
-  if (!progress) return null;
-  return (
-    <div className="fixed bottom-6 left-6 z-[60] flex items-center gap-2 bg-white text-slate-600 text-xs font-medium px-3 py-2 rounded-full shadow-lg border border-slate-200 fade-in">
-      <Loader2 size={14} className="animate-spin text-indigo-500" />
-      <span>Preloading {progress.done}/{progress.total}</span>
-    </div>
+  if (!progress || !slot) return null;
+  return createPortal(
+    <NoticePill tone="indigo" spinner>Preloading {progress.done}/{progress.total}</NoticePill>,
+    slot,
   );
 }
