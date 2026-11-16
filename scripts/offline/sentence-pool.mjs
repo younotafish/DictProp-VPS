@@ -7,17 +7,12 @@
 import { createHash } from 'node:crypto';
 import {
   exampleSentenceId,
-  normalizeSentenceLookup as serverNormalizeSentenceLookup,
+  normalizeSentenceLookup,
   sentenceLookupHash,
   sentenceTextHash,
 } from '../../server/src/sentence-lookup.ts';
 
-export { exampleSentenceId, sentenceLookupHash, sentenceTextHash };
-
-// The server's function itself. Its String(value || '') reads a missing text as '', and the pool builder passes saved
-// sentences' texts, which a malformed record may lack, so the type admits one.
-/** @type {(value: string | undefined) => string} */
-export const normalizeSentenceLookup = serverNormalizeSentenceLookup;
+export { exampleSentenceId, normalizeSentenceLookup, sentenceLookupHash, sentenceTextHash };
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 
