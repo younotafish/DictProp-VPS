@@ -81,9 +81,9 @@ export function SentenceReviewView({
   const rootRef = useRef<HTMLDivElement>(null);
   const isCommandHeld = useCommandKeyHeld(isMacDesktop);
   const {
-    isSentenceAutoPlaying, isSentenceAutoPlayingRef, stopAutoPlay, stopSlideshow, stopSentenceAutoPlay, cycleSpeed,
-    autoPlayTimerMinutes, cycleTimerDuration, countdownStartedAt, sentenceGap, sentenceGapRef, cycleGap,
-    sentenceRepeats, sentenceRepeatsRef, cycleRepeats, toggleSentenceAutoPlay,
+    isSentenceAutoPlaying, isSentenceAutoPlayingRef, stopAutoPlay, stopSentenceAutoPlay, autoPlayTimerMinutes,
+    cycleTimerDuration, countdownStartedAt, sentenceGap, sentenceGapRef, cycleGap, sentenceRepeats, sentenceRepeatsRef,
+    cycleRepeats, toggleSentenceAutoPlay,
   } = useAutoPlay();
   const [showSentenceAutoPlayPanel, setShowSentenceAutoPlayPanel] = useState(false);
   const speechStyle = useSpeechStyle();
@@ -228,7 +228,7 @@ export function SentenceReviewView({
     recordSentenceExposure, readCurrentSentence, toggleSentencePlayback, playFromWordOffset, handleEnterFromSelection,
     goToSentence,
   } = useSentencePlayback({
-    currentSentenceRef, sentenceItemsRef, currentGroupIndexRef, isSentenceAutoPlayingRef, stopAutoPlay, stopSlideshow,
+    currentSentenceRef, sentenceItemsRef, currentGroupIndexRef, isSentenceAutoPlayingRef, stopAutoPlay,
     setCurrentGroupIndex, setCurrentItemIndex, onSave,
   });
 
@@ -333,7 +333,6 @@ export function SentenceReviewView({
     handleDeleteItem,
     isSentenceAutoPlaying,
     toggleSentenceAutoPlay,
-    cycleSpeed,
   });
 
   // The hero's props, shared by its two layouts (beside an attached picture, or on its own).

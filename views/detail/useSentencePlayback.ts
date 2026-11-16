@@ -14,9 +14,8 @@ interface SentencePlaybackOptions {
   sentenceItemsRef: RefObject<StoredItem[] | undefined>;
   currentGroupIndexRef: RefObject<number>;
   isSentenceAutoPlayingRef: RefObject<boolean>;
-  /** End whichever auto-play runs, or only the word slideshow. */
+  /** End whichever auto-play runs. */
   stopAutoPlay: () => void;
-  stopSlideshow: () => void;
   setCurrentGroupIndex: Dispatch<SetStateAction<number>>;
   setCurrentItemIndex: Dispatch<SetStateAction<number>>;
   onSave: (item: StoredItem) => void;
@@ -29,7 +28,7 @@ interface SentencePlaybackOptions {
  * readers may pause or resume its clip, but never start one over it. A fully heard read counts as a listen.
  */
 export function useSentencePlayback({
-  currentSentenceRef, sentenceItemsRef, currentGroupIndexRef, isSentenceAutoPlayingRef, stopAutoPlay, stopSlideshow,
+  currentSentenceRef, sentenceItemsRef, currentGroupIndexRef, isSentenceAutoPlayingRef, stopAutoPlay,
   setCurrentGroupIndex, setCurrentItemIndex, onSave,
 }: SentencePlaybackOptions) {
   const recordSentenceExposure = useCallback((expectedSentenceId?: string) => {
@@ -164,7 +163,6 @@ export function useSentencePlayback({
       if (!keepAutoPlaying) speakCurrentSentence(); // already at an end → re-speak outside autoplay
       return;
     }
-    stopSlideshow();
     setCurrentGroupIndex(clamped);
     setCurrentItemIndex(0);
     const next = list[clamped];
@@ -181,11 +179,11 @@ export function useSentencePlayback({
     }
   }, [
     recordSentenceExposure, speakCurrentSentence, sentenceItemsRef, isSentenceAutoPlayingRef, currentGroupIndexRef,
-    stopSlideshow, setCurrentGroupIndex, setCurrentItemIndex,
+    setCurrentGroupIndex, setCurrentItemIndex,
   ]);
 
   return {
-    recordSentenceExposure, readCurrentSentence, speakCurrentSentence, toggleSentencePlayback, playFromWordOffset,
-    handleEnterFromSelection, goToSentence,
+    recordSentenceExposure, readCurrentSentence, toggleSentencePlayback, playFromWordOffset, handleEnterFromSelection,
+    goToSentence,
   };
 }

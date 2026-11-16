@@ -89,8 +89,8 @@ export function useCardNavigation(
   }, [currentGroupIndex, currentItemIndex, cardId, scrollContainerRef]);
 
   return {
-    currentGroupIndex, setCurrentGroupIndex, currentItemIndex, setCurrentItemIndex,
-    safeGroupIndex, currentGroup, currentItem, hasNextGroup, hasPrevGroup, hasPrevItem,
+    currentGroupIndex, setCurrentGroupIndex, currentItemIndex, setCurrentItemIndex, currentGroup, currentItem,
+    hasNextGroup, hasPrevGroup, hasPrevItem,
   };
 }
 

@@ -30,7 +30,6 @@ const sentenceOnScreen = (sentence: string, done: string[], flags: Partial<Sente
   handleDeleteItem: () => done.push(`delete ${sentence}`),
   isSentenceAutoPlaying: false,
   toggleSentenceAutoPlay: () => done.push('toggle auto-play'),
-  cycleSpeed: () => done.push('cycle speed'),
   ...flags,
 });
 
@@ -99,6 +98,14 @@ test('Cmd or Ctrl with 1 to 4 reads that example of the source card; other modif
   for (const key of keys) handleSentenceKey(key, handlers);
   assert.deepEqual(keys.map(key => key.prevented), [true, true, false, false, false, false]);
   assert.deepEqual(done, ['read example 2 of A', 'read example 4 of A']);
+});
+
+test('sentence review has no slide speed, so + and = are left to the browser', () => {
+  const done: string[] = [];
+  const keys = [press('+'), press('=')];
+  for (const key of keys) handleSentenceKey(key, sentenceOnScreen('A', done));
+  assert.deepEqual(keys.map(key => key.prevented), [false, false]);
+  assert.deepEqual(done, []);
 });
 
 test('in sentence review Space starts auto-play when nothing plays, and never stops it', () => {

@@ -26,14 +26,13 @@ export interface SentenceKeyHandlers {
   handleDeleteItem: () => void;
   isSentenceAutoPlaying: boolean;
   toggleSentenceAutoPlay: () => void;
-  cycleSpeed: () => void;
 }
 
-/** Sentence review's keys: P, E, R and Shift+R, D, Space, +, and Cmd/Ctrl+1–4. */
+/** Sentence review's keys: P, E, R and Shift+R, D, Space, and Cmd/Ctrl+1–4. */
 export function handleSentenceKey(e: CardKeyEvent, handlers: SentenceKeyHandlers): void {
   const {
     title, speakSentenceAt, readCurrentSentence, isSentencePreview, catalogSentencePreview, handleRemember,
-    handleResetSRS, handleDeleteItem, isSentenceAutoPlaying, toggleSentenceAutoPlay, cycleSpeed,
+    handleResetSRS, handleDeleteItem, isSentenceAutoPlaying, toggleSentenceAutoPlay,
   } = handlers;
 
   // Cmd/Ctrl+1–4: Read the corresponding example sentence aloud (neural voice)
@@ -83,12 +82,6 @@ export function handleSentenceKey(e: CardKeyEvent, handlers: SentenceKeyHandlers
     if (st === 'playing') pauseCurrent();
     else if (st === 'paused') resumeCurrent();
     else if (!isSentenceAutoPlaying) toggleSentenceAutoPlay(); // only the visible Stop control exits autoplay
-  }
-
-  // +/=: Cycle speed forward
-  if (e.key === '+' || e.key === '=') {
-    e.preventDefault();
-    cycleSpeed();
   }
 }
 
