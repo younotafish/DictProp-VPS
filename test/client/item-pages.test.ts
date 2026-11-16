@@ -58,3 +58,13 @@ test('a page that promises more without moving the cursor on stops the pager', a
   });
   await assert.rejects(loadAllItems(), /cursor did not advance/, 'a cursor that moved back');
 });
+
+test('a pull from a stored cursor fails on a page that promises more without moving on, instead of stopping short', async () => {
+  servePages({ '4:d': { items: [item('e')], cursor: at(4, 'd'), hasMore: true, headRevision: 9 } });
+  await assert.rejects(loadItemChangesSince(at(4, 'd')), /cursor did not advance/);
+  servePages({
+    '4:d': { items: [item('e')], cursor: at(5, 'e'), hasMore: true, headRevision: 9 },
+    '5:e': { items: [item('f')], cursor: at(5, 'a'), hasMore: true, headRevision: 9 },
+  });
+  await assert.rejects(loadItemChangesSince(at(4, 'd')), /cursor did not advance/, 'a later page whose cursor moved back');
+});

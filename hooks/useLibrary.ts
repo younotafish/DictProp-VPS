@@ -3,7 +3,7 @@ import type { RevisionCursor, StoredItem } from '../types';
 import { deleteItemRecords, saveData, saveItemUpdates } from '../services/libraryStore';
 import { applyServerSave, dropExpiredTombstones, mergeDatasets, trackServerContent } from '../services/sync';
 import { getItemContentHash } from '../services/itemHash';
-import { loadAllItems, loadItemChanges, saveItems } from '../services/api/library';
+import { loadAllItems, loadItemChangesSince, saveItems } from '../services/api/library';
 import { excludePendingReviewItems, readPendingReviewMutations } from '../services/reviewQueue';
 import { createSerialLane } from '../services/serialLane';
 import { pullOrSnapshot, syncSnapshot } from '../services/serverSync';
@@ -144,20 +144,12 @@ export function useLibrary(userId: string) {
 
   /**
    * Merges the server changes after `from`. False when the server is behind the cursor: its database
-   * was replaced, so only a full snapshot can reconcile.
+   * was replaced, so only a full snapshot can reconcile. A page that promises more without moving the
+   * cursor on fails the pull (services/api/library loadItemChangesSince), and the next pull tries again.
    */
   const pullChanges = useCallback(async (from: RevisionCursor): Promise<boolean> => {
-    let cursor = from;
-    const remoteItems: StoredItem[] = [];
-    for (;;) {
-      const page = await loadItemChanges(cursor);
-      if (page.headRevision !== undefined && page.headRevision < from.revision) return false;
-      remoteItems.push(...page.items);
-      const advanced = page.cursor.revision > cursor.revision ||
-        (page.cursor.revision === cursor.revision && page.cursor.id > cursor.id);
-      cursor = page.cursor;
-      if (!page.hasMore || !advanced) break;
-    }
+    const { items: remoteItems, cursor, serverBehind } = await loadItemChangesSince(from);
+    if (serverBehind) return false;
     if (remoteItems.length === 0) return true;
     await mergeServerItems(remoteItems, cursor);
     log(`Server: pulled ${remoteItems.length} changed item(s)`);
