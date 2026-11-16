@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { X, ClipboardPaste, Trash2, ListPlus, Sparkles } from 'lucide-react';
 import { parseWordList } from '../services/notebook/wordList';
-import { modifierKeyLabel } from '../services/notebook/platform';
+import { modifierKeyLabel } from '../services/platform';
 
 interface BatchImportProps {
   isOpen: boolean;

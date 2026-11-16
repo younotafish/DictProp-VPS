@@ -4,7 +4,7 @@ import type { StoredItem } from '../../types';
 import { HighlightedSentence } from '../../components/HighlightedSentence';
 import { SentenceSpeakerButton } from '../../components/SentenceSpeakerButton';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
-import { PLATFORM } from './platform';
+import { PLATFORM } from '../../services/platform';
 
 export type SentenceCopyState = 'copied' | 'failed' | null;
 

@@ -15,7 +15,7 @@ import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
 import { preloadSession } from './cardReading';
 import { resolveSentenceUnderReview } from './sentenceUnderReview';
-import { PLATFORM } from './platform';
+import { PLATFORM } from '../../services/platform';
 import { RememberToast } from './RememberToast';
 import { SentenceHero } from './SentenceHero';
 import { SentenceHeaderRow } from './SentenceHeaderRow';

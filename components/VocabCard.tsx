@@ -8,13 +8,10 @@ import { HighlightedSentence } from './HighlightedSentence';
 import { SentenceSpeakerButton } from './SentenceSpeakerButton';
 import { MAX_COMPARE_WORDS } from '../services/queryMode';
 import { wordCardLinks, youglishUrl } from '../services/externalLinks';
+import { PLATFORM } from '../services/platform';
 
 // DetailView's phrase links still import the ChatGPT link from here.
 export { chatGptUrl as buildChatGPTUrl } from '../services/externalLinks';
-
-// Read once: the user agent doesn't change while the page is open.
-const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const PLATFORM = { isIOS: IS_IOS, isMobile: IS_IOS || /Android/.test(navigator.userAgent) };
 
 // YouGlish sits in the pronunciation row, styled to match it rather than the other links.
 const YOUGLISH_CLASS =

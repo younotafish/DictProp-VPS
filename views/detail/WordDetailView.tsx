@@ -14,7 +14,7 @@ import { useLatest } from '../../hooks/useStableValue';
 import { prefetchTTS, speakWord, stopCurrent } from '../../services/neuralTts';
 import { autoPlayTexts, preloadSession, wordZoneBands as countWordZoneBands } from './cardReading';
 import { findSavedCard } from './savedCard';
-import { PLATFORM } from './platform';
+import { PLATFORM } from '../../services/platform';
 import { RememberToast } from './RememberToast';
 import { DetailActionMenu } from './DetailActionMenu';
 import { WordPlaybackControls } from './WordPlaybackControls';

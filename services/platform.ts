@@ -1,6 +1,8 @@
 /**
- * The device the card view runs on. Nothing here changes while the page is open, so it's read once, when the
- * view's code loads, rather than on every render. Node, where the tests run, reports a touchless desktop.
+ * The device the app runs on, from one detector: the card view, the speech engine (services/audio/platform.ts) and
+ * the shortcut hints all ask it. Nothing here changes while the page is open, so PLATFORM is read once, when this
+ * module loads, rather than on every render. Node, where the tests run, reports a touchless desktop.
+ * Only screens that load on demand import this module; keep it out of the app's first chunk.
  */
 
 export interface Platform {
@@ -19,8 +21,8 @@ type NavigatorFacts = Pick<Navigator, 'userAgent' | 'platform'> & { maxTouchPoin
 export function detectPlatform(nav: NavigatorFacts | undefined, coarsePointer: () => boolean): Platform {
   if (!nav) return { isIOS: false, isAndroid: false, isMobile: false, isMacDesktop: false, isTouchCapable: false };
   const maxTouchPoints = nav.maxTouchPoints ?? 0;
-  const isIOS = /iPad|iPhone|iPod/.test(nav.userAgent) || (nav.platform === 'MacIntel' && maxTouchPoints > 1);
-  const isAndroid = /Android/.test(nav.userAgent);
+  const isIOS = /iPad|iPhone|iPod/i.test(nav.userAgent) || (nav.platform === 'MacIntel' && maxTouchPoints > 1);
+  const isAndroid = /Android/i.test(nav.userAgent);
   const isMobile = isIOS || isAndroid;
   return {
     isIOS,
@@ -41,3 +43,17 @@ export const PLATFORM = detectPlatform(
   typeof navigator === 'undefined' ? undefined : navigator,
   () => typeof window !== 'undefined' && !!window.matchMedia?.('(any-pointer: coarse)')?.matches,
 );
+
+type NavigatorWithUserAgentData = Navigator & { userAgentData?: { platform?: string } };
+
+/**
+ * A Mac, or an iPad presenting itself as one ('MacIntel'): its shortcuts use ⌘ rather than Ctrl. This names a
+ * modifier key, which an iPad's keyboard has too, so unlike PLATFORM.isMacDesktop it keeps touch devices in.
+ */
+export const isMacPlatform = (): boolean => {
+  const nav = navigator as NavigatorWithUserAgentData;
+  return nav.userAgentData?.platform === 'macOS' || !!nav.platform?.includes('Mac');
+};
+
+/** The modifier key a shortcut hint names: ⌘ on a Mac, Ctrl elsewhere. */
+export const modifierKeyLabel = (): string => (isMacPlatform() ? '⌘' : 'Ctrl');

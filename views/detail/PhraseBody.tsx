@@ -6,7 +6,7 @@ import { PronunciationBlock } from '../../components/PronunciationBlock';
 import { OfflineImage } from '../../components/OfflineImage';
 import { GrammarNotes } from './GrammarNotes';
 import { PhraseVocabCard } from './PhraseVocabCard';
-import { PLATFORM } from './platform';
+import { PLATFORM } from '../../services/platform';
 
 interface PhraseBodyProps {
   phrase: SearchResult;
