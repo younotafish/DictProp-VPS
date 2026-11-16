@@ -24,7 +24,7 @@ import { summarizeCatalogProgress, type CatalogProgressIndex } from '../../servi
 import { catalogProgressItemId } from '../../services/catalogProgressIdentity';
 import { buildCatalogQueue, studyButtonLabel } from '../../services/catalogQueue';
 import type { SentenceReviewFilter } from '../../services/sentenceOrdering';
-import { sentenceReviewState, type SentenceReviewState } from '../../services/sentenceReviewState';
+import { REVIEW_FILTER_LABELS, sentenceReviewState, type SentenceReviewState } from '../../services/sentenceReviewState';
 import { useLatest } from '../../hooks/useStableValue';
 import { collectionStyle } from './realLifeStyle';
 import { filterRealLifeSentences } from './realLifeFilter';
@@ -104,9 +104,9 @@ export const RealLifeSentenceRow = React.memo(function RealLifeSentenceRow({
                   <CheckCircle2 size={11} /> {masteryPercent}%
                 </span>
               ) : state === 'due' ? (
-                <span className={`${STATE_PILL} bg-orange-50 font-bold text-orange-600`}>Due</span>
+                <span className={`${STATE_PILL} bg-orange-50 font-bold text-orange-600`}>{REVIEW_FILTER_LABELS.due}</span>
               ) : (
-                <span className={`${STATE_PILL} bg-slate-100 font-semibold text-slate-500`}>Unreviewed</span>
+                <span className={`${STATE_PILL} bg-slate-100 font-semibold text-slate-500`}>{REVIEW_FILTER_LABELS.unreviewed}</span>
               )}
               <div className="ml-auto flex shrink-0 items-center gap-2">
                 {state !== 'memorized' && (
@@ -211,7 +211,7 @@ export function RealLifeCollectionScreen({
     const { filtered, openSentence } = latest.current;
     openSentence(filtered, filtered.indexOf(sentence));
   }, [latest]);
-  // One Reviewed per press across the list: under the Unreviewed and Due chips a reviewed row leaves, and the row taking
+  // One Reviewed per press across the list: under the New and Due chips a reviewed row leaves, and the row taking
   // its place mustn't take a second tap meant for the first (one within 0.5 s of the last review is ignored).
   const lastListReviewAt = useRef(-Infinity);
   const markReviewed = useCallback((sentence: RealLifeSentence) => {
@@ -251,7 +251,7 @@ export function RealLifeCollectionScreen({
   const filtersActive = reviewFilter !== 'all' || sectionId !== 'all';
   const emptyScope = [
     'No',
-    reviewFilter === 'all' ? '' : reviewFilter,
+    reviewFilter === 'all' ? '' : REVIEW_FILTER_LABELS[reviewFilter].toLowerCase(),
     'conversations',
     sectionId === 'all' ? '' : `in ${collection.sections.find(section => section.id === sectionId)?.title ?? 'this theme'}`,
   ].filter(Boolean).join(' ');
@@ -331,11 +331,11 @@ export function RealLifeCollectionScreen({
 
           <div className="mt-2 flex gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
             {([
-              ['all', 'All', progress.total],
-              ['unreviewed', 'Unreviewed', progress.unreviewed],
-              ['due', 'Due', progress.due],
-              ['memorized', 'Memorized', progress.memorized],
-            ] as [SentenceReviewFilter, string, number][]).map(([key, label, count]) => (
+              ['all', progress.total],
+              ['unreviewed', progress.unreviewed],
+              ['due', progress.due],
+              ['memorized', progress.memorized],
+            ] as [SentenceReviewFilter, number][]).map(([key, count]) => (
               <button
                 type="button"
                 key={key}
@@ -343,7 +343,7 @@ export function RealLifeCollectionScreen({
                 aria-pressed={reviewFilter === key}
                 className={`inline-flex min-h-8 shrink-0 items-center gap-1 rounded-full px-3 text-xs font-semibold transition-colors ${reviewFilter === key ? style.active : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
               >
-                {label} <span className={reviewFilter === key ? 'text-white/70' : 'text-slate-400'}>{count}</span>
+                {REVIEW_FILTER_LABELS[key]} <span className={reviewFilter === key ? 'text-white/70' : 'text-slate-400'}>{count}</span>
               </button>
             ))}
           </div>

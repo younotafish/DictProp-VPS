@@ -90,10 +90,11 @@ test('the review chips say which one is selected, and the search boxes have name
     items: [never], onUpdateSRS: async () => true, onDelete: noop, onSearch: noop, onScroll: noop, onOpenSentence: noop,
   }));
   assert.ok(sentences.includes('aria-label="Search saved sentences"'));
-  const sentenceChips = [...sentences.matchAll(/aria-pressed="(true|false)" title="([^"]*)"/g)]
-    .map(([, pressed, title]) => `${title}:${pressed}`);
+  const sentenceChips = [...sentences.matchAll(/aria-pressed="(true|false)" title="([^"]*)" class="[^"]*">([^<]+)/g)]
+    .map(([, pressed, title, label]) => `${label} (${title}):${pressed}`);
   assert.deepEqual(sentenceChips, [
-    'All sentences:true', 'Never reviewed yet:false', 'Reviewed before and due again now:false', 'Reviewed — not due right now:false',
+    'All (All sentences):true', 'New (Never reviewed yet):false', 'Due (Reviewed before and due again now):false',
+    'Memorized (Reviewed — not due right now):false',
   ]);
 
   const collection = REAL_LIFE_COLLECTIONS[0];
@@ -105,7 +106,8 @@ test('the review chips say which one is selected, and the search boxes have name
   const pressed = [...realLife.matchAll(/aria-pressed="(true|false)"[^>]*>([^<]+)/g)]
     .map(([, state, label]) => `${label.trim().replaceAll('&amp;', '&')}:${state}`);
   // The four review chips, then All and one chip per theme.
-  assert.deepEqual(pressed.slice(0, 4), ['All:true', 'Unreviewed:false', 'Due:false', 'Memorized:false']);
+  // A line never reviewed is New there, as in the stats strip above them and on the tiles.
+  assert.deepEqual(pressed.slice(0, 4), ['All:true', 'New:false', 'Due:false', 'Memorized:false']);
   assert.deepEqual(pressed.slice(4), [
     `All ${collection.sentences.length}:true`,
     ...collection.sections.map(section => `${section.title}:false`),

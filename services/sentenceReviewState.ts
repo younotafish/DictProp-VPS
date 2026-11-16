@@ -1,8 +1,8 @@
 import type { SRSData } from '../types';
-import { sentenceReviewState } from './sentenceOrdering';
+import { sentenceReviewState, type SentenceReviewFilter } from './sentenceOrdering';
 
 // The rule itself, a sentence's review state and the filter chips over it, is written once, in sentenceOrdering.ts;
-// this module passes it on beside what is built from it, the study run's test and the summaries.
+// this module passes it on beside what is built from it: the study run's test, the summaries and what the chips say.
 export { matchesReviewFilter, sentenceReviewState, type SentenceReviewState } from './sentenceOrdering';
 
 /** Whether a study run takes the sentence: it was never reviewed, or it is due again. */
@@ -50,3 +50,14 @@ export function summarizeReviewStates(schedules: readonly (SRSData | undefined)[
     masteryScore: total === 0 ? 0 : Math.round(strength / total),
   };
 }
+
+/**
+ * What the review chips say on the Sentences tab and in a Real Life collection, and so what an empty list under one
+ * has none of. A sentence never reviewed is New, as on the reading tiles, the Study dashboard and a card's memory badge.
+ */
+export const REVIEW_FILTER_LABELS: Readonly<Record<SentenceReviewFilter, string>> = {
+  all: 'All',
+  unreviewed: 'New',
+  due: 'Due',
+  memorized: 'Memorized',
+};

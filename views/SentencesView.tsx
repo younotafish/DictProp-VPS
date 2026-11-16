@@ -10,7 +10,7 @@ import {
   orderSentencesForReview,
   type SentenceReviewFilter,
 } from '../services/sentenceOrdering';
-import { needsReview, summarizeReviewStates } from '../services/sentenceReviewState';
+import { needsReview, REVIEW_FILTER_LABELS, summarizeReviewStates } from '../services/sentenceReviewState';
 import { acceptListReview } from '../services/actionGuards';
 import { Virtuoso } from 'react-virtuoso';
 import { useLatest } from '../hooks/useStableValue';
@@ -300,11 +300,11 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
           {/* Review-state filters — default 'all' (current status) */}
           <div className="flex items-center gap-1.5 mt-2 overflow-x-auto no-scrollbar">
             {([
-              ['all', 'All', counts.total],
-              ['unreviewed', 'Unreviewed', counts.unreviewed],
-              ['due', 'Due', counts.due],
-              ['memorized', 'Memorized', counts.memorized],
-            ] as [SentenceReviewFilter, string, number][]).map(([key, label, count]) => (
+              ['all', counts.total],
+              ['unreviewed', counts.unreviewed],
+              ['due', counts.due],
+              ['memorized', counts.memorized],
+            ] as [SentenceReviewFilter, number][]).map(([key, count]) => (
               <button
                 key={key}
                 onClick={() => setFilter(key)}
@@ -319,7 +319,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
                   filter === key ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >
-                {label}
+                {REVIEW_FILTER_LABELS[key]}
                 {count > 0 && (
                   <span className={`ml-1 ${filter === key ? 'text-indigo-100' : 'text-slate-400'}`}>{count}</span>
                 )}
@@ -346,7 +346,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
               </p>
             </>
           ) : (
-            <p className="text-slate-400 text-sm">No {filter} sentences</p>
+            <p className="text-slate-400 text-sm">No {REVIEW_FILTER_LABELS[filter].toLowerCase()} sentences</p>
           )}
         </div>
       )}

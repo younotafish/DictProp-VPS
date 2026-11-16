@@ -80,7 +80,7 @@ test('study items overlay only their exact stored catalog progress', () => {
   assert.ok(queue.every(item => (item.data as SentenceData).catalogCollectionId === career.id));
 });
 
-test('a row\'s pill says where its line stands, Due in orange when it is due, at one width for every state', () => {
+test('a row\'s pill says where its line stands, Due in orange when it is due, New before its first review, at one width for every state', () => {
   const sentence = REAL_LIFE_COLLECTIONS[0].sentences[0];
   const row = (state: SentenceReviewState) => renderToStaticMarkup(createElement(RealLifeSentenceRow, {
     sentence, softClass: 'bg-indigo-50 text-indigo-700', saved: false, state, masteryPercent: 64, onOpen: () => {}, onMarkReviewed: () => {},
@@ -100,7 +100,7 @@ test('a row\'s pill says where its line stands, Due in orange when it is due, at
   assert.ok(!due.includes('64%'), 'a due line no longer looks finished');
 
   const unreviewed = row('unreviewed');
-  assert.ok(unreviewed.includes(`<span class="${pill} bg-slate-100 font-semibold text-slate-500">Unreviewed</span>`));
+  assert.ok(unreviewed.includes(`<span class="${pill} bg-slate-100 font-semibold text-slate-500">New</span>`));
   assert.ok(unreviewed.includes(reviewed));
 });
 
