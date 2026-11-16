@@ -127,7 +127,7 @@ run the gamut"
             </div>
             <h3 className="text-lg font-bold text-slate-700 mb-2">Batch Import Words</h3>
             <p className="text-sm text-slate-400 max-w-xs leading-relaxed">
-              Paste a list of words or phrases. The AI will analyze each one in the background and save all meanings with images to your notebook.
+              Paste a list of words or phrases. The AI will analyze each one in the background and save all meanings to your notebook.
             </p>
             <div className="mt-6 space-y-1.5 text-left w-full max-w-xs">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Separators:</p>
