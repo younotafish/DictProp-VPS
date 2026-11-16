@@ -30,7 +30,8 @@ export interface DetailViewProps {
   savedItems: StoredItem[];
   /** Sentence records are separate from notebook cards; used to resolve catalog progress by exact id. */
   savedSentenceItems?: StoredItem[];
-  onSearch: (text: string) => void;
+  /** Looks a term up; sentence review passes the sentence it was picked from as `context`, shown above its meanings. */
+  onSearch: (text: string, options?: { context?: string }) => void;
   onRefresh?: (text: string) => void; // Force a real AI search, bypassing local cache
   onLazyLoadImage?: (itemId: string, imageVersion?: string) => Promise<string | null>; // Fetch image from server if missing locally
   onUpdateSRS?: (

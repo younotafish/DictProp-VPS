@@ -155,6 +155,12 @@ export function SentenceReviewView({
     sentencePreviewOnly,
   );
   const currentSentenceText = currentSentence ? (currentSentence.data as SentenceData).text : '';
+  // A term looked up from the sentence, or from its analysis, carries the sentence, so the search shows it above the
+  // term's meanings.
+  const searchWithContext = useCallback(
+    (term: string) => onSearch(term, { context: currentSentenceText }),
+    [onSearch, currentSentenceText],
+  );
   // The enrichment is fetched for the list's copy of the sentence, so its loading and failure go by that id.
   const analysisLoading = !!currentSentenceSnapshot && preparingSentenceId === currentSentenceSnapshot.data.id;
   const analysisState = analysisPlaceholderState({
@@ -463,7 +469,7 @@ export function SentenceReviewView({
     sourceWord: (currentSentence.data as SentenceData).sourceWord,
     findSaved,
     onOpenCard,
-    onSearchWord: onSearch,
+    onSearchWord: searchWithContext,
     commandHeld: isCommandHeld,
     onWordTouchStartCapture: isMobile ? handleMobileWordTouchStart : undefined,
     onWordClickCapture: handleSentenceWordClickCapture,
@@ -564,7 +570,7 @@ export function SentenceReviewView({
           visible={sentencePage === 'analysis'}
           analysisState={analysisState}
           onBack={() => setSentencePage('sentence')}
-          onSearch={onSearch}
+          onSearch={searchWithContext}
           onRemember={isSentencePreview && !catalogSentencePreview ? undefined : handleRemember}
           onTouchStart={onContentTouchStart}
           onTouchEnd={onContentTouchEnd}
