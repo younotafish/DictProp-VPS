@@ -13,15 +13,14 @@ export interface DetailViewProps {
   /**
    * Applies `patch` to the library's live copy of the item `id`, for the writes the view makes on its own (the voice a
    * listen or a style choice leaves, an analysis or picture that arrives); a deleted item is left alone, so they never
-   * bring one back. A null patch writes nothing. Until App passes it, those writes go through onSave as before, and
-   * only to a sentence the library still holds.
+   * bring one back. A null patch writes nothing.
    */
-  onPatchItem?: (id: string, patch: (item: StoredItem) => StoredItem | null) => void;
+  onPatchItem: (id: string, patch: (item: StoredItem) => StoredItem | null) => void;
   /**
    * Takes an item the library no longer holds, as when another device deleted it, out of the open view: the view
-   * moves to the next card or sentence, or closes after the last. Until App passes it, such an item stays open.
+   * moves to the next card or sentence, or closes after the last.
    */
-  onRemoveFromView?: (id: string) => void;
+  onRemoveFromView: (id: string) => void;
   onDelete: (id: string) => void;
   onArchive?: (id: string) => void;
   /** Returns an archived card to review; the action menu and the A key offer it on archived cards. */

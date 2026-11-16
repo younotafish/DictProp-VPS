@@ -13,7 +13,7 @@ interface SentenceEnrichmentOptions {
   savedSentenceItemsRef: RefObject<StoredItem[]>;
   onSaveRef: RefObject<(item: StoredItem) => void>;
   /** Writes an upgrade to a saved sentence's live copy, never to a deleted one (DetailViewProps.onPatchItem). */
-  onPatchItemRef: RefObject<DetailViewProps['onPatchItem']>;
+  onPatchItemRef: RefObject<DetailViewProps['onPatchItem'] | undefined>;
 }
 
 /** How long after a failed fetch the lessons are asked for again; coming back online asks at once. */

@@ -18,7 +18,7 @@ interface ExampleSentencePreviewProps {
 /** An example sentence opened from the word card, reviewed over it as a sentence review of its own. */
 export function ExampleSentencePreview({ viewProps, requestId, sourceGroup, sentence, saved, onClose }: ExampleSentencePreviewProps) {
   const {
-    onSave, onPatchItem, onRemoveFromView, onDelete, onArchive, onUnarchive, onResetSRS, savedItems, savedSentenceItems,
+    onSave, onPatchItem, onDelete, onArchive, onUnarchive, onResetSRS, savedItems, savedSentenceItems,
     onSearch, onRefresh,
     onLazyLoadImage, onUpdateSRS, onCompare, comparisons, onOpenComparison, onSaveSentence, isSentenceSaved, isVocabSaved,
     onRemoveVocabFromPhrase, findSaved, onOpenCard, interactionLocked, onAttachImage,
@@ -38,9 +38,9 @@ export function ExampleSentencePreview({ viewProps, requestId, sourceGroup, sent
         onSave={onSave}
         onPatchItem={onPatchItem}
         // An example that opened saved and is then deleted on another device closes the preview, as a delete here
-        // does, once App takes deleted items out of its view (one saved from the preview turns back into the preview).
-        // The word card's view never held the sentence, so there is nothing to tell App.
-        onRemoveFromView={onRemoveFromView ? onClose : undefined}
+        // does (one saved from the preview turns back into the preview). The word card's view never held the
+        // sentence, so there is nothing to tell App.
+        onRemoveFromView={onClose}
         onDelete={(id) => { onDelete(id); onClose(); }}
         onArchive={onArchive}
         onUnarchive={onUnarchive}

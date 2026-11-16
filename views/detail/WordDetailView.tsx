@@ -111,12 +111,9 @@ export function WordDetailView(props: DetailViewBodyProps) {
   // Keep a ref to savedItems so callbacks always see fresh data without re-creating
   const savedItemsRef = useLatest(savedItems);
 
-  // A card deleted on another device leaves the view, once App can take it out.
+  // A card deleted on another device leaves the view.
   const viewCardIds = useMemo(() => cardIds(groups), [groups]);
-  const liveCardIds = useMemo(
-    () => onRemoveFromView ? liveIdsAmong(viewCardIds, savedItems) : null,
-    [viewCardIds, savedItems, onRemoveFromView],
-  );
+  const liveCardIds = useMemo(() => liveIdsAmong(viewCardIds, savedItems), [viewCardIds, savedItems]);
   useLeaveGoneItems(viewCardIds, liveCardIds, onRemoveFromView);
   // The saved sentences' index for an example preview's lookups: built once per library change, when a preview first
   // reads it, so a card with no preview open normalizes no sentence.

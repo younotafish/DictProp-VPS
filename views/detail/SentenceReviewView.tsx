@@ -116,7 +116,7 @@ export function SentenceReviewView({
   const onSaveRef = useLatest(onSave);
   const onPatchItemRef = useLatest(onPatchItem);
 
-  // A saved sentence deleted on another device leaves the run, once App can take it out.
+  // A saved sentence deleted on another device leaves the run.
   const leavingSentenceIds = useMemo(() => ownSentenceIds(sentenceItems), [sentenceItems]);
   const liveLeavingSentenceIds = useMemo(
     () => liveIdsAmong(leavingSentenceIds, savedSentenceItems),
@@ -200,8 +200,7 @@ export function SentenceReviewView({
     const updated = patch(sentence);
     if (!updated) return;
     currentSentenceRef.current = updated;
-    const patchItem = onPatchItemRef.current;
-    if (write === 'patch' && patchItem) patchItem(id, patch);
+    if (write === 'patch') onPatchItemRef.current(id, patch);
     else onSaveRef.current(updated);
   }, [onPatchItemRef, onSaveRef, savedSentenceItemsRef]);
 
