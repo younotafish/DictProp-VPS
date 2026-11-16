@@ -102,7 +102,7 @@ test('each change that shipped with this release has its row', () => {
   for (const [keys, label] of [
     [['⌘', 'F'], 'Look up'], [['Enter'], 'In the box: look up what you typed'], [['Enter'], 'On an empty box: open the results'],
     [['←', '→'], 'Meanings'], [['↑', '↓'], 'Results'], [['S'], 'Save'], [['Shift', 'S'], 'Save every meaning'], [['P'], 'Pronounce'],
-    [['E'], 'Examples'], [['Space'], 'Play or pause'], [['⌘', '1–4'], 'Read example 1–4'], [['Esc'], 'Close'],
+    [['E'], 'Examples; press again to pause or resume, or at 85% or more to start them again'], [['Space'], 'Play or pause'], [['⌘', '1–4'], 'Read example 1–4'], [['Esc'], 'Close'],
   ] as const) assert.ok(hasRow(at('search'), [...keys], label), label);
   // Paging a sentence with the trackpad (UX-06).
   assert.ok(hasRow(at('trackpad'), ['Two-finger swipe ←/→'], 'In a sentence: the sentence or its analysis page'));
