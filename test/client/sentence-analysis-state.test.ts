@@ -111,7 +111,7 @@ test('an analysis on screen shows itself, never a placeholder', () => {
 type RowProps = ComponentProps<typeof SentenceHeaderRow>;
 const headerRow = (props: Partial<RowProps> = {}) => renderToStaticMarkup(createElement(SentenceHeaderRow, {
   autoPlaying: false, exitLabel: 'Sentences', onExit: () => {}, onOpenAnalysis: () => {}, loadingLesson: false, position: 3,
-  total: 12, dueCount: 0, ...props,
+  total: 12, reviewPill: { count: 4, label: '4 to review', tone: 'amber' }, ...props,
 }));
 /** The analysis button: its opening tag and what it holds. */
 const analysisButton = (html: string) => html.match(/<button type="button"[^>]*>[\s\S]*?<\/button>/)![0];

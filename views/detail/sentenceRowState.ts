@@ -1,3 +1,6 @@
+import type { StoredItem } from '../../types';
+import { needsReview, sentenceReviewState } from '../../services/sentenceReviewState';
+
 /** What sentence review's bottom row shows, from the sentence's reviews rather than from whether it has a record. */
 export interface SentenceRowState {
   /** The sentence's memory on the left, once it has been reviewed: a listen that creates a record shows nothing new. */
@@ -30,4 +33,30 @@ export function sentenceRowState({ catalog, preview, totalReviews }: {
     showDelete: !catalog && !preview,
     primary: unsavedExample ? 'save-sentence' : 'got-it',
   };
+}
+
+/** The lesson header's pill: what's left to review in the run, amber, or an emerald 'All reviewed' at none. */
+export interface LessonReviewPill {
+  count: number;
+  label: string;
+  tone: 'amber' | 'emerald';
+}
+
+/**
+ * The run's sentences left to review: never reviewed, or due again now (needsReview, the rule every 'to review' count
+ * uses), so a run counts down as each sentence is remembered.
+ */
+export function lessonReviewPill(items: readonly StoredItem[], now: number): LessonReviewPill {
+  let count = 0;
+  for (const item of items) if (needsReview(item.srs, now)) count += 1;
+  return count > 0
+    ? { count, label: `${count} to review`, tone: 'amber' }
+    : { count: 0, label: 'All reviewed', tone: 'emerald' };
+}
+
+/** The run's memorized sentences: reviewed, and not due again yet. */
+export function memorizedCount(items: readonly StoredItem[], now: number): number {
+  let count = 0;
+  for (const item of items) if (sentenceReviewState(item.srs, now) === 'memorized') count += 1;
+  return count;
 }

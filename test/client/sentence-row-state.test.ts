@@ -2,15 +2,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createElement, type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { SRSData } from '../../types.ts';
+import type { SRSData, StoredItem } from '../../types.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import { getMasteryColors } from '../../components/mastery.tsx';
-import { sentenceRowState } from '../../views/detail/sentenceRowState.ts';
+import { lessonReviewPill, memorizedCount, sentenceRowState } from '../../views/detail/sentenceRowState.ts';
 import { SentenceActionsRow } from '../../views/detail/SentenceActionsRow.tsx';
+import { SentenceHeaderRow } from '../../views/detail/SentenceHeaderRow.tsx';
 
 // Sentence review's bottom row (views/detail/sentenceRowState.ts and SentenceActionsRow.tsx): it goes by the
 // sentence's reviews, so a first listen that creates a catalog line's record changes nothing, and Got it keeps one
-// size and its place at the right end in every state.
+// size and its place at the right end in every state. And the run's counters: the header's 'to review' pill and the
+// row's memorized count.
 
 test('the row shows the memory and Reset only after a first review, Delete only on the learner\'s own saved sentences', () => {
   const row = (catalog: boolean, preview: boolean, totalReviews: number) => sentenceRowState({ catalog, preview, totalReviews });
@@ -101,4 +103,63 @@ test('an unsaved example offers Save sentence at the right end, at Got it\'s siz
     '-my-1 flex min-h-9 items-center gap-1 rounded-lg px-4 text-sm font-bold text-white transition-colors bg-indigo-600 hover:bg-indigo-700',
   );
   assert.equal(rightButtons(rowFor('example', true, 0, { onSaveSentence: undefined })).length, 0, 'nothing without a way to save');
+});
+
+const NOW = Date.UTC(2026, 10, 16, 9);
+const DAY = 86_400_000;
+/** A sentence of the run: never reviewed, or reviewed with its next review `dueIn` from NOW. */
+const line = (id: string, review?: { dueIn: number; strength?: number }): StoredItem => {
+  const srs = SRSAlgorithm.createNew(id, 'sentence', 0);
+  return {
+    type: 'sentence',
+    data: { id, text: `Line ${id}.`, sourceWord: 'line' },
+    savedAt: 1,
+    srs: review ? { ...srs, totalReviews: 2, nextReview: NOW + review.dueIn, memoryStrength: review.strength ?? 50 } : srs,
+  };
+};
+
+test('the pill counts the run\'s sentences never reviewed or due now, and reads All reviewed at none', () => {
+  const run = [
+    line('new-1'), line('new-2'),
+    line('due', { dueIn: -DAY }), line('due-now', { dueIn: 0 }),
+    line('resting', { dueIn: DAY, strength: 20 }), line('strong', { dueIn: 30 * DAY, strength: 95 }),
+  ];
+  assert.deepEqual(lessonReviewPill(run, NOW), { count: 4, label: '4 to review', tone: 'amber' });
+  assert.deepEqual(lessonReviewPill([run[4], run[5]], NOW), { count: 0, label: 'All reviewed', tone: 'emerald' });
+  assert.deepEqual(lessonReviewPill([], NOW), { count: 0, label: 'All reviewed', tone: 'emerald' });
+  // The next day the resting sentence is due again.
+  assert.equal(lessonReviewPill(run, NOW + DAY).count, 5);
+});
+
+test('a twelve-sentence run counts down to All reviewed as each one is remembered', () => {
+  let run = Array.from({ length: 12 }, (_, index) => line(`s${index}`));
+  const counts: string[] = [lessonReviewPill(run, NOW).label];
+  for (let index = 0; index < run.length; index++) {
+    run = run.map((item, at) => at === index ? line(item.data.id, { dueIn: DAY }) : item);
+    counts.push(lessonReviewPill(run, NOW).label);
+  }
+  assert.deepEqual(counts, [...Array.from({ length: 12 }, (_, index) => `${12 - index} to review`), 'All reviewed']);
+});
+
+test('the memorized count is the run\'s sentences reviewed and not due, whatever their strength', () => {
+  const run = [
+    line('new'), line('due', { dueIn: -1, strength: 90 }),
+    line('weak but resting', { dueIn: DAY, strength: 10 }), line('strong and resting', { dueIn: DAY, strength: 95 }),
+  ];
+  assert.equal(memorizedCount(run, NOW), 2);
+  assert.equal(memorizedCount(run, NOW + 2 * DAY), 0);
+});
+
+test('the memorized count says what it counts, and the header shows the pill in its tone', () => {
+  const html = rowFor('saved', false, 3, { memorizedCount: 7 });
+  assert.match(html, /role="img" aria-label="7 memorized in this list" title="7 memorized in this list">/);
+
+  const header = (reviewPill: Parameters<typeof SentenceHeaderRow>[0]['reviewPill']) => renderToStaticMarkup(createElement(SentenceHeaderRow, {
+    autoPlaying: false, exitLabel: 'Essays', onExit: () => {}, onOpenAnalysis: () => {}, loadingLesson: false, position: 1, total: 12,
+    reviewPill,
+  }));
+  assert.match(header(lessonReviewPill([line('a'), line('b')], NOW)), /<span class="text-\[11px\] font-semibold text-amber-600 bg-amber-50 px-2 py-0\.5 rounded-full">2 to review<\/span>/);
+  assert.match(header(lessonReviewPill([], NOW)), /<span class="text-\[11px\] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0\.5 rounded-full">All reviewed<\/span>/);
+  assert.doesNotMatch(header(null), /to review|All reviewed/, 'no pill in an unsaved example\'s preview');
+  assert.doesNotMatch(header(lessonReviewPill([line('a')], NOW)), / due</);
 });

@@ -1,4 +1,5 @@
 import { ArrowLeft, BookOpenText, Loader2, Lock, MessageSquareQuote } from 'lucide-react';
+import type { LessonReviewPill } from './sentenceRowState';
 
 interface SentenceHeaderRowProps {
   /** Auto-play is locked on: Back opens its controls instead of leaving. */
@@ -10,12 +11,12 @@ interface SentenceHeaderRowProps {
   loadingLesson: boolean;
   position: number;
   total: number;
-  /** Sentences due in this list; nothing shows at 0. */
-  dueCount: number;
+  /** What's left to review in this run (lessonReviewPill), on every sentence of it; null for an unsaved example's preview. */
+  reviewPill: LessonReviewPill | null;
 }
 
-/** Sentence review's top row: Back (or the locked auto-play), the analysis page, the position and what's due. */
-export function SentenceHeaderRow({ autoPlaying, exitLabel, onExit, onOpenAnalysis, loadingLesson, position, total, dueCount }: SentenceHeaderRowProps) {
+/** Sentence review's top row: Back (or the locked auto-play), the analysis page, the position and what's left to review. */
+export function SentenceHeaderRow({ autoPlaying, exitLabel, onExit, onOpenAnalysis, loadingLesson, position, total, reviewPill }: SentenceHeaderRowProps) {
   return (
     <div className="flex items-center justify-between gap-2 mb-1.5">
       <button
@@ -44,9 +45,9 @@ export function SentenceHeaderRow({ autoPlaying, exitLabel, onExit, onOpenAnalys
         <span className="flex items-center gap-1 text-[11px] font-semibold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">
           <MessageSquareQuote size={12} /> {position} / {total}
         </span>
-        {dueCount > 0 && (
-          <span className="text-[11px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
-            {dueCount} due
+        {reviewPill && (
+          <span className={`text-[11px] font-semibold ${reviewPill.tone === 'amber' ? 'text-amber-600 bg-amber-50' : 'text-emerald-600 bg-emerald-50'} px-2 py-0.5 rounded-full`}>
+            {reviewPill.label}
           </span>
         )}
       </div>

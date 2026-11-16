@@ -19,7 +19,7 @@ import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
 import { preloadSession } from './cardReading';
 import { resolveSentenceUnderReview, SENTENCE_PREVIEW_ID_PREFIX } from './sentenceUnderReview';
 import { withSpeechStyle } from './speechStyle';
-import { sentenceRowState } from './sentenceRowState';
+import { lessonReviewPill, memorizedCount, sentenceRowState } from './sentenceRowState';
 import { PLATFORM } from '../../services/platform';
 import { RememberToast } from './RememberToast';
 import { SentenceHero } from './SentenceHero';
@@ -111,7 +111,7 @@ export function SentenceReviewView({
     sentenceItems, sentenceIndex, savedSentenceItemsRef, onSaveRef,
   });
   const {
-    currentSentence, catalogSentencePreview, catalogPreviewKind, readOnlySentencePreview, isSentencePreview, sentenceExitLabel,
+    currentSentence, catalogSentencePreview, catalogPreviewKind, isSentencePreview, sentenceExitLabel,
   } = resolveSentenceUnderReview(
     currentSentenceSnapshot,
     currentSentenceSnapshot ? preparedSentenceById[currentSentenceSnapshot.data.id] : undefined,
@@ -182,13 +182,11 @@ export function SentenceReviewView({
     ? SRSAlgorithm.getMasteryLevel(currentSentence.srs)
     : null;
   const sentenceMasteryColors = sentenceMastery ? getMasteryColors(sentenceMastery.color) : null;
-  const { sentenceMemorizedCount, sentenceDueCount } = useMemo(() => {
-    const list = sentenceItems;
+  // The run's counters, recounted when a review or a sync changes its sentences, so swiping through it never changes
+  // them: what's left to review (never reviewed or due) and what's memorized (reviewed and not due).
+  const { sentenceMemorizedCount, sentenceReviewPill } = useMemo(() => {
     const now = Date.now();
-    return {
-      sentenceMemorizedCount: list.filter(s => (s.srs?.memoryStrength ?? 0) >= 70).length,
-      sentenceDueCount: list.filter(s => (s.srs?.nextReview ?? 0) <= now).length,
-    };
+    return { sentenceMemorizedCount: memorizedCount(sentenceItems, now), sentenceReviewPill: lessonReviewPill(sentenceItems, now) };
   }, [sentenceItems]);
 
   const {
@@ -412,7 +410,7 @@ export function SentenceReviewView({
               loadingLesson={analysisLoading}
               position={sentenceIndex + 1}
               total={sentenceItems.length}
-              dueCount={readOnlySentencePreview ? 0 : sentenceDueCount}
+              reviewPill={sentencePreviewOnly ? null : sentenceReviewPill}
             />
 
             {/* Row 2: the sentence — the hero, filling the page and centered in it. */}
