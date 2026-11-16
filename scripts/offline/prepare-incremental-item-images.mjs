@@ -3,8 +3,13 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { corpusSourceHash } from '../../server/src/corpus-hash.ts';
+import {
+  hasCurrentLocalAdvancedEnrichment,
+  hasCurrentLocalImageEnrichment,
+  imagePromptHash,
+} from '../../server/src/local-enrichment-markers.ts';
 import { DEFAULT_IMAGE_MODEL_LABEL } from './image-model.mjs';
-import { hasCurrentLocalAdvancedEnrichment } from './local-advanced-enrichment.mjs';
 import { readJson, writePrivateJson } from './offline-io.mjs';
 
 const [corpusArg, analysisArg, completionArg, outputArg, modelArg] = process.argv.slice(2);
@@ -40,32 +45,8 @@ const entries = [];
 const targets = [];
 const seen = new Set();
 
-function withoutImages(value) {
-  if (Array.isArray(value)) return value.map(withoutImages);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value)
-    .filter(([key]) => key !== 'imageUrl')
-    .map(([key, child]) => [key, withoutImages(child)]));
-}
-
-function parentHash(data) {
-  const stable = Object.fromEntries(Object.entries(data).filter(([key]) =>
-    key !== 'analysis' && key !== 'analysisGeneratedAt' && key !== 'preferredSpeechStyle'));
-  return createHash('sha256').update(JSON.stringify(withoutImages(stable))).digest('hex');
-}
-
 function filenameFor(id, prompt) {
   return `${createHash('sha256').update(`${id}\0${prompt}`).digest('hex').slice(0, 32)}.webp`;
-}
-
-function promptHash(prompt) {
-  return createHash('sha256').update(String(prompt || '').trim()).digest('hex');
-}
-
-function hasCurrentLocalImage(data, prompt) {
-  const marker = data?.localImageEnrichment;
-  return marker?.version === 1 && marker?.provider === 'local-ernie' &&
-    marker.promptHash === promptHash(prompt);
 }
 
 function addTarget(parent, imageId, prompt, learningTarget) {
@@ -75,9 +56,9 @@ function addTarget(parent, imageId, prompt, learningTarget) {
   entries.push({
     parentId: parent.data.id,
     imageId,
-    parentHash: parentHash(parent.data),
+    parentHash: corpusSourceHash(parent.data),
     imageFile: `images/${filename}`,
-    promptHash: promptHash(prompt),
+    promptHash: imagePromptHash(prompt),
   });
   targets.push({ imageId, filename, prompt: prompt.trim(), learningTarget });
 }
@@ -98,8 +79,7 @@ for (const item of corpus.items) {
       });
     }
   } else if (item.type === 'vocab') {
-    const needsLocalImage = hasCurrentLocalAdvancedEnrichment(data) &&
-      !hasCurrentLocalImage(data, data.imagePrompt);
+    const needsLocalImage = hasCurrentLocalAdvancedEnrichment(data) && !hasCurrentLocalImageEnrichment(data);
     if (!data.imageUrl || needsLocalImage) {
       addTarget(effectiveItem, data.id, data.imagePrompt, {
         kind: 'word sense', text: data.word, sense: data.sense || '', definition: data.definition || '',
@@ -107,16 +87,14 @@ for (const item of corpus.items) {
     }
   } else if (item.type === 'phrase') {
     const hasLocallyAdvancedCard = (data.vocabs || []).some(hasCurrentLocalAdvancedEnrichment);
-    const needsLocalPhraseImage = hasLocallyAdvancedCard &&
-      !hasCurrentLocalImage(data, data.imagePrompt);
+    const needsLocalPhraseImage = hasLocallyAdvancedCard && !hasCurrentLocalImageEnrichment(data);
     if (!data.imageUrl || needsLocalPhraseImage) {
       addTarget(effectiveItem, data.id, data.imagePrompt, {
         kind: 'phrase', text: data.query, sense: '', definition: data.translation || '',
       });
     }
     for (const card of data.vocabs || []) {
-      const needsLocalImage = hasCurrentLocalAdvancedEnrichment(card) &&
-        !hasCurrentLocalImage(card, card?.imagePrompt);
+      const needsLocalImage = hasCurrentLocalAdvancedEnrichment(card) && !hasCurrentLocalImageEnrichment(card);
       if (!card?.imageUrl || needsLocalImage) {
         addTarget(effectiveItem, card?.id, card?.imagePrompt, {
           kind: 'word sense', text: card?.word, sense: card?.sense || '', definition: card?.definition || '',

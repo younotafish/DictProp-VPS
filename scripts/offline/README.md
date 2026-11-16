@@ -87,7 +87,7 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
   `node scripts/offline/enrich-sentences.mjs <sentence-export.json> <manifest.json> [work-directory] [base-analysis.json]`
 - `failure-ledger.mjs` — Items that keep failing a stage wait out a growing backoff, recorded in `failure-ledger.json`. This tool filters the sentences and image targets that are waiting one out, records image outcomes, and prints a summary. The text stages also import it.
   `node scripts/offline/failure-ledger.mjs <filter-sentences|filter-image-targets|record-image-outcomes|summary> <ledger> ...`
-- `prepare-incremental-item-images.mjs` — Writes image targets, with their prompts, for the live saved sentences, words and phrases that have no image, or whose advanced rewrite has no matching local image yet. It also writes the manifest that the image dispatcher publishes.
+- `prepare-incremental-item-images.mjs` — Writes image targets, with their prompts, for the live saved sentences, words and phrases that have no image, or whose advanced rewrite has no matching local image yet. It also writes the manifest that the image dispatcher publishes. The manifest's hashes and the markers it checks are the server's own, imported from `server/src/corpus-hash.ts` and `server/src/local-enrichment-markers.ts`.
   `node scripts/offline/prepare-incremental-item-images.mjs <corpus-export.json> <sentence-analysis.json|-> <vocab-completion.json|-> <output-directory> [model]`
 - `run-streaming-image-quality-loop.sh` — Each round renders the next numbered candidate for the targets that are still open, while `stream-image-quality-pass.mjs` judges the candidates as they appear. Rejected targets get a refined prompt for the next round. An image that fails `IMAGE_QUALITY_DEFER_AFTER` candidates is left for a later cycle, and its candidates are removed.
   `bash scripts/offline/run-streaming-image-quality-loop.sh <targets.json> <candidates-dir> <images-dir> <work-dir> [width=768] [height=432] [steps=6] [candidate=1] [chunk-size=128]`
@@ -171,7 +171,7 @@ These modules are imported by other scripts and never run on their own.
 - `codex-process.mjs` — Starts and stops `codex` child processes, and stops them when the parent gets a signal.
 - `vocab-card-contract.mjs` — What a complete vocabulary card is. Both the vocabulary selector and the completion stage use it.
 - `sentence-analysis-contract.mjs` — The import contract for sentence analyses, and the detailed analysis schema.
-- `local-advanced-enrichment.mjs` — The `advancedEnrichment` marker, which ties a card's advanced rewrite to a hash of its content.
+- `local-advanced-enrichment.mjs` — Writes the `advancedEnrichment` marker, which ties a card's advanced rewrite to a hash of its content. The hash, and what makes a marker current, are the server's own, imported from `server/src/local-enrichment-markers.ts`.
 
 ## Manual content tools
 
