@@ -31,7 +31,8 @@ const subscribe = (listener: () => void) => {
 };
 /** Why a reload is on offer, or null while none is. */
 export const pendingUpdate = (): UpdateReason | null => pending;
-export const useAppUpdate = (): UpdateReason | null => useSyncExternalStore(subscribe, pendingUpdate);
+/** Why a reload is on offer, kept current; a server render reads the module's value too. */
+export const useAppUpdate = (): UpdateReason | null => useSyncExternalStore(subscribe, pendingUpdate, pendingUpdate);
 
 // Chromium, Firefox and Safari word a failed dynamic import differently; Vite's preload helper adds its own.
 const CHUNK_LOAD_ERROR = /dynamically imported module|importing a module script failed|unable to preload/i;

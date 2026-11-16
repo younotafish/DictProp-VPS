@@ -1,11 +1,12 @@
 import React from 'react';
-import { Loader2, X } from 'lucide-react';
 import { AppUpdateToast } from './AppUpdateToast';
+import { NoticePill } from './NoticePill';
+import { noticeSlotRef } from './noticeSlots';
 import { RefusedReviewsNotice } from './RefusedReviews';
 import type { ImagePrefetchProgress, ImageRestoreProgress } from '../hooks/useOfflineImages';
 import type { SpeechBackfill } from '../hooks/useSpeechBackfill';
 
-// The app-wide notices: banners across the top, and the pills that float above the navigation.
+// The app-wide notices: banners across the top, and the stack of pills that floats at the bottom.
 
 const describeImageRestore = ({ phase, done, total, failed }: ImageRestoreProgress): string => {
   if (phase === 'checking') return 'Checking which images the server is missing…';
@@ -46,68 +47,60 @@ interface AppStatusPillsProps {
   onUndo: () => void;
 }
 
-// Global background-job progress — remains visible across tabs/views. It floats above the nav, so a
-// job starting or finishing never moves the page. An undo offer lifts it above the card popup.
+/** The speech sweep's progress line, with its rough time left. */
+const describeSpeechGeneration = ({ current, total }: { current: number; total: number }): string => {
+  const rem = total - current;
+  if (rem <= 0) return `Generating sentence audio · ${current}/${total}`;
+  const mins = Math.ceil((rem * 2.75) / 4 / 60);
+  return `Generating sentence audio · ${current}/${total} · ~${mins}m left`;
+};
+
+/**
+ * The notice stack: the app's pills, floating above the page in one column centred at the bottom that remains
+ * visible across tabs and views, so a notice arriving or leaving never moves the page. The stack grows upward and
+ * keeps its pills in order of how long they stay, so one coming or going moves only the shorter-lived ones above
+ * it: short-lived on top (the undo offer, then the search status line's slot), then progress (a session's preload
+ * slot, then the background jobs), then the long-lived notices at the bottom (refused reviews, then the update).
+ * Both slots are always rendered, under the same parent: the notices that portal into them would vanish with a slot
+ * rendered conditionally or moved. An undo offer lifts the stack above the card popup.
+ */
 export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
   userId, onViewRefusedReviews, imagePrefetchProgress, onStopImageDownload, imageRestoreProgress,
   ttsGenProgress, onStopSpeechGeneration, undoMessage, onUndo,
 }) => (
   <div className={`fixed bottom-20 left-1/2 -translate-x-1/2 ${undoMessage ? 'z-[110]' : 'z-[80]'} flex flex-col items-center gap-2 pointer-events-none`}>
-    <AppUpdateToast />
-    <RefusedReviewsNotice userId={userId} onView={onViewRefusedReviews} />
+    {undoMessage && (
+      <NoticePill tone="dark" actions={[{ label: 'Undo', onClick: onUndo }]}>{undoMessage}</NoticePill>
+    )}
+    <div ref={noticeSlotRef('search')} data-notice-slot="search" className="flex flex-col items-center gap-2 empty:hidden" />
+
+    <div ref={noticeSlotRef('progress')} data-notice-slot="progress" className="flex flex-col items-center gap-2 empty:hidden" />
     {imagePrefetchProgress && (
-      <div role="status" className="pointer-events-auto bg-indigo-600 text-white rounded-full shadow-xl px-4 py-2 flex items-center gap-3 fade-in">
-        {imagePrefetchProgress.done < imagePrefetchProgress.total && <Loader2 size={16} className="animate-spin shrink-0" />}
-        <span className="text-sm font-medium whitespace-nowrap">
-          Offline images · {imagePrefetchProgress.done}/{imagePrefetchProgress.total}
-        </span>
-        <button onClick={onStopImageDownload} className="ml-1 shrink-0 text-indigo-200 hover:text-white" title="Stop downloading" aria-label="Stop downloading offline images">
-          <X size={15} />
-        </button>
-      </div>
+      <NoticePill
+        tone="indigo"
+        spinner={imagePrefetchProgress.done < imagePrefetchProgress.total}
+        actions={[{ label: 'Stop downloading offline images', title: 'Stop downloading', dismiss: true, onClick: onStopImageDownload }]}
+      >
+        Offline images · {imagePrefetchProgress.done}/{imagePrefetchProgress.total}
+      </NoticePill>
     )}
     {imageRestoreProgress && (
-      <div role="status" className={`pointer-events-auto text-white rounded-full shadow-xl px-4 py-2 text-sm font-medium whitespace-nowrap fade-in ${
-        imageRestoreProgress.phase === 'failed' || imageRestoreProgress.failed ? 'bg-rose-600' : 'bg-emerald-600'
-      }`}>
+      <NoticePill tone={imageRestoreProgress.phase === 'failed' || imageRestoreProgress.failed ? 'rose' : 'emerald'}>
         {describeImageRestore(imageRestoreProgress)}
-      </div>
+      </NoticePill>
     )}
     {ttsGenProgress?.isRunning && (
-      <div role="status" className="pointer-events-auto bg-indigo-600 text-white rounded-full shadow-xl px-4 py-2 flex items-center gap-3 fade-in">
-        <Loader2 size={16} className="animate-spin shrink-0" />
-        <span className="text-sm font-medium whitespace-nowrap">
-          Generating sentence audio · {ttsGenProgress.current}/{ttsGenProgress.total}
-          {(() => {
-            const rem = ttsGenProgress.total - ttsGenProgress.current;
-            if (rem <= 0) return '';
-            const mins = Math.ceil((rem * 2.75) / 4 / 60);
-            return ` · ~${mins}m left`;
-          })()}
-        </span>
-        <div className="w-16 h-1.5 bg-indigo-400/60 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-white transition-all duration-300"
-            style={{ width: `${ttsGenProgress.total > 0 ? (ttsGenProgress.current / ttsGenProgress.total) * 100 : 0}%` }}
-          />
-        </div>
-        <button
-          onClick={onStopSpeechGeneration}
-          className="ml-1 shrink-0 text-indigo-200 hover:text-white"
-          title="Stop generating"
-          aria-label="Stop generating sentence audio"
-        >
-          <X size={15} />
-        </button>
-      </div>
+      <NoticePill
+        tone="indigo"
+        spinner
+        progress={ttsGenProgress.total > 0 ? ttsGenProgress.current / ttsGenProgress.total : 0}
+        actions={[{ label: 'Stop generating sentence audio', title: 'Stop generating', dismiss: true, onClick: onStopSpeechGeneration }]}
+      >
+        {describeSpeechGeneration(ttsGenProgress)}
+      </NoticePill>
     )}
-    {undoMessage && (
-      <div role="status" className="pointer-events-auto max-w-[calc(100vw-2rem)] bg-slate-800 text-white rounded-full shadow-xl pl-4 pr-1.5 py-1.5 flex items-center gap-2 text-sm font-medium fade-in">
-        <span className="truncate">{undoMessage}</span>
-        <button onClick={onUndo} className="shrink-0 rounded-full px-3 py-1 font-semibold text-indigo-300 hover:bg-white/10">
-          Undo
-        </button>
-      </div>
-    )}
+
+    <RefusedReviewsNotice userId={userId} onView={onViewRefusedReviews} />
+    <AppUpdateToast />
   </div>
 );
