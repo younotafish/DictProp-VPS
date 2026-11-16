@@ -1,4 +1,5 @@
 import { isVocabItem, type StoredItem, type VocabCard } from '../types';
+import { runPool } from '../server/src/shared/pool';
 import { log, warn } from './logger';
 import { saveNewSenses, savedSenseKeys } from './senseSaving';
 
@@ -85,60 +86,53 @@ export async function runBatchImport(
   let failed = 0;
   let saved = 0;
   let added = 0;
-  let index = 0;
   const failedWords: string[] = [];
   const importedIds: string[] = [];
 
-  const processWords = async () => {
-    while (index < newWords.length && !signal?.aborted) {
-      const word = newWords[index++];
+  // The words in order, a few at a time, on the shared pool: once the signal aborts no word starts.
+  await runPool(newWords, BATCH_CONCURRENCY, async word => {
+    // Retry once on failure (with backoff for rate limiting)
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (attempt > 0) {
+          log(`Batch import: retrying "${word}" (attempt ${attempt + 1})`);
+          await sleep(RETRY_DELAY_MS);
+        }
 
-      // Retry once on failure (with backoff for rate limiting)
-      let lastError: unknown = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          if (attempt > 0) {
-            log(`Batch import: retrying "${word}" (attempt ${attempt + 1})`);
-            await sleep(RETRY_DELAY_MS);
-          }
+        const result = await analyze(word);
 
-          const result = await analyze(word);
-
-          // Advanced metadata and images are added by the Mac-local enrichment cycle.
-          const newSenses = saveNewSenses(result.vocabs || [], savedSenses, save);
-          for (const vocab of newSenses) {
-            saved++;
-            importedIds.push(vocab.id);
-          }
-          if (newSenses.length > 0) added++;
-          lastError = null;
-          break; // success — exit retry loop
-        } catch (err) {
-          lastError = err;
-          const msg = err instanceof Error ? err.message : '';
-          // Back off extra on rate limiting before retry
-          if (msg.includes('429') || msg.includes('QUOTA')) {
-            await sleep(RATE_LIMIT_DELAY_MS);
-          }
+        // Advanced metadata and images are added by the Mac-local enrichment cycle.
+        const newSenses = saveNewSenses(result.vocabs || [], savedSenses, save);
+        for (const vocab of newSenses) {
+          saved++;
+          importedIds.push(vocab.id);
+        }
+        if (newSenses.length > 0) added++;
+        lastError = null;
+        break; // success — exit retry loop
+      } catch (err) {
+        lastError = err;
+        const msg = err instanceof Error ? err.message : '';
+        // Back off extra on rate limiting before retry
+        if (msg.includes('429') || msg.includes('QUOTA')) {
+          await sleep(RATE_LIMIT_DELAY_MS);
         }
       }
-
-      if (lastError) {
-        warn(`Batch import failed for "${word}":`, lastError instanceof Error ? lastError.message : '');
-        failed++;
-        failedWords.push(word);
-      }
-
-      completed++;
-      report({ current: completed, total: newWords.length, skipped, failed, saved });
-
-      // Brief delay between requests to reduce rate limiting; a stopped import has no next request.
-      if (!signal?.aborted) await sleep(BETWEEN_WORDS_MS);
     }
-  };
 
-  // Launch concurrent workers
-  await Promise.all(Array.from({ length: Math.min(BATCH_CONCURRENCY, newWords.length) }, () => processWords()));
+    if (lastError) {
+      warn(`Batch import failed for "${word}":`, lastError instanceof Error ? lastError.message : '');
+      failed++;
+      failedWords.push(word);
+    }
+
+    completed++;
+    report({ current: completed, total: newWords.length, skipped, failed, saved });
+
+    // Brief delay between requests to reduce rate limiting; a stopped import has no next request.
+    if (!signal?.aborted) await sleep(BETWEEN_WORDS_MS);
+  }, signal);
 
   // A stop that came once every word had started changed nothing: the import is done.
   const kind = completed < newWords.length ? 'stopped' : 'done';
