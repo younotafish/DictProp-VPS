@@ -1,9 +1,9 @@
 import { useRef, type Dispatch, type MouseEvent as ReactMouseEvent, type RefObject, type SetStateAction, type TouchEvent as ReactTouchEvent, type UIEvent as ReactUIEvent } from 'react';
 import type { ItemGroup, SearchResult, StoredItem, VocabCard } from '../../types';
 import { useZoneFlash } from '../../components/EyesFreeZones';
-import { speakWord } from '../../services/neuralTts';
+import { getPlaybackState, pauseCurrent, resumeCurrent, speakWord, stopCurrent } from '../../services/neuralTts';
 import { log } from '../../services/logger';
-import { doubleTapControlSelector } from '../../services/reviewGestures';
+import { doubleTapControlSelector, zoneDoubleTapUndo, zoneTapEffect, type ZoneTapEffect } from '../../services/reviewGestures';
 import { zoneText } from './cardReading';
 import { touchFacts, wordTouchAction } from './touchGestures';
 
@@ -31,8 +31,8 @@ interface WordGesturesOptions {
 /**
  * The word card's taps and swipes: eyes-free zone taps read the card's parts (see wordTouchAction), a short pull
  * down shows the header, ↑/↓ swipes move between words and ←/→ between meanings, a swipe right past the first
- * meaning closes the view, and a double click off the controls marks the card remembered. Scrolling down hides the
- * header again.
+ * meaning closes the view, and a double click off the controls marks the card remembered; a double tap in the read
+ * bands leaves playback as it found it. Scrolling down hides the header again.
  */
 export function useWordGestures({
   scrollContainerRef, showHeader, setShowHeader, currentGroup, currentItem, hasNextGroup, hasPrevGroup, hasPrevItem,
@@ -57,6 +57,9 @@ export function useWordGestures({
   // Eyes-free zone tap-confirmation flash (see EyesFreeZones). The guides only render on touch devices, since
   // those zones only fire from taps (a mouse click does nothing there).
   const { zoneFlash, flashZone } = useZoneFlash();
+  // The last read-band tap that changed playback, while it may still be the first tap of a double tap: when and
+  // where it landed and what it did, so the second tap can undo it (zoneDoubleTapUndo).
+  const firstZoneTapRef = useRef<{ at: number; x: number; y: number; before: ZoneTapEffect } | null>(null);
 
   const onContentTouchStart = (e: ReactTouchEvent) => {
     const touch = e.touches[0];
@@ -77,8 +80,9 @@ export function useWordGestures({
       return;
     }
     
-    const diffX = e.changedTouches[0].clientX - touchStartX.current;
-    const diffY = e.changedTouches[0].clientY - touchStartY.current;
+    const touch = e.changedTouches[0];
+    const diffX = touch.clientX - touchStartX.current;
+    const diffY = touch.clientY - touchStartY.current;
     // Edges are measured on the card's scroller, the page the touch moved.
     const facts = touchFacts(diffX, diffY, scrollContainerRef.current);
     // Controls keep their own handlers, so taps on them aren't gestures.
@@ -87,17 +91,30 @@ export function useWordGestures({
 
     const action = wordTouchAction(facts, {
       onControl,
-      y: e.changedTouches[0].clientY,
+      y: touch.clientY,
       viewportHeight: window.innerHeight,
       hasNextGroup,
       hasPrevGroup,
       hasPrevItem,
     });
-    switch (action?.kind) {
+    if (action?.kind === 'read-zone') flashZone(action.zone);
+    // A double tap is Got it (its dblclick records the remember), so its second tap undoes what the first did to
+    // playback rather than toggling again: playback ends as the double tap found it, never paused mid-word or
+    // loading a clip that plays after Remembered!.
+    const firstZoneTap = firstZoneTapRef.current;
+    firstZoneTapRef.current = null;
+    const undo = facts.isStillTap && !onControl ? zoneDoubleTapUndo(firstZoneTap, e.timeStamp, touch.clientX, touch.clientY) : null;
+    if (undo === 'stop') stopCurrent();
+    else if (undo === 'resume') resumeCurrent();
+    else if (undo === 'pause') pauseCurrent();
+    else switch (action?.kind) {
       case 'read-zone': {
-        flashZone(action.zone);
         const text = zoneText(currentItem, action.zone);
-        if (text !== null) toggleSpeak(text);
+        if (text === null) break;
+        const before = getPlaybackState();
+        toggleSpeak(text);
+        const effect = zoneTapEffect(before, getPlaybackState());
+        if (effect) firstZoneTapRef.current = { at: e.timeStamp, x: touch.clientX, y: touch.clientY, before: effect };
         break;
       }
       case 'reveal-header':

@@ -4,7 +4,9 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { SRSData, StoredItem, VocabCard } from '../../types.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
-import { TAP_CONTROL_SELECTOR, acceptRemember, doubleTapControlSelector } from '../../services/reviewGestures.ts';
+import {
+  TAP_CONTROL_SELECTOR, acceptRemember, doubleTapControlSelector, zoneDoubleTapUndo, zoneTapEffect,
+} from '../../services/reviewGestures.ts';
 import { useRememberToast } from '../../views/detail/useRememberToast.ts';
 import { useSentenceActions } from '../../views/detail/useSentenceActions.ts';
 import { useWordActions } from '../../views/detail/useWordActions.ts';
@@ -104,4 +106,38 @@ test('a double tap never counts on a native control; on a word card the ARIA-but
 test('a word card\'s taps leave alone the controls they always did', () => {
   const before = 'button, a, [role="button"], input, textarea, select, label, [contenteditable="true"]';
   assert.deepEqual(parts(doubleTapControlSelector('card')), parts(before));
+});
+
+const SENTENCE = 'She finally came clean.';
+const OTHER = 'You should come clean before they find out.';
+const state = (status: 'idle' | 'loading' | 'playing' | 'paused', text: string | null = status === 'idle' ? null : SENTENCE) => ({ text, status });
+
+test('a read-band tap started, paused or resumed its sentence, read from the engine before and after it', () => {
+  assert.equal(zoneTapEffect(state('idle'), state('loading')), 'started');
+  assert.equal(zoneTapEffect(state('playing', OTHER), state('loading')), 'started', 'another sentence was playing');
+  assert.equal(zoneTapEffect(state('loading', OTHER), state('loading')), 'started', 'another sentence was loading');
+  assert.equal(zoneTapEffect(state('playing'), state('loading')), 'started', 'near its end, the sentence starts again');
+  assert.equal(zoneTapEffect(state('playing'), state('paused')), 'paused');
+  assert.equal(zoneTapEffect(state('paused'), state('playing')), 'resumed');
+  assert.equal(zoneTapEffect(state('loading'), state('loading')), null, 'a tap leaves a sentence that is still loading alone');
+  assert.equal(zoneTapEffect(state('playing'), state('playing')), null);
+  assert.equal(zoneTapEffect(state('idle'), state('idle')), null);
+  assert.equal(zoneTapEffect(state('paused', OTHER), state('playing')), null, 'not the same sentence');
+});
+
+test('the second tap of a double tap in the read bands undoes the first, so playback ends as it was', () => {
+  const first = (before: 'started' | 'paused' | 'resumed') => ({ at: 1_000, x: 120, y: 90, before });
+  assert.equal(zoneDoubleTapUndo(first('started'), 1_200, 125, 95), 'stop');
+  assert.equal(zoneDoubleTapUndo(first('paused'), 1_200, 125, 95), 'resume');
+  assert.equal(zoneDoubleTapUndo(first('resumed'), 1_200, 125, 95), 'pause');
+  assert.equal(zoneDoubleTapUndo(null, 1_200, 125, 95), null, 'no first tap changed playback');
+});
+
+test('a double tap is two taps within 450 ms and 40 px of each other', () => {
+  const first = { at: 1_000, x: 120, y: 90, before: 'started' as const };
+  assert.equal(zoneDoubleTapUndo(first, 1_450, 120, 90), 'stop');
+  assert.equal(zoneDoubleTapUndo(first, 1_451, 120, 90), null);
+  assert.equal(zoneDoubleTapUndo(first, 1_100, 160, 50), 'stop');
+  assert.equal(zoneDoubleTapUndo(first, 1_100, 161, 90), null);
+  assert.equal(zoneDoubleTapUndo(first, 1_100, 120, 49), null);
 });
