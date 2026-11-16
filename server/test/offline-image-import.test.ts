@@ -21,3 +21,15 @@ test('offline image bundle validates ownership binding and safe paths', () => {
   assert.match(validateOfflineImageBundle({ ...bundle, entries: [...bundle.entries, bundle.entries[0]] }) || '', /duplicates/);
   assert.match(validateOfflineImageBundle({ ...bundle, entries: [{ ...bundle.entries[0], promptHash: 'bad' }] }) || '', /promptHash/);
 });
+
+test('a bundle or entry that is not an object, a bad time or a bad hash each get their own refusal', () => {
+  const withEntry = (changes: object) => validateOfflineImageBundle({ ...bundle, entries: [{ ...bundle.entries[0], ...changes }] });
+  for (const value of [null, [bundle], 'bundle']) assert.equal(validateOfflineImageBundle(value), 'bundle must be an object');
+  for (const generatedAt of [0, -1, Number.NaN, Infinity, '1']) {
+    assert.equal(validateOfflineImageBundle({ ...bundle, generatedAt }), 'bundle generatedAt is invalid');
+  }
+  assert.equal(validateOfflineImageBundle({ ...bundle, entries: [[bundle.entries[0]]] }), 'entry 0 must be an object');
+  for (const parentHash of ['A'.repeat(64), 'a'.repeat(63), 64]) assert.equal(withEntry({ parentHash }), 'entry 0 parentHash is invalid');
+  assert.equal(withEntry({ promptHash: 'B'.repeat(64) }), 'entry 0 promptHash is invalid');
+  assert.equal(withEntry({ promptHash: undefined }), null);
+});

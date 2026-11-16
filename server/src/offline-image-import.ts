@@ -1,3 +1,5 @@
+import { isPositiveFinite, isRecord, isSha256, SAFE_IMAGE_PATH } from './validation-helpers.js';
+
 export interface OfflineImageEntry {
   parentId: string;
   imageId: string;
@@ -13,19 +15,10 @@ export interface OfflineImageBundle {
   entries: OfflineImageEntry[];
 }
 
-const SHA256 = /^[a-f0-9]{64}$/;
-const SAFE_IMAGE_PATH = /^images\/[A-Za-z0-9._-]+\.(?:avif|jpe?g|png|webp)$/i;
-
-function isRecord(value: unknown): value is Record<string, any> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
 export function validateOfflineImageBundle(value: unknown): string | null {
   if (!isRecord(value)) return 'bundle must be an object';
   if (value.version !== 1) return 'unsupported bundle version';
-  if (typeof value.generatedAt !== 'number' || !Number.isFinite(value.generatedAt) || value.generatedAt <= 0) {
-    return 'bundle generatedAt is invalid';
-  }
+  if (!isPositiveFinite(value.generatedAt)) return 'bundle generatedAt is invalid';
   if (typeof value.model !== 'string' || value.model.length === 0 || value.model.length > 200) {
     return 'bundle model is invalid';
   }
@@ -34,7 +27,7 @@ export function validateOfflineImageBundle(value: unknown): string | null {
   }
   const ids = new Set<string>();
   for (let index = 0; index < value.entries.length; index++) {
-    const entry = value.entries[index];
+    const entry: unknown = value.entries[index];
     if (!isRecord(entry)) return `entry ${index} must be an object`;
     if (typeof entry.parentId !== 'string' || entry.parentId.length === 0 || entry.parentId.length > 200) {
       return `entry ${index} parentId is invalid`;
@@ -44,15 +37,11 @@ export function validateOfflineImageBundle(value: unknown): string | null {
     }
     if (ids.has(entry.imageId)) return `entry ${index} duplicates image id ${entry.imageId}`;
     ids.add(entry.imageId);
-    if (typeof entry.parentHash !== 'string' || !SHA256.test(entry.parentHash)) {
-      return `entry ${index} parentHash is invalid`;
-    }
+    if (!isSha256(entry.parentHash)) return `entry ${index} parentHash is invalid`;
     if (typeof entry.imageFile !== 'string' || !SAFE_IMAGE_PATH.test(entry.imageFile)) {
       return `entry ${index} imageFile is invalid`;
     }
-    if (entry.promptHash !== undefined && (typeof entry.promptHash !== 'string' || !SHA256.test(entry.promptHash))) {
-      return `entry ${index} promptHash is invalid`;
-    }
+    if (entry.promptHash !== undefined && !isSha256(entry.promptHash)) return `entry ${index} promptHash is invalid`;
   }
   return null;
 }

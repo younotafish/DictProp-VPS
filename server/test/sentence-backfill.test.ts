@@ -41,3 +41,14 @@ test('sentence backfill bundle validates identities, hashes, analysis, and safe 
     entries: [{ ...bundle.entries[0], imageFile: undefined, replaceImage: true }],
   }) || '', /without imageFile/);
 });
+
+test('a bundle or entry that is not an object, a bad time or a bad hash each get their own refusal', () => {
+  const withEntry = (changes: object) => validateSentenceBackfillBundle({ ...bundle, entries: [{ ...bundle.entries[0], ...changes }] });
+  for (const value of [null, [bundle], 'bundle']) assert.equal(validateSentenceBackfillBundle(value), 'bundle must be an object');
+  for (const generatedAt of [0, -1, Number.NaN, Infinity, '1']) {
+    assert.equal(validateSentenceBackfillBundle({ ...bundle, generatedAt }), 'bundle generatedAt is invalid');
+    assert.equal(withEntry({ generatedAt }), 'entry 0 generatedAt is invalid');
+  }
+  assert.equal(validateSentenceBackfillBundle({ ...bundle, entries: [null] }), 'entry 0 must be an object');
+  for (const textHash of ['A'.repeat(64), 'a'.repeat(65), 64]) assert.equal(withEntry({ textHash }), 'entry 0 textHash is invalid');
+});
