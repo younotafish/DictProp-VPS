@@ -1,9 +1,11 @@
-import { useEffect, useRef, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { getItemImageUrl, type ItemGroup, type StoredItem } from '../../types';
 import {
   acquireKeepAlive, afterGap, getPlaybackState, pauseCurrent, releaseKeepAlive, resumeCurrent, setMediaMetadata,
-  setMediaSessionHandlers, speakNatural, type SpeakHandle,
+  setMediaSessionHandlers, speakNatural, subscribePlayback,
 } from '../../services/neuralTts';
+import { createAutoplayController, type AutoplayController } from '../../services/audio/autoplayController';
+import { useLatest } from '../../hooks/useStableValue';
 
 interface AutoPlayReaderOptions {
   /** Sentence auto-play is on (word cards: their examples; sentence review: the sentence). */
@@ -35,26 +37,64 @@ interface AutoPlayReaderOptions {
   onRoundListened?: () => void;
 }
 
+/** What the view does with sentence auto-play while it runs. */
+export interface AutoPlayReaderControls {
+  /** Auto-play is paused: it holds its place until resumed. */
+  paused: boolean;
+  /** Pause or resume, from any point: mid-read, while a sentence loads, or between reads. */
+  togglePause: () => void;
+  pause: () => void;
+  resume: () => void;
+  /** Read the current sentence again from its start, in the speech style just chosen. */
+  restartRead: () => void;
+}
+
 /**
- * Sentence auto-play's reading: it reads each card's sentences in turn, as many times as asked with the gap
- * between reads, then moves to the next card, until the last card or Stop. While it runs it holds the audio
- * session open and drives the lock screen, so the installed app keeps reading with the screen off; the lock
- * screen's pause holds the chain even between reads.
+ * Sentence auto-play's reading: it reads each card's sentences in turn, as many times as asked with the gap between
+ * reads, then moves to the next card, until the last card or Stop (services/audio/autoplayController.ts, one per run).
+ * While it runs it holds the audio session open and drives the lock screen, so the installed app keeps reading with
+ * the screen off; the lock screen's pause holds the reading even between reads.
  */
 export function useAutoPlayReader({
   active, stop, repeatsRef, gapRef, groups, currentGroupIndex, currentItemIndex, setCurrentGroupIndex,
   setCurrentItemIndex, currentGroupIndexRef, currentItem, sentenceReview, sentenceItemsRef, readCard, onRoundListened,
-}: AutoPlayReaderOptions) {
-  // Autoplay pause/resume across the inter-read GAP (not just mid-clip): the media-session /
-  // Bluetooth pause must stop autoplay even between reads. autoPlayPausedRef gates the gap
-  // scheduler; when paused mid-gap the pending continuation is stashed in resumeChainRef and
-  // replayed on resume; cancelGapRef holds the live gap canceller so pause can abort it.
-  const autoPlayPausedRef = useRef(false);
-  const resumeChainRef = useRef<(() => void) | null>(null);
-  const cancelGapRef = useRef<(() => void) | null>(null);
+}: AutoPlayReaderOptions): AutoPlayReaderControls {
+  const controllerRef = useRef<AutoplayController | null>(null);
+  const [paused, setPaused] = useState(false);
+  const stopRef = useLatest(stop);
+  const onRoundListenedRef = useLatest(onRoundListened);
+
+  // One controller per run of auto-play, which follows the engine's state (a pause it didn't ask for included).
+  useEffect(() => {
+    if (!active) return;
+    const controller = createAutoplayController({
+      mode: sentenceReview ? 'sentence-review' : 'word-cards',
+      // Deliberate action → allow the one-time model download.
+      speak: (text, { onEnd, onError }) => speakNatural(text, { allowDownload: true, onEnd, onError }),
+      pauseClip: pauseCurrent,
+      resumeClip: resumeCurrent,
+      playbackStatus: () => getPlaybackState().status,
+      afterGap,
+      // Read as the reading goes, so a change applies from the next read.
+      settings: () => ({ repeats: repeatsRef.current, gapMs: gapRef.current }),
+      finish: () => stopRef.current(),
+      roundListened: () => onRoundListenedRef.current?.(),
+    });
+    controllerRef.current = controller;
+    const unsubscribe = controller.subscribe(() => setPaused(controller.getState().phase === 'paused'));
+    const unsubscribeEngine = subscribePlayback(state => controller.engineState(state.status));
+    return () => {
+      unsubscribeEngine();
+      unsubscribe();
+      controller.stop();
+      controllerRef.current = null;
+      setPaused(false);
+    };
+  }, [active, sentenceReview, repeatsRef, gapRef, stopRef, onRoundListenedRef]);
 
   useEffect(() => {
-    if (!active || !groups) return;
+    const controller = controllerRef.current;
+    if (!active || !groups || !controller) return;
     const card = readCard();
 
     // Lock-screen "now playing" for this card/sentence (refreshed as autoplay advances).
@@ -68,7 +108,7 @@ export function useAutoPlayReader({
     const advanceCard = () => {
       const safeGroupIdx = Math.min(currentGroupIndex, groups.length - 1);
       const group = groups[safeGroupIdx];
-      if (!group) { stop(); return; }
+      if (!group) { stopRef.current(); return; }
       const safeItemIdx = Math.min(currentItemIndex, group.items.length - 1);
       const isLastItem = safeItemIdx >= group.items.length - 1;
       const isLastGroup = safeGroupIdx >= groups.length - 1;
@@ -78,75 +118,14 @@ export function useAutoPlayReader({
         setCurrentGroupIndex(p => p + 1);
         setCurrentItemIndex(0);
       } else {
-        stop(); // played the last card → stop
+        stopRef.current(); // played the last card → stop
       }
     };
 
     // In sentence mode, read this card's saved sentence; otherwise read ALL of the card's example
-    // sentences (both) in turn, then advance to the next card.
-    const sentences = card.texts;
-    let cancelGap: (() => void) | undefined; // background-safe inter-read gap (afterGap) — see neuralTts
-    let handle: SpeakHandle | undefined;
-    let idx = 0;
-    let rep = 0;
-    let successfulReads = 0;
-
-    // A fresh run (autoplay start or a next/prev navigation) always plays; only an explicit pause holds it.
-    autoPlayPausedRef.current = false;
-    resumeChainRef.current = null;
-    cancelGapRef.current = null;
-
-    // Schedule the next step after `ms`. When autoplay is paused (media-session / Bluetooth), the
-    // continuation is stashed in resumeChainRef instead of arming the timer, so resume picks up exactly
-    // where it left off; the live canceller is mirrored to cancelGapRef so onPause can abort a running
-    // gap even BETWEEN reads (not just mid-clip). See the media-session effect below.
-    const schedule = (ms: number, fn: () => void) => {
-      resumeChainRef.current = fn; // remembered in case we pause during this gap
-      if (autoPlayPausedRef.current) { cancelGapRef.current = null; return; }
-      const run = () => { cancelGapRef.current = null; resumeChainRef.current = null; fn(); };
-      cancelGap = afterGap(ms, run);
-      cancelGapRef.current = cancelGap;
-    };
-
-    // Deliberate action → allow the one-time model download. Each sentence is read `sentenceRepeats`
-    // times (total); the configurable gap sits between EVERY read — both repeats of the same sentence
-    // and distinct sentences. Advancing to the NEXT card in item mode uses a short beat instead. (In
-    // sentence mode each card is a single saved sentence, so the configurable gap applies across cards.)
-    const CARD_GAP = 600; // short beat between cards in item mode
-    const playNext = () => {
-      if (idx >= sentences.length) { schedule(CARD_GAP, advanceCard); return; }
-      const s = sentences[idx];
-      const afterEach = () => {
-        if (++rep < repeatsRef.current) { schedule(gapRef.current, playNext); return; } // read again
-        rep = 0;
-        successfulReads = 0;
-        idx++;
-        const more = idx < sentences.length;
-        const gap = (more || sentenceReview) ? gapRef.current : CARD_GAP;
-        schedule(gap, more ? playNext : advanceCard);
-      };
-      const afterSuccessfulRead = () => {
-        successfulReads++;
-        const completesSuccessfulRound = rep + 1 >= repeatsRef.current &&
-          successfulReads >= repeatsRef.current;
-        if (sentenceReview && completesSuccessfulRound) onRoundListened?.();
-        afterEach();
-      };
-      handle = speakNatural(s, { allowDownload: true, onEnd: afterSuccessfulRead, onError: afterEach });
-    };
-
-    if (!sentences.length) {
-      schedule(400, advanceCard); // card has no example → move on quickly
-    } else {
-      playNext();
-    }
-
-    return () => {
-      handle?.stop();
-      cancelGap?.();
-      cancelGapRef.current = null;
-      resumeChainRef.current = null;
-    };
+    // sentences (both) in turn, then advance to the next card. A new card always reads, though the last one was paused.
+    controller.startCard(card.texts, advanceCard);
+    return () => controller.cancelCard();
     // The chain reads the card's text, title and picture when it starts, and restarts only when auto-play is
     // switched, the view moves or the cards change; a review or a refreshed copy mid-read doesn't restart it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -154,7 +133,7 @@ export function useAutoPlayReader({
 
   // Background sentence autoplay — while it runs, hold the audio session open (silent keep-alive) and
   // expose lock-screen controls so the installed PWA keeps reading sentences with the screen off.
-  // next/prev just bump the index (the autoplay effect re-runs and continues); they don't stop autoplay.
+  // next/prev just bump the index (the reading starts again there, paused or not); they don't stop autoplay.
   useEffect(() => {
     if (!active) return;
     acquireKeepAlive();
@@ -164,26 +143,12 @@ export function useAutoPlayReader({
       const cur = currentGroupIndexRef.current;
       const nextIdx = Math.max(0, Math.min(cur + delta, len - 1));
       if (nextIdx === cur) return;
-      autoPlayPausedRef.current = false;   // a next/prev while paused resumes playback at the new sentence
-      resumeChainRef.current = null;
       setCurrentGroupIndex(nextIdx);
       setCurrentItemIndex(0);
     };
     setMediaSessionHandlers({
-      onPlay: () => {
-        autoPlayPausedRef.current = false;
-        if (getPlaybackState().status === 'paused') { resumeCurrent(); return; } // resume a mid-clip pause
-        const cont = resumeChainRef.current;                                     // resume a gap that was paused
-        resumeChainRef.current = null;
-        cont?.();
-      },
-      onPause: () => {
-        autoPlayPausedRef.current = true;
-        const st = getPlaybackState().status;
-        if (st === 'playing' || st === 'loading') { pauseCurrent(); return; }    // pause the current read
-        cancelGapRef.current?.();                                                // between reads → abort the pending gap
-        cancelGapRef.current = null;
-      },
+      onPlay: () => controllerRef.current?.resume(),
+      onPause: () => controllerRef.current?.pause(),
       onStop: () => stop(),
       onNext: () => step(1),
       onPrev: () => step(-1),
@@ -195,4 +160,10 @@ export function useAutoPlayReader({
     // The rest are refs, state setters and a flag fixed for the view's life, so this re-registers only when
     // auto-play is switched or the cards change.
   }, [active, groups, sentenceReview, sentenceItemsRef, currentGroupIndexRef, stop, setCurrentGroupIndex, setCurrentItemIndex]);
+
+  const togglePause = useCallback(() => controllerRef.current?.togglePause(), []);
+  const pause = useCallback(() => controllerRef.current?.pause(), []);
+  const resume = useCallback(() => controllerRef.current?.resume(), []);
+  const restartRead = useCallback(() => controllerRef.current?.restartRead(), []);
+  return { paused, togglePause, pause, resume, restartRead };
 }
