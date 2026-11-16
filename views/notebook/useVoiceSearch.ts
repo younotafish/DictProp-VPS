@@ -8,11 +8,24 @@ export type VoiceSearchState = 'idle' | 'starting' | 'recording' | 'transcribing
 // The formats to record in, best first. A browser that supports none of them records in its own default.
 const RECORDING_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
 
-// The microphone was refused, by the user or the site's settings ('PermissionDeniedError' is older browsers' name).
-const isPermissionError = (err: unknown): boolean => {
+const UNSUPPORTED_BROWSER = "Voice search isn't available in this browser.";
+
+/** The browser can record from a microphone: it has getUserMedia and MediaRecorder. */
+export const canRecordVoice = (): boolean =>
+  !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder === 'function';
+
+/** What to tell someone whose recording didn't start, from the error getUserMedia or the recorder threw. */
+export function voiceStartErrorMessage(err: unknown): string {
   const name = typeof err === 'object' && err !== null ? (err as { name?: unknown }).name : undefined;
-  return name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError';
-};
+  // Refused, by the user or the site's settings ('PermissionDeniedError' is older browsers' name).
+  if (name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError') {
+    return 'Microphone access denied. Please enable microphone permissions.';
+  }
+  // The browser can't record what the microphone gives it.
+  if (name === 'NotSupportedError') return UNSUPPORTED_BROWSER;
+  // No microphone, one another app holds, or one that failed to start: NotFoundError, NotReadableError, AbortError.
+  return "Couldn't start the microphone. Check that one is connected and not in use by another app.";
+}
 
 /**
  * The search bar's microphone: records until tapped again, transcribes the recording, and hands the text to
@@ -47,6 +60,11 @@ export function useVoiceSearch(
 
   const startRecording = useCallback(async () => {
     if (!isOnline) return;
+    // A browser that can't record isn't asked for a microphone it couldn't use.
+    if (!canRecordVoice()) {
+      reportError(UNSUPPORTED_BROWSER);
+      return;
+    }
     setState('starting');
 
     let stream: MediaStream | null = null;
@@ -113,9 +131,7 @@ export function useVoiceSearch(
       mediaStreamRef.current = null;
       mediaRecorderRef.current = null;
       setState('idle');
-      reportError(isPermissionError(err)
-        ? 'Microphone access denied. Please enable microphone permissions.'
-        : "Voice search isn't available in this browser.");
+      reportError(voiceStartErrorMessage(err));
     }
   }, [isOnline, onTranscript, reportError]);
 
