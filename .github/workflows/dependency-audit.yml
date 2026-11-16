@@ -1,0 +1,33 @@
+name: Dependency Audit
+
+# Once a week, checks the server's production dependencies, the packages the release image installs, against npm's
+# advisories, and fails, which emails the owner, while one rated high or critical is open. It stays out of check.yml,
+# whose recipe must equal deploy.yml's verify job: there it would stop every deploy while the registry is down or an
+# advisory is newer than anyone's look at it.
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            server/package.json
+            server/package-lock.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Audit the server's production dependencies
+        working-directory: server
+        run: npm audit --omit=dev --audit-level=high
