@@ -179,6 +179,28 @@ test('a new sentence list keeps the answer on screen while one fuzzy scan refres
   await search.unmount();
 });
 
+test('the answer on screen follows a new sentence list at once: a sentence it left out goes, and the rest show as they are now', async (t) => {
+  const search = await mountSearch(t, { items: APPLES, query: 'appke' });
+  await search.wait(FUZZY_DELAY_MS);
+  const answered = search.latest().results;
+  assert.deepEqual(ids(answered), ['a', 'b', 'c']);
+
+  // 'a' is deleted (or archived on another device) and 'b' reviewed: the list shows both before any scan runs again,
+  // in the answer's order.
+  const reviewed: StoredItem = { ...APPLES[1], srs: { ...APPLES[1].srs, totalReviews: 1 } };
+  await search.render({ items: [reviewed, APPLES[2]] });
+  assert.equal(scans, 1, 'no scan over the new list yet');
+  const following = answered.filter(item => item.data.id !== 'a').map(item => (item.data.id === 'b' ? reviewed : item));
+  assert.deepEqual(search.latest(), { results: following, pending: false });
+  assert.ok(search.latest().results.includes(reviewed), 'the reviewed sentence as it is now');
+
+  await search.wait(FUZZY_DELAY_MS);
+  assert.equal(scans, 2);
+  assert.deepEqual(ids(search.latest().results), ['b', 'c']);
+  assert.ok(search.latest().results.includes(reviewed));
+  await search.unmount();
+});
+
 test('the search covers only the sentences it is given, so a list that leaves some out gets its typo-tolerant matches', async (t) => {
   // The Sentences tab leaves archived sentences out. Searching them too, an archived sentence in British spelling
   // matches 'colour' literally, so the fuzzy tier never runs, and the tab, leaving it out, would say "No sentences

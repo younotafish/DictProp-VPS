@@ -25,6 +25,10 @@ export interface FuzzyAnswer {
 
 const NO_RESULTS: StoredItem[] = [];
 
+/** Whether `fuzzy` is the answer to this very query and limit, the only answer that may show for them. */
+const answers = (fuzzy: FuzzyAnswer | null, query: string, limit: number | undefined): fuzzy is FuzzyAnswer =>
+  fuzzy !== null && fuzzy.query === query && fuzzy.limit === limit;
+
 /**
  * What the search shows: the literal tiers' matches when there are any (a blank query has none), else the fuzzy tier's
  * answer when it answered this very query and limit, else nothing yet, pending. An answer to another query never
@@ -38,12 +42,22 @@ export function sentenceSearchResults({ literal, fuzzy, query, limit }: {
   limit?: number;
 }): SentenceSearch {
   if (literal) return { results: literal, pending: false };
-  if (fuzzy && fuzzy.query === query && fuzzy.limit === limit) return { results: fuzzy.results, pending: false };
+  if (answers(fuzzy, query, limit)) return { results: fuzzy.results, pending: false };
   return { results: NO_RESULTS, pending: true };
 }
 
 const sameItems = (a: readonly StoredItem[], b: readonly StoredItem[]): boolean =>
   a.length === b.length && a.every((item, i) => item === b[i]);
+
+/**
+ * `answer` over the sentences in `items`: each of its sentences as `items` has it now, found by id, and none that
+ * `items` no longer holds. The same answer when nothing changed.
+ */
+function answerOver(answer: FuzzyAnswer, items: readonly StoredItem[]): FuzzyAnswer {
+  const byId = new Map(items.map(item => [item.data.id, item] as const));
+  const results = answer.results.flatMap(item => byId.get(item.data.id) ?? []);
+  return sameItems(results, answer.results) ? answer : { ...answer, results };
+}
 
 /**
  * Searches the saved sentences in `items` for `query` as it is typed, with services/sentenceSearch's tiers, capped at
@@ -74,5 +88,15 @@ export function useSentenceSearch(items: readonly StoredItem[], query: string, l
     return () => clearTimeout(timer);
   }, [literalMissed, index, query, limit]);
 
-  return useMemo(() => sentenceSearchResults({ literal, fuzzy, query, limit }), [literal, fuzzy, query, limit]);
+  // The answer on screen was found over the list as it was then. Until the scan over a new list answers, it shows its
+  // sentences as the new list has them and drops those the new list left out, so a sentence deleted or archived leaves
+  // the results at once. Only an answer on screen is mapped: with none, a library change costs nothing here.
+  const shownFuzzy = useMemo(
+    () => (literalMissed && answers(fuzzy, query, limit) ? answerOver(fuzzy, items) : fuzzy),
+    [literalMissed, fuzzy, query, limit, items],
+  );
+  return useMemo(
+    () => sentenceSearchResults({ literal, fuzzy: shownFuzzy, query, limit }),
+    [literal, shownFuzzy, query, limit],
+  );
 }
