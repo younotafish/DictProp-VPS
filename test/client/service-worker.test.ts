@@ -248,6 +248,11 @@ test('before its shell is cached, a launch goes to the network, and offline to a
 test('the other sites on this origin, the API, other methods and other origins go to the network untouched', async () => {
   const { sw } = await device([ONE]);
   const untouched: [string, { mode?: string; method?: string }][] = [
+    // The trip sites sit behind their own sign-in: the app's shell must not stand in for their pages, and nothing
+    // of theirs may land in Cache Storage.
+    ['/nz-japan/', { mode: 'navigate' }],
+    ['/nz-japan/itinerary.html', { mode: 'navigate' }],
+    ['/nz-japan/photo.jpg', {}],
     ['/nz-japan-2026/', { mode: 'navigate' }],
     ['/nz-japan-2026/itinerary.html', { mode: 'navigate' }],
     ['/nz-japan-2026/photo.jpg', {}],
