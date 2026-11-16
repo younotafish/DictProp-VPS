@@ -21,13 +21,8 @@ export interface ZoneFlash {
   n: number;    // increment on every tap so the animation re-fires
 }
 
-/**
- * The band a tap lands in, from its distance below the top of the reference box (the screen, or the element
- * the guide fills) and that box's height: 0 for the top quarter, 1 for the second quarter, -1 for the inert
- * bottom half. The guide below draws exactly these bands.
- */
-export const eyesFreeZoneAt = (offsetY: number, height: number): 0 | 1 | -1 =>
-  offsetY < height / 4 ? 0 : offsetY < height / 2 ? 1 : -1;
+// The band a tap lands in (0, 1, or -1 for the inert bottom half); the guide below draws exactly these bands.
+export { eyesFreeZoneAt } from './eyesFreeBands';
 
 const FLASH_MS = 500;
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { eyesFreeZoneAt } from '../../components/EyesFreeZones.tsx';
+import { eyesFreeZoneAt } from '../../components/eyesFreeBands.ts';
+import { eyesFreeZoneAt as guideZoneAt } from '../../components/EyesFreeZones.tsx';
 
 test('the top quarter reads the first sentence, the second quarter the second, and the bottom half nothing', () => {
   assert.equal(eyesFreeZoneAt(0, 800), 0);
@@ -21,4 +22,8 @@ test('the split agrees with each handler\'s own arithmetic, quarters and halves 
       assert.equal(eyesFreeZoneAt(y, height), multiplied);
     }
   }
+});
+
+test('the guide component hands out the same split it draws, from the pure module', () => {
+  assert.equal(guideZoneAt, eyesFreeZoneAt);
 });
