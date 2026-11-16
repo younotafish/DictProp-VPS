@@ -77,11 +77,14 @@ test('each change that shipped with this release has its row', () => {
   // The sentence's two pages, and the list's rows (secondary-views-09).
   assert.ok(hasRow(at('sentences'), ['←', '→'], 'Sentence / analysis page'));
   assert.ok(hasRow(at('sentences'), ['Space', 'Enter'], 'In the list: open the focused sentence'));
-  // The study session: the answer box (UX-19), the summary (UX-20), and the keys of services/studyKeys.
+  // The study session: the answer box (UX-19), the summary (UX-20), the spoken word and example (UX-30), and the keys
+  // of services/studyKeys.
   for (const [keys, label] of [
     [['Space', 'Enter'], 'Show the answer'],
     [['1–4'], 'Grade: Again, Hard, Good, Easy'],
     [['U'], 'Undo the last rating'],
+    [['P'], 'Pronounce the word'],
+    [['E'], 'Play or pause the example'],
     [['Space'], 'In an empty answer box: show the answer'],
     [['⌘', 'Z'], 'In an empty answer box: undo the last rating'],
     [['Enter'], 'Start, or Done on the summary'],
