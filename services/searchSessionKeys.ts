@@ -1,7 +1,8 @@
 /**
  * Where the search keeps requests for later in sessionStorage, which lasts as long as the tab, through a reload and the
- * OAuth redirect (services/searchRecovery.ts reads and writes them). Signing out forgets them from services/auth.ts,
- * which puts this module in the app's first chunk, so it holds no more than the two keys and the call that clears them.
+ * OAuth redirect (services/searchRecovery.ts reads and writes them). Signing out forgets them, and so does an
+ * unexpected error in the search (services/auth.ts and App's error boundary around the search). Both are in the app's
+ * first chunk, so this module holds no more than the two keys and the call that clears them.
  */
 
 /** The requests still running, or whose results hadn't been seen, when the page went. */

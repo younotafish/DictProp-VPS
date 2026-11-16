@@ -11,6 +11,7 @@ import { AppStatusPills } from './components/AppStatus';
 import { sheetSlotRef } from './components/noticeSlots';
 import { connectivityNotice } from './services/connectivityNotice';
 import { requestLookup } from './services/searchRequests';
+import { clearPendingSearches } from './services/searchSessionKeys';
 import type { JobNotice } from './services/jobNotices';
 import { useFrozenWhile } from './hooks/useStableValue';
 import { warn } from './services/logger';
@@ -417,7 +418,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
       </main>
 
       <Suspense fallback={null}>
-      <ErrorBoundary variant="overlay" fallbackMessage="The search hit an unexpected error. Your data is safe, and closing this starts the search afresh.">
+      <ErrorBoundary variant="overlay" fallbackMessage="The search hit an unexpected error. Your data is safe, and closing this starts the search afresh." onError={clearPendingSearches}>
       <GlobalSearch
         onSave={handleSave}
         isVocabSaved={isVocabSaved}

@@ -5,6 +5,11 @@ import { Modal } from './Modal';
 interface ErrorBoundaryProps {
   children: React.ReactNode;
   onReset?: () => void;
+  /** Called as soon as the boundary catches an error it shows a fallback for, before Close, Try Again or Reload App:
+   *  the place to drop what the failed part kept for later, so whatever follows, a remount or a reload, starts afresh.
+   *  A popup whose code couldn't be fetched shows none: it closes at once (see variant), and the reload the update
+   *  notice offers brings it back as it was. */
+  onError?: () => void;
   fallbackMessage?: string;
   /** "fullscreen" (default) shows a fixed overlay; "screen" fills a tab, leaving the navigation usable; "inline" shows a card-sized fallback;
    *  "overlay" shows a dialog over the app for a popup that failed, whose Close calls onReset and tries again.
@@ -39,6 +44,7 @@ export class ErrorBoundary extends React.Component<
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('[ErrorBoundary] Caught render error:', error, info.componentStack);
     if (this.props.variant === 'overlay' && isChunkLoadError(error)) this.props.onReset?.();
+    else this.props.onError?.();
     // The full-screen fallback covers whatever had focus, so it takes focus itself.
     if ((this.props.variant ?? 'fullscreen') === 'fullscreen') this.recoverButton.current?.focus({ preventScroll: true });
   }
