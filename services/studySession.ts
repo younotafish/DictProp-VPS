@@ -388,16 +388,19 @@ export function findSessionCard(
  * reviewed elsewhere (by Got it in the review popup or the card view, or on another device). A card the session graded
  * goes by its review count, which no clock can skew: a count above the one its latest standing grade left
  * (StandingGrade.totalReviews) means a review came after that grade, as a Got it on a card brought back to the end of
- * the session does. A card the session hasn't graded goes by time: a review after the session began passes it over.
+ * the session does. A lower count is the grade's own review not applied yet, unless the card's review clock has moved
+ * past the grade: then a reset came after it (a reset zeroes the count and stamps the clock), with or without reviews
+ * since. A card the session hasn't graded goes by time: a review after the session began passes it over.
  */
 export function isSessionCardLive(item: StoredItem | undefined, session: Pick<StudySession, 'startedAt' | 'grades'>): boolean {
   if (!item) return false;
   // The latest grade, not the highest count: a reset elsewhere between two grades leaves the later one the lower count.
   let latest: StandingGrade | undefined;
   for (const grade of session.grades) if (grade.itemId === item.data.id) latest = grade;
-  return latest
-    ? (item.srs?.totalReviews ?? 0) <= latest.totalReviews
-    : (item.srs?.lastReviewDate ?? 0) <= session.startedAt;
+  if (!latest) return (item.srs?.lastReviewDate ?? 0) <= session.startedAt;
+  const count = item.srs?.totalReviews ?? 0;
+  if (count > latest.totalReviews) return false;
+  return count === latest.totalReviews || (item.srs?.lastReviewDate ?? 0) <= latest.at;
 }
 
 /**

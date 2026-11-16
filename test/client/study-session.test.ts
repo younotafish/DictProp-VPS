@@ -283,6 +283,11 @@ test('a card reviewed elsewhere since the session began is passed over; the sess
   // A graded card goes by its review count, whatever time its reviews were stamped with.
   assert.equal(isSessionCardLive(vocab('graded', 'a', { reviews: 1, lastReviewed: 9_000 }), current), true, 'its own review, stamped late');
   assert.equal(isSessionCardLive(vocab('graded', 'a', { reviews: 2, lastReviewed: 1_200 }), current), false, 'a later review, stamped early');
+  // A reset elsewhere after the grade zeroes the count: the card is passed over, with or without a Got it since.
+  const gradedSix = session({ startedAt: 1_000, grades: [{ itemId: 'graded', rating: 'again', at: 1_500, totalReviews: 6 }] });
+  assert.equal(isSessionCardLive(vocab('graded', 'a', { reviews: 0, lastReviewed: 1_600 }), gradedSix), false, 'reset after its grade');
+  assert.equal(isSessionCardLive(vocab('graded', 'a', { reviews: 1, lastReviewed: 1_700 }), gradedSix), false, 'reset, then Got it');
+  assert.equal(isSessionCardLive(vocab('graded', 'a', { reviews: 5, lastReviewed: 1_400 }), gradedSix), true, 'its own review not applied yet');
   // The latest of a card's grades counts: one given after a reset elsewhere left a lower count than the grade before.
   const twice = session({
     startedAt: 1_000,
