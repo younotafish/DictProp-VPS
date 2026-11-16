@@ -7,8 +7,7 @@ import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { enqueuePendingReviewMutation, readPendingReviewMutations, removePendingReviewMutation, type PendingReviewMutation } from '../services/reviewQueue';
 import { describeRefusedReview, isRefusedReviewMutation, recordRefusedReview } from '../services/refusedReviews';
 import { drainReviewOutbox, reviewSeed } from '../services/reviewOutbox';
-import { isRealLifeProgressItem } from '../services/realLifeProgressIdentity';
-import { isEssayProgressItem } from '../services/essayProgressIdentity';
+import { isCatalogProgressItem } from '../services/catalogProgressIdentity';
 import { log, logError, warn } from '../services/logger';
 import { useReviewHistory } from './useReviewHistory';
 import type { Library } from './useLibrary';
@@ -121,8 +120,7 @@ export function useReviewOutbox(
 
     const savedItem = latestItemsRef.current.find(i => i.data.id === itemId);
     const requestedSeed = context?.seedItem;
-    const catalogSeed = !savedItem && requestedSeed?.data.id === itemId &&
-      (isRealLifeProgressItem(requestedSeed) || isEssayProgressItem(requestedSeed))
+    const catalogSeed = !savedItem && requestedSeed?.data.id === itemId && isCatalogProgressItem(requestedSeed)
       ? requestedSeed
       : undefined;
     const targetItem = savedItem ?? catalogSeed;
