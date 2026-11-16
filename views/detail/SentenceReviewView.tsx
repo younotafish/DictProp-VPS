@@ -8,6 +8,7 @@ import { useEscapeLayer } from '../../components/escapeStack';
 import { isDialogOpenOutside } from '../../components/keyboardTarget';
 import { useOverlay } from '../../components/overlayStack';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
+import { analysisPlaceholderState } from '../../services/sentenceAnalysisState';
 import { useKeyboardNavigation } from '../../hooks/useKeyboardNavigation';
 import { useWarmImages } from '../../hooks/useWarmImages';
 import { useLatest } from '../../hooks/useStableValue';
@@ -105,7 +106,7 @@ export function SentenceReviewView({
   // even when the local index is briefly stale relative to the latest sentenceItems.
   const sentenceIndex = Math.min(currentGroupIndex, sentenceItems.length - 1);
   const currentSentenceSnapshot = sentenceItems[sentenceIndex] ?? null;
-  const { preparedSentenceById, preparingSentenceId, sentencePreloadWindow } = useSentenceEnrichment({
+  const { preparedSentenceById, preparingSentenceId, failedSentenceIds, sentencePreloadWindow } = useSentenceEnrichment({
     sentenceItems, sentenceIndex, savedSentenceItemsRef, onSaveRef,
   });
   const {
@@ -118,6 +119,13 @@ export function SentenceReviewView({
     sentencePreviewOnly,
   );
   const currentSentenceText = currentSentence ? (currentSentence.data as SentenceData).text : '';
+  // The enrichment is fetched for the list's copy of the sentence, so its loading and failure go by that id.
+  const analysisLoading = !!currentSentenceSnapshot && preparingSentenceId === currentSentenceSnapshot.data.id;
+  const analysisState = analysisPlaceholderState({
+    hasAnalysis: !!(currentSentence?.data as SentenceData | undefined)?.analysis,
+    loading: analysisLoading,
+    failed: !!currentSentenceSnapshot && failedSentenceIds.has(currentSentenceSnapshot.data.id),
+  });
 
   // User-attached image for the sentence under review. Base64 → render directly; a marker
   // ('idb:stored'/'server:has_image') → OfflineImage lazy-loads it by id (IDB, then server).
@@ -383,7 +391,7 @@ export function SentenceReviewView({
               exitLabel={sentenceExitLabel}
               onExit={requestSentenceExit}
               onOpenAnalysis={() => setSentencePage('analysis')}
-              loadingLesson={preparingSentenceId === currentSentenceSnapshot?.data.id}
+              loadingLesson={analysisLoading}
               position={sentenceIndex + 1}
               total={sentenceItems.length}
               dueCount={readOnlySentencePreview ? 0 : sentenceDueCount}
@@ -447,6 +455,7 @@ export function SentenceReviewView({
           position={sentenceIndex + 1}
           total={sentenceItems.length}
           visible={sentencePage === 'analysis'}
+          analysisState={analysisState}
           onBack={() => setSentencePage('sentence')}
           onSearch={onSearch}
           onRemember={isSentencePreview && !catalogSentencePreview ? undefined : handleRemember}

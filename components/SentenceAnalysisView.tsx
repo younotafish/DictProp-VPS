@@ -1,6 +1,7 @@
 import React from 'react';
-import { ArrowLeft, AudioLines, BadgeCheck, BookOpenText, Braces, Check, ChevronDown, Globe2, History, Languages, Search, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { ArrowLeft, AudioLines, BadgeCheck, BookOpenText, Braces, Check, ChevronDown, Globe2, History, Languages, Loader2, Search, TriangleAlert, type LucideIcon } from 'lucide-react';
 import type { SentenceAnalysisTerm, SentenceData } from '../types';
+import type { AnalysisPlaceholderState } from '../services/sentenceAnalysisState';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { sentencePronunciation } from '../services/sentencePronunciation';
 
@@ -10,6 +11,8 @@ interface SentenceAnalysisViewProps {
   total: number;
   /** Keep the panel mounted while hidden so its scroll position survives page swipes. */
   visible: boolean;
+  /** Without an analysis, why (analysisPlaceholderState): loading, a fetch that failed, or none in the pool yet. */
+  analysisState: AnalysisPlaceholderState;
   onBack: () => void;
   onSearch: (term: string) => void;
   /** Got it for the sentence, in the header's right slot; a read-only preview leaves it out and keeps the slot empty. */
@@ -44,6 +47,24 @@ function PronunciationRow({ label, valueClassName, gap = 'gap-1', children }: {
     <div className={`grid ${gap} py-3 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-4`}>
       <dt className="text-sm font-semibold text-slate-500">{label}</dt>
       <dd className={valueClassName}>{children}</dd>
+    </div>
+  );
+}
+
+const PLACEHOLDER_TEXT: Record<Exclude<AnalysisPlaceholderState, 'ready'>, string> = {
+  loading: 'Loading analysis…',
+  failed: 'Couldn’t load the analysis. It will retry automatically.',
+  missing: 'Not analyzed yet',
+};
+
+/** Where the analysis goes while there's none to show: a spinner while it loads, or why it isn't there. */
+function AnalysisPlaceholder({ state }: { state: AnalysisPlaceholderState }) {
+  const shown = state === 'ready' ? 'missing' : state;
+  const Icon = shown === 'loading' ? Loader2 : shown === 'failed' ? TriangleAlert : BookOpenText;
+  return (
+    <div role="status" className="mt-10 border-y border-slate-200 py-10 text-center">
+      <Icon className={`mx-auto mb-3 text-slate-300${shown === 'loading' ? ' animate-spin' : ''}`} size={28} />
+      <p className="text-sm font-semibold text-slate-500">{PLACEHOLDER_TEXT[shown]}</p>
     </div>
   );
 }
@@ -126,6 +147,7 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
   position,
   total,
   visible,
+  analysisState,
   onBack,
   onSearch,
   onRemember,
@@ -231,10 +253,7 @@ export const SentenceAnalysisView: React.FC<SentenceAnalysisViewProps> = ({
             )}
 
             {!analysis ? (
-              <div className="mt-10 border-y border-slate-200 py-10 text-center">
-                <BookOpenText className="mx-auto mb-3 text-slate-300" size={28} />
-                <p className="text-sm font-semibold text-slate-500">Analysis pending</p>
-              </div>
+              <AnalysisPlaceholder state={analysisState} />
             ) : (
               <>
                 <section className="mt-7 border-t border-slate-200 pt-6">

@@ -6,7 +6,7 @@ interface SentenceHeaderRowProps {
   exitLabel: string;
   onExit: () => void;
   onOpenAnalysis: () => void;
-  /** The sentence's lesson (analysis and picture) is still loading. */
+  /** The sentence's analysis is still loading: the analysis button shows a spinner in its place. */
   loadingLesson: boolean;
   position: number;
   total: number;
@@ -31,20 +31,16 @@ export function SentenceHeaderRow({ autoPlaying, exitLabel, onExit, onOpenAnalys
         {autoPlaying ? 'Auto-play' : exitLabel}
       </button>
       <div className="flex items-center gap-2">
+        {/* While the analysis loads, a spinner takes the book's place in the same box, so nothing in the row moves. */}
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onOpenAnalysis(); }}
           className="-my-1 flex h-9 w-9 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-emerald-50 hover:text-emerald-700"
-          title="Sentence analysis"
-          aria-label="Open sentence analysis"
+          title={loadingLesson ? 'Loading analysis…' : 'Sentence analysis'}
+          aria-label={loadingLesson ? 'Loading analysis…' : 'Open sentence analysis'}
         >
-          <BookOpenText size={15} />
+          {loadingLesson ? <Loader2 size={15} className="animate-spin text-indigo-500" /> : <BookOpenText size={15} />}
         </button>
-        {loadingLesson && (
-          <span className="flex items-center gap-1 text-[10px] font-semibold text-indigo-500">
-            <Loader2 size={12} className="animate-spin" /> Loading lesson
-          </span>
-        )}
         <span className="flex items-center gap-1 text-[11px] font-semibold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full">
           <MessageSquareQuote size={12} /> {position} / {total}
         </span>

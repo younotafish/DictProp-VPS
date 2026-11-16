@@ -13,14 +13,33 @@ interface SentenceEnrichmentOptions {
   onSaveRef: RefObject<(item: StoredItem) => void>;
 }
 
+/** How long after a failed fetch the lessons are asked for again; coming back online asks at once. */
+const RETRY_AFTER_MS = 15_000;
+
+const withoutId = (ids: ReadonlySet<string>, id: string): ReadonlySet<string> => {
+  if (!ids.has(id)) return ids;
+  const next = new Set(ids);
+  next.delete(id);
+  return next;
+};
+
 /**
  * Sentence review's lessons: the analysis and picture the shared enrichment pool holds for the sentence under
  * review and the five after it, fetched ahead so each opens ready. Prepared lessons show at once; a saved sentence
- * also keeps the richer analysis and the picture link, so other devices get them.
+ * also keeps the richer analysis and the picture link, so other devices get them. preparingSentenceId is the sentence
+ * on screen while its analysis loads, and failedSentenceIds the sentences whose last fetch threw: those are asked for
+ * again 15 s later, when the device comes back online, or when the review moves.
  */
 export function useSentenceEnrichment({ sentenceItems, sentenceIndex, savedSentenceItemsRef, onSaveRef }: SentenceEnrichmentOptions) {
   const [preparedSentenceById, setPreparedSentenceById] = useState<Record<string, StoredItem>>({});
   const [preparingSentenceId, setPreparingSentenceId] = useState<string | null>(null);
+  const [failedSentenceIds, setFailedSentenceIds] = useState<ReadonlySet<string>>(() => new Set());
+  // Bumped by the retry timer, which runs the preparation again for the sentences in view.
+  const [retryRound, setRetryRound] = useState(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+  }, []);
   const preparationRequestsRef = useRef(new Set<string>());
   const checkedSentenceEnrichmentsRef = useRef(new Set<string>());
 
@@ -39,11 +58,13 @@ export function useSentenceEnrichment({ sentenceItems, sentenceIndex, savedSente
     const sourceSentence = snapshot.data as SentenceData;
     const requestKey = `${id}:${normalizeSentenceIdentity(sourceSentence.text)}`;
     if ((hasDetailedSentenceAnalysis(sourceSentence.analysis) && sourceSentence.imageUrl) ||
-        checkedSentenceEnrichmentsRef.current.has(requestKey) ||
-        preparationRequestsRef.current.has(requestKey)) return;
+        checkedSentenceEnrichmentsRef.current.has(requestKey)) return;
+    // The sentence on screen shows its analysis loading, also when a fetch ahead of it already asked for it.
+    if (showLoading && !hasDetailedSentenceAnalysis(sourceSentence.analysis)) setPreparingSentenceId(id);
+    if (preparationRequestsRef.current.has(requestKey)) return;
 
     preparationRequestsRef.current.add(requestKey);
-    if (showLoading && !hasDetailedSentenceAnalysis(sourceSentence.analysis)) setPreparingSentenceId(id);
+    setFailedSentenceIds(current => withoutId(current, id));
     try {
       const { default: loadPreparedSentenceEnrichment } = await import('../../services/sentenceEnrichment');
       const result = await loadPreparedSentenceEnrichment(sourceSentence.text);
@@ -97,11 +118,20 @@ export function useSentenceEnrichment({ sentenceItems, sentenceIndex, savedSente
         },
       });
     } catch (error) {
-      // Network failures are deliberately not marked checked: moving forward or reconnecting retries.
+      // A fetch that threw (the network or the server) is not marked checked, so it's asked for again: after a while,
+      // on reconnecting, or when the review moves. A reply that found nothing was marked checked above: not a failure.
       warn('Failed to preload sentence enrichment', error);
+      setFailedSentenceIds(current => current.has(id) ? current : new Set(current).add(id));
+      if (!retryTimerRef.current) {
+        retryTimerRef.current = setTimeout(() => {
+          retryTimerRef.current = null;
+          setRetryRound(round => round + 1);
+        }, RETRY_AFTER_MS);
+      }
     } finally {
       preparationRequestsRef.current.delete(requestKey);
-      if (showLoading) setPreparingSentenceId(current => current === id ? null : current);
+      // Whichever call showed the loading, it ends with the fetch.
+      setPreparingSentenceId(current => current === id ? null : current);
     }
   }, [savedSentenceItemsRef, onSaveRef]);
 
@@ -114,7 +144,7 @@ export function useSentenceEnrichment({ sentenceItems, sentenceIndex, savedSente
     prepare();
     window.addEventListener('online', prepare);
     return () => window.removeEventListener('online', prepare);
-  }, [sentencePreloadWindow, prepareSentenceEnrichment]);
+  }, [sentencePreloadWindow, prepareSentenceEnrichment, retryRound]);
 
-  return { preparedSentenceById, preparingSentenceId, sentencePreloadWindow };
+  return { preparedSentenceById, preparingSentenceId, failedSentenceIds, sentencePreloadWindow };
 }
