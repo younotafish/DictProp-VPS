@@ -52,6 +52,9 @@ save('ap-inline', 'vocab', { word: 'inline', note: 'data:image/png;base64,AAAA' 
 save('ap-deleted', 'vocab', { word: 'murky' });
 addItemImage(owner.id, 'ap-deleted');
 softDeleteItem('ap-deleted', owner.id);
+// A deleted phrase keeps its data, marker and all, and a device can push it again.
+save('ap-deleted-phrase', 'phrase', { query: 'turbid water', vocabs: [], advancedEnrichment: unknownMarker });
+softDeleteItem('ap-deleted-phrase', owner.id);
 addItemImage(owner.id, 'ap-orphan-image');
 db.prepare(`INSERT INTO item_images (id, user_id, data, updated_at, mime_type, content_hash)
   VALUES ('ap-broken-image', ?, x'', 1, 'image/png', ?)`).run(owner.id, sha256('no such blob'));
@@ -81,12 +84,12 @@ test('the production audit reports storage, sentences, example enrichments, imag
   const report = lastJsonLine(run.stdout);
 
   assert.deepEqual(report.itemCounts, {
-    totalRows: 10,
+    totalRows: 11,
     live: 9,
-    deleted: 1,
+    deleted: 2,
     byType: {
       vocab: { live: 3, archived: 0, deleted: 1 },
-      phrase: { live: 2, archived: 0, deleted: 0 },
+      phrase: { live: 2, archived: 0, deleted: 1 },
       sentence: { live: 4, archived: 0, deleted: 0 },
     },
   });
@@ -96,8 +99,8 @@ test('the production audit reports storage, sentences, example enrichments, imag
       { id: 'ap-candid-2', error: 'vocab advancedEnrichment is invalid' },
       { id: 'ap-inline', error: 'item has an inline image outside imageUrl' },
     ],
-    // The phrase's marker: validation already refuses the vocab's, and the sentence's is valid.
-    invalidTopLevelAdvancedEnrichmentCount: 1,
+    // The live and the deleted phrase's markers: validation already refuses the vocab's, and the sentence's is valid.
+    invalidTopLevelAdvancedEnrichmentCount: 2,
     inlineImageItemCount: 1,
     legacyImageRowCount: 1,
     registeredUserCount: 2,
