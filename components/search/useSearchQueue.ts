@@ -4,8 +4,8 @@ import { analyzeInput, compareWords, detectVocabulary } from '../../services/api
 import { ensureTTS } from '../../services/neuralTts';
 import { log, warn } from '../../services/logger';
 import {
-  consumeSearchRetry, describeSearchError, failureOf, isAuthenticationError, readPendingRequests, rememberSearchRetry, writePendingRequests,
-  type SearchRequest,
+  consumeSearchRetries, describeSearchError, failureOf, isAuthenticationError, readPendingRequests, rememberSearchRetry,
+  searchRequestKey, writePendingRequests, type SearchRequest,
 } from '../../services/searchRecovery';
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
 import { looksLikeSentence } from '../../server/src/shared/query-mode';
@@ -169,17 +169,17 @@ export function useSearchQueue({
   }, [scan, enqueue, onCompare, enqueueCompare]);
 
   // What a reload would lose is kept as it changes (see pendingRequestsOf), and the list from before this load is read
-  // first, so the first write can't erase it. On mount, that list and a retry kept from an expired session run once.
+  // first, so the first write can't erase it. On mount, the requests an expired session cut off and that list run,
+  // each request once.
   const [interrupted] = useState(() => readPendingRequests(Date.now()));
   useEffect(() => { writePendingRequests(pendingRequestsOf(queue, Date.now())); }, [queue]);
   const resumedRef = useRef(false);
   useEffect(() => {
     if (resumedRef.current) return;
     resumedRef.current = true;
-    const retry = consumeSearchRetry();
     const seen = new Set<string>();
-    for (const request of retry ? [retry, ...interrupted] : interrupted) {
-      const key = request.kind === 'compare' ? `compare ${comparisonKey(request.words)}` : `${request.kind} ${request.query.trim().toLowerCase()}`;
+    for (const request of [...consumeSearchRetries(), ...interrupted]) {
+      const key = searchRequestKey(request);
       if (seen.has(key)) continue;
       seen.add(key);
       resume(request);

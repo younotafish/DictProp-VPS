@@ -1,3 +1,4 @@
+import { comparisonKey } from '../types';
 import { defaultSessionStorage, parseJson, type StorageLike } from './browserStorage';
 import { HttpError } from './http';
 
@@ -10,7 +11,9 @@ export type SearchRequest =
   | { kind: 'analyze'; query: string; analyzeMode?: 'batch'; forceAI?: boolean }
   | { kind: 'compare'; words: string[] };
 
-const SEARCH_RETRY_KEY = 'dictprop_pending_search_retry';
+const SEARCH_RETRIES_KEY = 'dictprop_pending_search_retry';
+/** At most this many requests are kept for later, the newest: to run after signing in again, and across a reload. */
+const MAX_KEPT = 20;
 
 export function isAuthenticationError(error: unknown): error is HttpError {
   return error instanceof HttpError && error.status === 401;
@@ -49,34 +52,55 @@ function searchRequestOf(value: unknown): SearchRequest | null {
   return null;
 }
 
-/** Keeps `request`, whose session expired, to run once the user signs in again (the OAuth redirect keeps sessionStorage). */
+/**
+ * Which request `request` is, so that each runs once: its kind, and its query, whatever its case, the spaces around it
+ * or its mode, or the words it compares, in any order.
+ */
+export const searchRequestKey = (request: SearchRequest): string =>
+  request.kind === 'compare' ? `compare ${comparisonKey(request.words)}` : `${request.kind} ${request.query.trim().toLowerCase()}`;
+
+/**
+ * The requests kept to run after signing in again, the newest MAX_KEPT; anything malformed is skipped. Builds before
+ * the list kept one request, and builds before search requests existed kept a lookup as { query, analyzeMode }, to run
+ * again as a refresh; each is still read, as a list of one, since an OAuth redirect can straddle a deploy.
+ */
+function decodeSearchRetries(raw: string | null): SearchRequest[] {
+  const parsed = parseJson(raw);
+  const entries: unknown[] = Array.isArray(parsed) ? parsed.slice(-MAX_KEPT)
+    : isRecord(parsed) && !('kind' in parsed) ? [{ kind: 'analyze', query: parsed.query, analyzeMode: parsed.analyzeMode, forceAI: true }]
+    : [parsed];
+  return entries.flatMap(entry => {
+    const request = searchRequestOf(entry);
+    return request ? [request] : [];
+  });
+}
+
+/**
+ * Keeps `request`, whose session expired, to run once the user signs in again (the OAuth redirect keeps sessionStorage),
+ * with the others a session's end cut off: the newest MAX_KEPT, and each request once (see searchRequestKey).
+ */
 export function rememberSearchRetry(request: SearchRequest, storage: StorageLike | null = defaultSessionStorage()): void {
   const kept = searchRequestOf(request);
   if (!storage || !kept) return;
   try {
-    storage.setItem(SEARCH_RETRY_KEY, JSON.stringify(kept));
+    const retries = decodeSearchRetries(storage.getItem(SEARCH_RETRIES_KEY));
+    const key = searchRequestKey(kept);
+    if (retries.some(retry => searchRequestKey(retry) === key)) return;
+    storage.setItem(SEARCH_RETRIES_KEY, JSON.stringify([...retries, kept].slice(-MAX_KEPT)));
   } catch {
-    // Session storage is a convenience; the failed in-memory queue remains retryable.
+    // Session storage is a convenience: the failure stays in the queue, where Retry reaches it until the page goes.
   }
 }
 
-/**
- * The request kept to run after signing in again, once. Builds before search requests existed kept a lookup as
- * { query, analyzeMode }, to run again as a refresh; one is still read that way, since an OAuth redirect can straddle a
- * deploy.
- */
-export function consumeSearchRetry(storage: StorageLike | null = defaultSessionStorage()): SearchRequest | null {
-  if (!storage) return null;
+/** The requests kept to run after signing in again, in the order they were kept, once: reading them forgets them. */
+export function consumeSearchRetries(storage: StorageLike | null = defaultSessionStorage()): SearchRequest[] {
+  if (!storage) return [];
   try {
-    const raw = storage.getItem(SEARCH_RETRY_KEY);
-    storage.removeItem(SEARCH_RETRY_KEY);
-    const parsed = parseJson(raw);
-    if (isRecord(parsed) && !('kind' in parsed)) {
-      return searchRequestOf({ kind: 'analyze', query: parsed.query, analyzeMode: parsed.analyzeMode, forceAI: true });
-    }
-    return searchRequestOf(parsed);
+    const raw = storage.getItem(SEARCH_RETRIES_KEY);
+    storage.removeItem(SEARCH_RETRIES_KEY);
+    return decodeSearchRetries(raw);
   } catch {
-    return null;
+    return [];
   }
 }
 
@@ -87,14 +111,12 @@ export interface PendingRequest {
 }
 
 const PENDING_REQUESTS_KEY = 'search_pending_v1';
-/** At most this many requests are kept across a reload, the newest. */
-const MAX_PENDING = 20;
 /** A request older than this isn't run again after a reload. */
 const PENDING_MAX_AGE_MS = 60 * 60 * 1000;
 
-/** The newest MAX_PENDING of `pending`, as search_pending_v1 keeps them. */
+/** The newest MAX_KEPT of `pending`, as search_pending_v1 keeps them. */
 export function encodePendingRequests(pending: readonly PendingRequest[]): string {
-  return JSON.stringify(pending.slice(-MAX_PENDING).flatMap(({ request, at }) => {
+  return JSON.stringify(pending.slice(-MAX_KEPT).flatMap(({ request, at }) => {
     const kept = searchRequestOf(request);
     return kept ? [{ request: kept, at }] : [];
   }));
@@ -104,7 +126,7 @@ export function encodePendingRequests(pending: readonly PendingRequest[]): strin
 export function decodePendingRequests(raw: string | null, now: number): SearchRequest[] {
   const parsed = parseJson(raw);
   if (!Array.isArray(parsed)) return [];
-  return parsed.slice(-MAX_PENDING).flatMap((entry: unknown) => {
+  return parsed.slice(-MAX_KEPT).flatMap((entry: unknown) => {
     if (!isRecord(entry) || typeof entry.at !== 'number' || !(entry.at <= now && now - entry.at < PENDING_MAX_AGE_MS)) return [];
     const request = searchRequestOf(entry.request);
     return request ? [request] : [];

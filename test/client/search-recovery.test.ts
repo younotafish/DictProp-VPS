@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { HttpError, TimeoutError } from '../../services/http.ts';
 import {
-  consumeSearchRetry, decodePendingRequests, describeSearchError, encodePendingRequests, failureOf, isNetworkFailure,
-  isRetryableSearchError, readPendingRequests, rememberSearchRetry, writePendingRequests, type PendingRequest, type SearchRequest,
-  type SearchSubject,
+  consumeSearchRetries, decodePendingRequests, describeSearchError, encodePendingRequests, failureOf, isNetworkFailure,
+  isRetryableSearchError, readPendingRequests, rememberSearchRetry, searchRequestKey, writePendingRequests, type PendingRequest,
+  type SearchRequest, type SearchSubject,
 } from '../../services/searchRecovery.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
@@ -18,8 +18,8 @@ test('expired-session searches survive an OAuth redirect and retain a useful err
   // Builds before typed requests kept a lookup this way, to run again as a refresh.
   storage.setItem('dictprop_pending_search_retry', JSON.stringify({ query: 'visceral', analyzeMode: 'batch' }));
 
-  assert.deepEqual(consumeSearchRetry(storage), { kind: 'analyze', query: 'visceral', analyzeMode: 'batch', forceAI: true });
-  assert.equal(consumeSearchRetry(storage), null);
+  assert.deepEqual(consumeSearchRetries(storage), [{ kind: 'analyze', query: 'visceral', analyzeMode: 'batch', forceAI: true }]);
+  assert.deepEqual(consumeSearchRetries(storage), []);
   assert.match(
     describeSearchError(lookup('visceral'), new HttpError('failed', 401, 'Session expired')),
     /session expired/i,
@@ -131,21 +131,63 @@ test('a request whose session expired comes back once, as the request it was', (
   for (const request of REQUESTS) {
     const storage = new MemoryStorage();
     rememberSearchRetry(request, storage);
-    assert.deepEqual(consumeSearchRetry(storage), request);
-    assert.equal(consumeSearchRetry(storage), null);
+    assert.deepEqual(consumeSearchRetries(storage), [request]);
+    assert.deepEqual(consumeSearchRetries(storage), []);
   }
 });
 
-test('a kept retry that is damaged, empty or of an unknown kind is dropped', () => {
-  for (const raw of ['{', 'null', '42', '"gamut"', '{"kind":"scan","query":"  "}', '{"kind":"compare","words":["only"]}', '{"kind":"delete","query":"x"}', '{"query":""}']) {
+test('every request a session\'s end cut off comes back after signing in, in order, each once', () => {
+  const storage = new MemoryStorage();
+  for (const request of REQUESTS) rememberSearchRetry(request, storage);
+  rememberSearchRetry({ kind: 'analyze', query: ' Gamut ', forceAI: true }, storage);
+  rememberSearchRetry({ kind: 'compare', words: ['Parable', 'fable'] }, storage);
+  rememberSearchRetry({ kind: 'scan', query: 'it ran the gamut of emotions.' }, storage);
+  assert.deepEqual(consumeSearchRetries(storage), REQUESTS, 'the same request again is kept once, as it was first');
+  assert.deepEqual(consumeSearchRetries(storage), []);
+});
+
+test('at most the newest 20 retries are kept', () => {
+  const storage = new MemoryStorage();
+  for (let i = 0; i < 25; i++) rememberSearchRetry({ kind: 'analyze', query: `word${i}` }, storage);
+  assert.deepEqual(consumeSearchRetries(storage).map(request => (request as { query: string }).query), Array.from({ length: 20 }, (_, i) => `word${i + 5}`));
+});
+
+test('a retry the build before the list kept comes back too, with any kept after it', () => {
+  const storage = new MemoryStorage();
+  storage.setItem('dictprop_pending_search_retry', JSON.stringify({ kind: 'scan', query: 'It ran the gamut of emotions.' }));
+  rememberSearchRetry({ kind: 'compare', words: ['fable', 'parable'] }, storage);
+  assert.deepEqual(consumeSearchRetries(storage), [{ kind: 'scan', query: 'It ran the gamut of emotions.' }, { kind: 'compare', words: ['fable', 'parable'] }]);
+  storage.setItem('dictprop_pending_search_retry', JSON.stringify({ kind: 'analyze', query: 'gamut' }));
+  assert.deepEqual(consumeSearchRetries(storage), [{ kind: 'analyze', query: 'gamut' }], 'alone');
+  storage.setItem('dictprop_pending_search_retry', JSON.stringify({ query: 'visceral' }));
+  rememberSearchRetry({ kind: 'analyze', query: 'gamut' }, storage);
+  assert.deepEqual(consumeSearchRetries(storage), [{ kind: 'analyze', query: 'visceral', forceAI: true }, { kind: 'analyze', query: 'gamut' }], 'and the oldest shape');
+});
+
+test('kept retries that are damaged, empty or of an unknown kind are dropped', () => {
+  for (const raw of ['{', 'null', '42', '"gamut"', '[]', '{"kind":"scan","query":"  "}', '{"kind":"compare","words":["only"]}', '{"kind":"delete","query":"x"}', '{"query":""}']) {
     const storage = new MemoryStorage();
     storage.setItem('dictprop_pending_search_retry', raw);
-    assert.equal(consumeSearchRetry(storage), null, raw);
+    assert.deepEqual(consumeSearchRetries(storage), [], raw);
     assert.equal(storage.getItem('dictprop_pending_search_retry'), null, 'and forgotten');
   }
+  const mixed = new MemoryStorage();
+  mixed.setItem('dictprop_pending_search_retry', JSON.stringify([null, 7, { kind: 'nope' }, { query: 'visceral' }, { kind: 'analyze', query: 'gamut' }]));
+  assert.deepEqual(consumeSearchRetries(mixed), [{ kind: 'analyze', query: 'gamut' }], 'a list keeps its well-formed requests');
   const storage = new MemoryStorage();
   rememberSearchRetry({ kind: 'analyze', query: '   ' }, storage);
   assert.equal(storage.length, 0, 'nothing to retry is never kept');
+  const refusing = { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('denied'); }, removeItem: () => { throw new Error('denied'); } };
+  assert.doesNotThrow(() => rememberSearchRetry({ kind: 'analyze', query: 'gamut' }, refusing));
+  assert.deepEqual(consumeSearchRetries(refusing), []);
+  assert.deepEqual(consumeSearchRetries(null), []);
+});
+
+test('a request is the same request whatever its case, the spaces around it, its mode, or the order of the words compared', () => {
+  assert.equal(searchRequestKey({ kind: 'analyze', query: ' Gamut ' }), searchRequestKey({ kind: 'analyze', query: 'gamut', analyzeMode: 'batch', forceAI: true }));
+  assert.equal(searchRequestKey({ kind: 'compare', words: ['Parable', 'fable'] }), searchRequestKey({ kind: 'compare', words: ['fable', 'parable'] }));
+  assert.notEqual(searchRequestKey({ kind: 'scan', query: 'gamut' }), searchRequestKey({ kind: 'analyze', query: 'gamut' }), 'a scan is not a lookup');
+  assert.notEqual(searchRequestKey({ kind: 'analyze', query: 'gamut' }), searchRequestKey({ kind: 'analyze', query: 'gamuts' }));
 });
 
 const pending = (request: SearchRequest, at: number): PendingRequest => ({ request, at });
