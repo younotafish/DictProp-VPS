@@ -22,7 +22,7 @@ import { preloadCards } from './cardReading';
 import { useAutoplayPreloadPlan } from './useAutoplayPreloadPlan';
 import { resolveSentenceUnderReview } from './sentenceUnderReview';
 import { withSpeechStyle } from './speechStyle';
-import { automaticWrite, ownSentenceIds, useLeaveGoneItems } from './goneItems';
+import { automaticWrite, liveIdsAmong, ownSentenceIds, useLeaveGoneItems } from './goneItems';
 import { lessonReviewPill, memorizedCount, sentenceRowState } from './sentenceRowState';
 import { PLATFORM } from '../../services/platform';
 import { RememberToast } from './RememberToast';
@@ -38,7 +38,7 @@ import { useAutoPlay } from './useAutoPlay';
 import { useAutoPlayReader, type AutoPlayReaderControls } from './useAutoPlayReader';
 import { useSpeechStyle } from './useSpeechStyle';
 import { useRememberToast } from './useRememberToast';
-import { useSavedSentenceIndex } from './useSavedSentenceIndex';
+import { holdsSavedSentence, useSavedSentenceIndex } from './useSavedSentenceIndex';
 import { useSentenceEnrichment } from './useSentenceEnrichment';
 import { useSentenceImageAttach } from './useSentenceImageAttach';
 import { useSentenceCopy } from './useSentenceCopy';
@@ -110,15 +110,19 @@ export function SentenceReviewView({
   const { toast, tryRemember, showRemembered } = useRememberToast();
 
   const savedSentenceItemsRef = useLatest(savedSentenceItems);
-  // Preview lookups run on every render, so index saved sentences once instead of re-normalizing all of them.
+  // Only a word card's example preview looks its saved copy up by text, so the index that normalizes every saved
+  // sentence is built when a preview first reads it, once per library change, and a listen or a Got it builds none.
   const savedSentenceIndex = useSavedSentenceIndex(savedSentenceItems);
-  const savedSentenceIndexRef = useLatest(savedSentenceIndex);
   const onSaveRef = useLatest(onSave);
   const onPatchItemRef = useLatest(onPatchItem);
 
   // A saved sentence deleted on another device leaves the run, once App can take it out.
   const leavingSentenceIds = useMemo(() => ownSentenceIds(sentenceItems), [sentenceItems]);
-  useLeaveGoneItems(leavingSentenceIds, savedSentenceIndex.byId, onRemoveFromView);
+  const liveLeavingSentenceIds = useMemo(
+    () => liveIdsAmong(leavingSentenceIds, savedSentenceItems),
+    [leavingSentenceIds, savedSentenceItems],
+  );
+  useLeaveGoneItems(leavingSentenceIds, liveLeavingSentenceIds, onRemoveFromView);
 
   // The sentence's source card.
   const data = currentItem.data;
@@ -189,7 +193,7 @@ export function SentenceReviewView({
   const writeSentence = useCallback((sentence: StoredItem, patch: (item: StoredItem) => StoredItem | null) => {
     const id = sentence.data.id;
     const write = automaticWrite({
-      live: savedSentenceIndexRef.current.byId.has(id),
+      live: holdsSavedSentence(savedSentenceItemsRef.current, id),
       catalogLine: !!(sentence.data as SentenceData).catalogSentenceId,
     });
     if (write === 'skip') return;
@@ -199,7 +203,7 @@ export function SentenceReviewView({
     const patchItem = onPatchItemRef.current;
     if (write === 'patch' && patchItem) patchItem(id, patch);
     else onSaveRef.current(updated);
-  }, [onPatchItemRef, onSaveRef, savedSentenceIndexRef]);
+  }, [onPatchItemRef, onSaveRef, savedSentenceItemsRef]);
 
   const rememberCurrentSentenceSpeechStyle = useCallback((nextStyle: TtsStyle) => {
     const sentence = currentSentenceRef.current;

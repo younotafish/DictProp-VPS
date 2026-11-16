@@ -118,7 +118,8 @@ export function WordDetailView(props: DetailViewBodyProps) {
     [viewCardIds, savedItems, onRemoveFromView],
   );
   useLeaveGoneItems(viewCardIds, liveCardIds, onRemoveFromView);
-  // Preview lookups run on every render, so index saved sentences once instead of re-normalizing all of them.
+  // The saved sentences' index for an example preview's lookups: built once per library change, when a preview first
+  // reads it, so a card with no preview open normalizes no sentence.
   const savedSentenceIndex = useSavedSentenceIndex(savedSentenceItems);
 
   const {

@@ -24,12 +24,34 @@ export function indexSavedSentences(savedSentenceItems: readonly StoredItem[]) {
   return { byId, byIdentity };
 }
 
+export type SavedSentenceIndex = ReturnType<typeof indexSavedSentences>;
+
 /**
- * indexSavedSentences, built once per library change: previews look up on every render, so the sentences are
- * normalized once rather than on each lookup.
+ * indexSavedSentences for one library snapshot, built the first time a lookup reads byId or byIdentity and kept for
+ * that snapshot. Only an example preview looks its saved copy up, so the new snapshot a listen or a Got it hands the
+ * view normalizes nothing until a preview asks.
  */
-export function useSavedSentenceIndex(savedSentenceItems: StoredItem[]) {
-  return useMemo(() => indexSavedSentences(savedSentenceItems), [savedSentenceItems]);
+export function lazySavedSentenceIndex(
+  savedSentenceItems: readonly StoredItem[],
+  build: (items: readonly StoredItem[]) => SavedSentenceIndex = indexSavedSentences,
+): SavedSentenceIndex {
+  let index: SavedSentenceIndex | undefined;
+  const built = () => (index ??= build(savedSentenceItems));
+  return {
+    get byId() { return built().byId; },
+    get byIdentity() { return built().byIdentity; },
+  };
 }
 
-export type SavedSentenceIndex = ReturnType<typeof indexSavedSentences>;
+/**
+ * The saved sentences' index, new with each library change and built when a lookup first reads it
+ * (lazySavedSentenceIndex): previews look up on every render, so the sentences are normalized once per change, and
+ * only while a preview needs them.
+ */
+export function useSavedSentenceIndex(savedSentenceItems: readonly StoredItem[]): SavedSentenceIndex {
+  return useMemo(() => lazySavedSentenceIndex(savedSentenceItems), [savedSentenceItems]);
+}
+
+/** Whether the library holds the saved sentence `id`, not deleted: a scan by id, with no index to build. */
+export const holdsSavedSentence = (savedSentenceItems: readonly StoredItem[], id: string): boolean =>
+  savedSentenceItems.some(item => item.type === 'sentence' && !item.isDeleted && item.data.id === id);
