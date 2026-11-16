@@ -141,12 +141,18 @@ export function useLibraryActions(
     await persistChangedItems([archived], 'Archive');
   }, [latestItemsRef, replaceItem, removeFromDetailView, removeItemFromDetailContext, persistChangedItems, offerUndo]);
 
+  // The server keeps no earlier versions of a phrase, so a removed vocab can't be had back from it. Like a delete, the
+  // removal can be taken back for a few seconds instead, and stays on this device meanwhile.
   const handleRemoveVocabFromPhrase = useCallback(async (phraseId: string, vocabId: string) => {
     log('🗑️ App: Removing vocab', vocabId, 'from phrase', phraseId);
     // A phrase keeps at least one vocab.
     const phrase = latestItemsRef.current.find(i => i.data.id === phraseId);
     const vocabs = phrase && isPhraseItem(phrase) ? phrase.data.vocabs : undefined;
-    if (!Array.isArray(vocabs) || vocabs.length <= 1) return;
+    if (!phrase || !Array.isArray(vocabs) || vocabs.length <= 1) return;
+    const index = vocabs.findIndex(v => v.id === vocabId);
+    if (index < 0) return;
+    const removed = vocabs[index];
+    const { updatedAt } = phrase;
 
     const updated = replaceItem(phraseId, item => {
       const phraseData = item.data as SearchResult;
@@ -156,8 +162,21 @@ export function useLibraryActions(
         updatedAt: Date.now(),
       };
     });
-    if (updated) await persistChangedItems([updated], 'Remove vocab');
-  }, [latestItemsRef, replaceItem, persistChangedItems]);
+    if (!updated) return;
+    // The offer first, so the phrase is held on this device when the push below runs. Undo puts the vocab back where
+    // it was, unless it's back already.
+    offerUndoChange({
+      ids: [phraseId],
+      message: `Removed “${removed.word}”`,
+      undo: item => {
+        if (!isPhraseItem(item)) return item;
+        const current = item.data.vocabs || [];
+        if (current.some(v => v.id === vocabId)) return item;
+        return { ...item, data: { ...item.data, vocabs: [...current.slice(0, index), removed, ...current.slice(index)] }, updatedAt };
+      },
+    });
+    await persistChangedItems([updated], 'Remove vocab');
+  }, [latestItemsRef, replaceItem, persistChangedItems, offerUndoChange]);
 
   const handleUnarchive = useCallback(async (id: string) => {
     log('📦 App: Unarchiving item', id);

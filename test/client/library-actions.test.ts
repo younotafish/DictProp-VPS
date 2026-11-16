@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { useLibraryActions } from '../../hooks/useLibraryActions.ts';
 import { useUndoOffer, type UndoOffer } from '../../hooks/useUndoOffer.ts';
 import { makeVocabStoredItem } from '../../services/items.ts';
-import type { SRSData, StoredItem, VocabCard } from '../../types.ts';
+import type { SearchResult, SRSData, StoredItem, VocabCard } from '../../types.ts';
 
 // hooks/useLibraryActions.ts, run once through a server render. Its handlers keep working afterwards: they close over
 // the fakes below, which hold the library and record what the handlers ask of them. With the real undo offer
@@ -229,4 +229,70 @@ test('the offer closes after six seconds and sends the refresh on; a refresh non
 
   await actions.handleRefreshReplace('bank', [vocab('ai-2', '', 'noun: money')]);
   assert.equal(offers.length, 1, 'a card with no word is never saved, so there is nothing to take back');
+});
+
+const phraseOf = (vocabs: VocabCard[], fields: Partial<StoredItem> = {}): StoredItem => ({
+  type: 'phrase', savedAt: 1, updatedAt: 1, srs: { ...schedule('p1'), type: 'phrase' },
+  data: { id: 'p1', query: 'limpid prose', translation: '', grammar: '', visualKeyword: '', pronunciation: '', vocabs, timestamp: 1 },
+  ...fields,
+});
+const vocabIds = (item: StoredItem) => (item.data as SearchResult).vocabs.map(v => v.id);
+
+test('removing a vocab from a phrase offers to take it back, holding the phrase, and Undo puts the vocab back in its place', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 10_000 });
+  const phrase = phraseOf(
+    [vocab('v1', 'limpid', undefined), vocab('v2', 'prose', undefined), vocab('v3', 'lucid', undefined)],
+    { lastSyncedHash: 'synced', serverRevision: 3 },
+  );
+  const { actions, undoOffer, offers, calls, items } = renderActions([phrase], { withUndoOffer: true });
+  await actions.handleRemoveVocabFromPhrase('p1', 'v2');
+  assert.deepEqual(vocabIds(items()[0]), ['v1', 'v3']);
+  assert.equal(items()[0].updatedAt, 10_000);
+  assert.deepEqual(offers.map(offer => [offer.message, offer.ids]), [['Removed “prose”', ['p1']]]);
+  assert.deepEqual(calls, ['hold p1', 'persist Remove vocab p1'], 'held on this device before it is stored and pushed');
+
+  await undoOffer!.undoLastChange();
+  assert.deepEqual(items()[0], phrase, 'the phrase as it was');
+  assert.deepEqual(calls.slice(2), ['hold none', 'push p1', 'store p1']);
+});
+
+test('a removal is sent on when its offer closes, and a phrase keeps its last vocab', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 10_000 });
+  const { actions, offers, calls, items } = renderActions(
+    [phraseOf([vocab('v1', 'limpid', undefined), vocab('v2', 'prose', undefined)])],
+    { withUndoOffer: true },
+  );
+  await actions.handleRemoveVocabFromPhrase('p1', 'v1');
+  t.mock.timers.tick(6_000);
+  assert.deepEqual(calls, ['hold p1', 'persist Remove vocab p1', 'hold none', 'push p1']);
+
+  const library = items();
+  await actions.handleRemoveVocabFromPhrase('p1', 'v2');
+  await actions.handleRemoveVocabFromPhrase('p1', 'gone');
+  assert.equal(items(), library, 'the last vocab stays, and a vocab the phrase lacks changes nothing');
+  assert.equal(offers.length, 1);
+});
+
+test('Undo after a second removal from a phrase puts back only that vocab, and none that is back already', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 10_000 });
+  const { actions, undoOffer, library, items } = renderActions(
+    [phraseOf([vocab('v1', 'limpid', undefined), vocab('v2', 'prose', undefined), vocab('v3', 'lucid', undefined)])],
+    { withUndoOffer: true },
+  );
+  await actions.handleRemoveVocabFromPhrase('p1', 'v1');
+  t.mock.timers.tick(1_000);
+  await actions.handleRemoveVocabFromPhrase('p1', 'v3');
+  await undoOffer!.undoLastChange();
+  assert.deepEqual(vocabIds(items()[0]), ['v2', 'v3']);
+  assert.equal(items()[0].updatedAt, 10_000, 'as the first removal left it');
+
+  // Another device's copy, pulled before Undo, already has the vocab.
+  await actions.handleRemoveVocabFromPhrase('p1', 'v2');
+  const pulled = library.replaceItem('p1', item => ({
+    ...item,
+    data: { ...item.data, vocabs: [vocab('v2', 'prose', undefined), vocab('v3', 'lucid', undefined)] } as SearchResult,
+    updatedAt: 20_000,
+  }));
+  await undoOffer!.undoLastChange();
+  assert.equal(items()[0], pulled);
 });
