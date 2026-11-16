@@ -37,6 +37,7 @@ export function useNow(key: unknown): number {
     if (wasHidden.current) countShowing();
     return () => { wasHidden.current = true; };
   }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- key, resumed and showings are when the time is taken again
   return useMemo(() => Date.now(), [key, resumed, showings]);
 }
 

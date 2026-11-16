@@ -84,7 +84,7 @@ export function useLibraryActions(
       logError("Error during save operation:", err);
       return undefined;
     }
-  }, [updateItems, replaceItem, userId]);
+  }, [latestItemsRef, updateItems, replaceItem, userId]);
 
   // Attach a user-pasted/picked image to a sentence under review. Mirrors the vocab/phrase image path:
   // offload the base64 to IDB (awaited, for instant offline display) + upload to the server, then mark
@@ -99,7 +99,7 @@ export function useLibraryActions(
     const current = latestItemsRef.current.find(saved => saved.data.id === item.data.id) ?? item;
     if (current.isDeleted) return;
     handleSave({ ...current, data: { ...current.data, imageUrl: IMAGE_IDB_MARKER } });
-  }, [handleSave, userId]);
+  }, [latestItemsRef, handleSave, userId]);
 
   const handleDelete = useCallback(async (id: string) => {
     log('🗑️ App: Deleting item', id);
@@ -120,7 +120,10 @@ export function useLibraryActions(
     }
     // Store the deletion now; it's pushed when the undo offer closes.
     await persistChangedItems([deleted], 'Delete');
-  }, [replaceItem, persistChangedItems, offerUndo]);
+  }, [
+    latestItemsRef, replaceItem, removeFromDetailView, removeItemFromDetailContext, removeSentenceFromDetailContext,
+    persistChangedItems, offerUndo,
+  ]);
 
   const handleArchive = useCallback(async (id: string) => {
     log('📦 App: Archiving item', id);
@@ -136,7 +139,7 @@ export function useLibraryActions(
       offerUndo('Archived', before, item => item.isArchived ? { ...item, isArchived: undefined, updatedAt: before.updatedAt } : item, view);
     }
     await persistChangedItems([archived], 'Archive');
-  }, [replaceItem, persistChangedItems, offerUndo]);
+  }, [latestItemsRef, replaceItem, removeFromDetailView, removeItemFromDetailContext, persistChangedItems, offerUndo]);
 
   const handleRemoveVocabFromPhrase = useCallback(async (phraseId: string, vocabId: string) => {
     log('🗑️ App: Removing vocab', vocabId, 'from phrase', phraseId);
@@ -154,7 +157,7 @@ export function useLibraryActions(
       };
     });
     if (updated) await persistChangedItems([updated], 'Remove vocab');
-  }, [replaceItem, persistChangedItems]);
+  }, [latestItemsRef, replaceItem, persistChangedItems]);
 
   const handleUnarchive = useCallback(async (id: string) => {
     log('📦 App: Unarchiving item', id);

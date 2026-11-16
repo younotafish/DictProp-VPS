@@ -86,5 +86,5 @@ export function useAppShortcuts(
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [detailContext, confirmModal, showKeyboardHelp, cardPopup, updateDetailContext]);
+  }, [detailContext, confirmModal, showKeyboardHelp, cardPopup, updateDetailContext, setShowKeyboardHelp, setCardPopup, setConfirmModal]);
 }

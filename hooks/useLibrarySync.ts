@@ -104,7 +104,7 @@ export function useLibrarySync(
       timeoutMs: SIGN_OUT_FLUSH_MS,
       onError: error => warn('Unsent changes stay on this device until the next launch:', error),
     });
-  }, [closeUndoOffer, isLoaded, userSaveData, flushPendingReviews, pushDirtyItems]);
+  }, [closeUndoOffer, isLoaded, latestItemsRef, userSaveData, flushPendingReviews, pushDirtyItems]);
 
   // The stuck-sync pill's Retry: the reviews, then a pull of what changed and a push, cheaper than Sync now's full
   // snapshot. The push goes out even when the pull fails, and it succeeding takes the pill away.
@@ -137,7 +137,7 @@ export function useLibrarySync(
     if (!isLoaded || currentItems.length === 0) return false;
     userSaveData(currentItems).catch(e => warn(`Failed to save ${when}:`, e));
     return true;
-  }, [isLoaded, userSaveData]);
+  }, [latestItemsRef, isLoaded, userSaveData]);
 
   // Save data before page unload (refresh, close tab, navigate away)
   // This is a critical safety net to prevent data loss
@@ -216,7 +216,7 @@ export function useLibrarySync(
         }
     };
     initStorage();
-  }, [userId, libraryLoadAttempt]);
+  }, [userId, libraryLoadAttempt, adoptStoredLibrary]);
 
   // 2. SERVER SYNC — once local data is loaded, pull what changed since it was stored
   const initialServerSyncDoneRef = useRef(false);
@@ -248,7 +248,7 @@ export function useLibrarySync(
         .catch(error => warn('Storing item hashes will retry on the next launch:', error));
     };
     void syncFromServer();
-  }, [isLoaded, userId, flushPendingReviews, inSyncLane, syncWithServer, pushNow, prefetchImages, imageUploadRetry]);
+  }, [isLoaded, userId, flushPendingReviews, inSyncLane, syncWithServer, pushNow, prefetchImages, latestItemsRef, imageUploadRetry]);
 
   const deltaPullInProgressRef = useRef(false);
   const pullServerChanges = useCallback(async () => {
@@ -282,7 +282,7 @@ export function useLibrarySync(
     } finally {
       deltaPullInProgressRef.current = false;
     }
-  }, [flushPendingReviews, inSyncLane, syncWithServer, retryPushIfDue, pushNow, prefetchImages, imageUploadRetry]);
+  }, [flushPendingReviews, inSyncLane, syncWithServer, retryPushIfDue, pushNow, prefetchImages, latestItemsRef, imageUploadRetry]);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -322,12 +322,12 @@ export function useLibrarySync(
       userSaveData(latestItemsRef.current).catch(e => logError("Local save error:", e));
     }, 300);
     return () => clearTimeout(timer);
-  }, [savedItems, isLoaded, userSaveData]);
+  }, [savedItems, isLoaded, userSaveData, latestItemsRef]);
   useEffect(() => () => {
     if (latestItemsRef.current.length > 0) {
       userSaveDataRef.current(latestItemsRef.current).catch(e => logError("Local save on unmount failed:", e));
     }
-  }, [userSaveDataRef]);
+  }, [latestItemsRef, userSaveDataRef]);
 
   // The server push waits for changes to pause for 5 s, but a steady stream of changes (a study session)
   // holds it back for at most 30 s.
@@ -351,7 +351,7 @@ export function useLibrarySync(
     }, Math.max(0, Math.min(5_000, pushDeadlineRef.current - now)));
 
     return () => clearTimeout(timer);
-  }, [savedItems, isLoaded, userSaveData, pushDirtyItems]);
+  }, [savedItems, isLoaded, userSaveData, latestItemsRef, pushDirtyItems]);
 
   // What the screen for an unreadable library offers: another try, or the server's copy.
   const retryLibraryLoad = () => { setLibraryReadFailed(false); setLibraryLoadAttempt(attempt => attempt + 1); };

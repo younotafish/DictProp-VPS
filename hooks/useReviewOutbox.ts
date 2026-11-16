@@ -87,7 +87,7 @@ export function useReviewOutbox(
     } finally {
       if (reviewFlushPromiseRef.current === flush) reviewFlushPromiseRef.current = null;
     }
-  }, [userId, markItemsUnsynced, reconcileAppliedReview]);
+  }, [userId, latestItemsRef, markItemsUnsynced, reconcileAppliedReview]);
 
   const undoSRSReview = useCallback(async (eventId: string): Promise<void> => {
     await flushPendingReviews();
@@ -181,7 +181,7 @@ export function useReviewOutbox(
 
     await flushPendingReviews();
     return !readPendingReviewMutations(userId).some(mutation => mutation.event.id === reviewEvent.id);
-  }, [userId, recordReview, updateItems, storeItemUpdates, flushPendingReviews]);
+  }, [userId, latestItemsRef, recordReview, updateItems, storeItemUpdates, flushPendingReviews]);
 
   return { reviewHistory, flushPendingReviews, undoSRSReview, updateSRS };
 }
