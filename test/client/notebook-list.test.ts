@@ -9,7 +9,7 @@ import {
 } from '../../services/notebookList.ts';
 import type { ItemGroup, SearchResult, StoredItem, UsageStatus, VocabCard } from '../../types.ts';
 import { NotebookHeader } from '../../views/notebook/NotebookHeader.tsx';
-import { ArchivedMatchesHeader, DueHeader } from '../../views/notebook/ListRows.tsx';
+import { ArchivedMatchesHeader, ArchivedToggle, DueHeader } from '../../views/notebook/ListRows.tsx';
 import { NotebookItem } from '../../views/notebook/NotebookItem.tsx';
 
 const DAY = 86_400_000;
@@ -306,7 +306,6 @@ test('browse rows run compare banner, note, groups, due header and due groups, t
     searched: false,
     groups: [group('bank'), group('banker')],
     dueGroups: [group('river')],
-    archived: [vocab('pond', { archived: true })],
     archivedGroups: [group('pond')],
   };
 
@@ -314,7 +313,7 @@ test('browse rows run compare banner, note, groups, due header and due groups, t
     ['main:bank', 'main:banker', 'due-header(1)', 'due:river', 'archived-toggle(1)']);
   assert.deepEqual(rowSummary(buildNotebookRows(list, { compareMode: true, showListNote: true, showArchived: true })),
     ['compare-banner', 'list-note', 'main:bank', 'main:banker', 'due-header(1)', 'due:river', 'archived-toggle(1)', 'archived:pond']);
-  assert.deepEqual(rowSummary(buildNotebookRows({ searched: false, groups: [], dueGroups: [], archived: [], archivedGroups: [] },
+  assert.deepEqual(rowSummary(buildNotebookRows({ searched: false, groups: [], dueGroups: [], archivedGroups: [] },
     { compareMode: false, showListNote: true, showArchived: true })), ['list-note']);
 });
 
@@ -352,6 +351,27 @@ test('rows draw a list as it was built, so the browse list kept on screen while 
     ['main:apple', 'main:pear', 'archived-header(2)', 'archived:old1', 'archived:old2']);
   // A search that found nothing is still a search's list.
   assert.equal(buildNotebookList(items, [], 'alphabetical', 'all', NOW).searched, true);
+});
+
+test('the archived toggle counts archived spellings, as every other count on the screen does, named for what the filter lists', () => {
+  const items = [
+    vocab('apple'),
+    vocab('bank', { archived: true, sense: 'money' }),
+    vocab('bank', { archived: true, sense: 'river' }),
+    vocab('bank', { archived: true, sense: 'tilt' }),
+    phrase('break a leg', '祝你好运', { archived: true }),
+  ];
+  const toggle = (filter: NotebookFilter) => rowSummary(buildNotebookRows(
+    buildNotebookList(items, null, 'familiarity', filter, NOW), { compareMode: false, showListNote: false, showArchived: true },
+  )).filter(row => row.startsWith('archived'));
+  // Three archived senses of one word open as one row, and count as one.
+  assert.deepEqual(toggle('vocab'), ['archived-toggle(1)', 'archived:bank']);
+  assert.deepEqual(toggle('all'), ['archived-toggle(2)', 'archived:bank', 'archived:break a leg']);
+  const label = (count: number, filter: NotebookFilter) =>
+    renderToStaticMarkup(createElement(ArchivedToggle, { count, filter, expanded: false, onToggle: () => {} }));
+  assert.match(label(1, 'vocab'), />1 word</);
+  assert.match(label(3, 'phrase'), />3 phrases</);
+  assert.match(label(2, 'all'), />2 items</);
 });
 
 test('the list orders by the clock it is given and carries that clock, so its rows count Due from the same instant', () => {

@@ -293,7 +293,14 @@ export const NotebookView: React.FC<NotebookProps> = ({
     if (row.type === 'archived-header') return <ArchivedMatchesHeader count={row.count} />;
 
     if (row.type === 'archived-toggle') {
-      return <ArchivedToggle count={row.count} expanded={showArchived} onToggle={() => setShowArchived(open => !open)} />;
+      return (
+        <ArchivedToggle
+          count={row.count}
+          filter={filterMode}
+          expanded={showArchived}
+          onToggle={() => setShowArchived(open => !open)}
+        />
+      );
     }
 
     // row.type === 'group'

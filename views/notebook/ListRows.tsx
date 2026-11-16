@@ -49,8 +49,12 @@ export const ArchivedMatchesHeader: React.FC<{ count: number }> = ({ count }) =>
   </div>
 );
 
-/** Opens and closes the archived section at the end of the list. */
-export const ArchivedToggle: React.FC<{ count: number; expanded: boolean; onToggle: () => void }> = ({ count, expanded, onToggle }) => (
+/**
+ * Opens and closes the archived section at the end of the list. It counts spellings, named for what the filter lists.
+ */
+export const ArchivedToggle: React.FC<{ count: number; filter: NotebookFilter; expanded: boolean; onToggle: () => void }> = ({
+  count, filter, expanded, onToggle,
+}) => (
   <div className="px-3 mt-6 pt-4 border-t-2 border-slate-200">
     <button
       onClick={onToggle}
@@ -61,7 +65,7 @@ export const ArchivedToggle: React.FC<{ count: number; expanded: boolean; onTogg
         <Archive size={18} className="text-slate-500" />
         <span className="font-bold text-slate-700">Archived</span>
         <span className="text-sm text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full">
-          {count} {count === 1 ? 'item' : 'items'}
+          {count} {filterNoun(filter, count)}
         </span>
       </div>
       {expanded ? (

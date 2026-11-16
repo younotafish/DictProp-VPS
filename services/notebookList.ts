@@ -297,10 +297,11 @@ export type NotebookRow =
 /**
  * The list flattened for virtualization: the compare banner, the list note and the groups. A search's list then lists
  * its archived matches open under an 'Archived matches · N' heading (N spellings) and the due groups it leaves out
- * under theirs; a browse list ends with the archived toggle, and the archived groups when it's open.
+ * under theirs; a browse list ends with the archived toggle, which counts spellings too, and the archived groups when
+ * it's open.
  */
 export const buildNotebookRows = (
-  list: Pick<NotebookList, 'searched' | 'groups' | 'dueGroups' | 'archived' | 'archivedGroups'>,
+  list: Pick<NotebookList, 'searched' | 'groups' | 'dueGroups' | 'archivedGroups'>,
   { compareMode, showListNote, showArchived }: { compareMode: boolean; showListNote: boolean; showArchived: boolean },
 ): NotebookRow[] => {
   const rows: NotebookRow[] = [];
@@ -320,8 +321,8 @@ export const buildNotebookRows = (
     rows.push({ key: 'due-header', type: 'due-header', count: list.dueGroups.length });
     addGroups(list.dueGroups, 'due');
   }
-  if (!list.searched && list.archived.length > 0) {
-    rows.push({ key: 'archived-toggle', type: 'archived-toggle', count: list.archived.length });
+  if (!list.searched && list.archivedGroups.length > 0) {
+    rows.push({ key: 'archived-toggle', type: 'archived-toggle', count: list.archivedGroups.length });
     if (showArchived) addGroups(list.archivedGroups, 'archived');
   }
   return rows;
