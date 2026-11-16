@@ -50,12 +50,18 @@ const referencedAssets = (source) => {
 const staticImports = (source) =>
   [...source.matchAll(/\b(?:from|import)\s*["']\.\/([A-Za-z0-9_.-]+\.js)["']/g)].map((match) => `/assets/${match[1]}`);
 
-// The core graph, from the shell through every file it can load short of the voice runtime, must be precached.
+// The most files the core graph may hold: a budget, like the initial-JavaScript limit above, on how many files the
+// service worker must cache before the app can start offline. A graph that outgrows it fails the check until the limit
+// is raised on purpose. The worker itself sets no limit; 80 was its own install limit before it precached whole builds.
+const CORE_GRAPH_LIMIT = 80;
+
+// The core graph, from the shell through every file it can load short of the voice runtime, must be precached. Each
+// file is queued once, so a file still queued once the limit is reached is one more than the limit.
 const queue = referencedAssets(html);
+const queued = new Set(queue);
 const precached = new Set();
-while (queue.length > 0 && precached.size < 80) {
+while (queue.length > 0 && precached.size < CORE_GRAPH_LIMIT) {
   const url = queue.shift();
-  if (!url || precached.has(url)) continue;
   if (!workerPrecache.has(url)) throw new Error(`dist/sw.js does not precache ${url}`);
   const source = readFileSync(resolve(dist, url.slice(1)));
   precached.add(url);
@@ -67,11 +73,13 @@ while (queue.length > 0 && precached.size < 80) {
       }
     }
     for (const dependency of referencedAssets(code)) {
-      if (!precached.has(dependency)) queue.push(dependency);
+      if (queued.has(dependency)) continue;
+      queued.add(dependency);
+      queue.push(dependency);
     }
   }
 }
-if (queue.length > 0) throw new Error('Core service-worker asset graph exceeds 80 files');
+if (queue.length > 0) throw new Error(`Core service-worker asset graph exceeds ${CORE_GRAPH_LIMIT} files`);
 
 // Every file the worker precaches must exist.
 for (const url of workerPrecache) readFileSync(resolve(dist, url.slice(1)));

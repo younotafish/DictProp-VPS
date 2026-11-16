@@ -9,7 +9,8 @@ import { stampServiceWorker } from '../../vite.config.ts';
 import { readRepoFile, repoPath } from '../support/paths.ts';
 
 // scripts/check-bundle-budget.mjs, the release gate's last look at the client build: the initial JavaScript stays
-// under 100 kB gzip, and the service worker precaches every file the app can reach without the voice runtime.
+// under 100 kB gzip, and the service worker precaches every file the app can reach without the voice runtime, which
+// may be at most 80 files.
 
 const SHELL = [
   '<script type="module" crossorigin src="/assets/index-a1.js"></script>',
@@ -115,4 +116,34 @@ test('a precached file missing from dist fails the check', () => {
   const result = checkBundle(root);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /ENOENT[^\n]*Gone-h8\.js/);
+});
+
+/**
+ * A build whose core graph holds `files` files: the shell's entry, vendor chunk and stylesheet, lazy chunks, and a file
+ * every chunk imports, which the walk reaches last. Each chunk reaches that file before the walk does, so a walk that
+ * queued a file once per reference would still hold copies of it after its last file.
+ */
+function buildWithCoreFiles(files: number): Record<string, string> {
+  const chunks = Array.from({ length: files - 4 }, (_, index) => `Chunk${index}-k${index}.js`);
+  const build: Record<string, string> = {
+    'index.html': SHELL,
+    'assets/index-a1.js': `import{r}from"./vendor-b2.js";${chunks.map((chunk, index) => `const c${index}=()=>import("./${chunk}");`).join('')}`,
+    'assets/vendor-b2.js': 'export const r=1;',
+    'assets/index-c3.css': 'body{margin:0}',
+    'assets/shared-s9.js': 'export const s=1;',
+  };
+  for (const chunk of chunks) build[`assets/${chunk}`] = 'import{s}from"./shared-s9.js";export default s;';
+  return build;
+}
+
+test('a core graph of exactly 80 files passes, a file that many chunks import included', () => {
+  const result = checkBundle(writeBuild(buildWithCoreFiles(80)));
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^Offline core graph: 80 hashed assets/m);
+});
+
+test('a core graph of 81 files is over the budget, so the check fails', () => {
+  const result = checkBundle(writeBuild(buildWithCoreFiles(81)));
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Core service-worker asset graph exceeds 80 files/);
 });
