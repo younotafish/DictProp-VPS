@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getTtsStyle, setTtsStyle, subscribeTtsStyle, type TtsStyle } from '../services/ttsSettings';
+import { chooseTtsStyle, getTtsStyle, subscribeTtsStyle, type TtsStyle } from '../services/ttsSettings';
 import { getPlaybackState, type PlaybackState } from '../services/neuralTts';
 
 /**
@@ -7,7 +7,8 @@ import { getPlaybackState, type PlaybackState } from '../services/neuralTts';
  * and every play site routes through it. Sentence review can also use `onChange` to retain a choice
  * on the sentence itself. Render it anywhere; all instances stay in sync via subscribeTtsStyle.
  * `onStyleClicked` hears a click that changes the style, with what was playing before it, still inside the click so a
- * replay may start there (iOS plays only from a gesture); the engine itself just stops what was playing.
+ * replay may start there (iOS plays only from a gesture); the engine itself just stops what was playing. Such a click is
+ * the user's choice (chooseTtsStyle), so sentence auto-play plans its preload again whichever switch it was.
  */
 export const SpeechStyleToggle: React.FC<{
   className?: string;
@@ -24,7 +25,7 @@ export const SpeechStyleToggle: React.FC<{
         e.stopPropagation();
         const before = getPlaybackState();
         const changed = value !== getTtsStyle();
-        setTtsStyle(value);
+        chooseTtsStyle(value);
         onChange?.(value);
         if (changed) onStyleClicked?.(value, before);
       }}

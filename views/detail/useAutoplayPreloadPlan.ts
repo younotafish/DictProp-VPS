@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { needsReplan, planAutoplayPreload, type PreloadCard, type PreloadPlan } from '../../services/audio/autoplayPreload';
-import { getPlaybackRate, getTtsStyle } from '../../services/ttsSettings';
+import { getPlaybackRate, getTtsStyle, subscribeTtsStyleChosen } from '../../services/ttsSettings';
 import { useLatest } from '../../hooks/useStableValue';
 
 interface AutoplayPreloadPlanOptions {
@@ -23,15 +23,17 @@ interface AutoplayPreloadPlanOptions {
 
 /**
  * The part of the list sentence auto-play preloads (planAutoplayPreload), from the card on screen when it starts. It's
- * planned again when the Duration, the repeats, the interval or the speech style (a click on Clear or Casual) change,
- * and when the card on screen leaves the planned cards (a swipe back, or a skip past them). The style a card switches to
- * as it comes up is part of the plan, so moving between cards never replans, and neither does the voice speed, which
- * the plan's margin absorbs until the next plan.
+ * planned again when the Duration, the repeats, the interval or the speech style (a click on Clear or Casual, wherever
+ * the switch is, the review popup's included) change, and when the card on screen leaves the planned cards (a swipe
+ * back, or a skip past them). The style a card switches to as it comes up is part of the plan, so moving between cards
+ * never replans, and neither does the voice speed, which the plan's margin absorbs until the next plan.
  */
 export function useAutoplayPreloadPlan({
   active, getCards, position, timerMinutes, repeats, gapMs, cardGapMs, remainingMs, styleTick,
 }: AutoplayPreloadPlanOptions): PreloadPlan | null {
   const [plan, setPlan] = useState<PreloadPlan | null>(null);
+  // Clicks on Clear or Casual, wherever the switch is, while auto-play runs.
+  const [styleChoices, setStyleChoices] = useState(0);
   const getCardsRef = useLatest(getCards);
   const remainingMsRef = useLatest(remainingMs);
   const positionRef = useLatest(position);
@@ -47,10 +49,15 @@ export function useAutoplayPreloadPlan({
   };
 
   useEffect(() => {
+    if (!active) return;
+    return subscribeTtsStyleChosen(() => setStyleChoices(count => count + 1));
+  }, [active]);
+
+  useEffect(() => {
     setPlan(active ? planFrom(positionRef.current) : null);
     // The cards, the time left and the place are read as the plan is made; these are what make a new one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, timerMinutes, repeats, gapMs, cardGapMs, styleTick]);
+  }, [active, timerMinutes, repeats, gapMs, cardGapMs, styleTick, styleChoices]);
 
   // The card on screen left the planned cards: plan again from it.
   useEffect(() => {

@@ -23,6 +23,20 @@ export const setTtsStyle = (value: TtsStyle) => {
   styleListeners.forEach(callback => callback(value));
 };
 
+// A style the user picks by clicking Clear or Casual (SpeechStyleToggle, wherever it is), as against the voice a
+// sentence switches to as it comes up. Sentence auto-play plans its preload again from each one.
+const choiceListeners = new Set<(value: TtsStyle) => void>();
+export const subscribeTtsStyleChosen = (callback: (value: TtsStyle) => void) => {
+  choiceListeners.add(callback);
+  return () => { choiceListeners.delete(callback); };
+};
+/** Set the style the user picked: as setTtsStyle, and when it changes the style, tell subscribeTtsStyleChosen too. */
+export const chooseTtsStyle = (value: TtsStyle) => {
+  if (value === style) return;
+  setTtsStyle(value);
+  choiceListeners.forEach(callback => callback(value));
+};
+
 // ── Playback speed: adjustable voice rate for example sentences ────────────────
 // A persisted GLOBAL playback rate for the cached-clip (<audio>) path — i.e. the example-sentence
 // voice. Cached clips should play at their authored rate by default, so the default is 1.0×; it's

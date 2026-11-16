@@ -57,7 +57,7 @@ export interface PreloadInput {
   cardGapMs: number;
   /** The voice speed (1 is normal). */
   rate: number;
-  /** The speech style now, which a card without its own voice keeps. */
+  /** The speech style now: the card on screen plays in it, and the cards after it start from it. */
   currentStyle: TtsStyle;
   minCards?: number;
   cover?: number;
@@ -78,8 +78,9 @@ const cardMs = (card: PreloadCard, { repeats, gapMs, cardGapMs, rate }: PreloadI
 
 /**
  * The cards from `fromIndex` the session can reach, and their clips and pictures. Voices follow the reading as the card
- * view sets them: a card with its own voice switches to it, and one without keeps the voice the card before left, from
- * the style now on.
+ * view sets them: the card on screen plays in the style now on, even when a click on Clear or Casual set it apart from
+ * the card's own voice; after it, a card with its own voice switches to it, and one without keeps the voice the card
+ * before left.
  */
 export function planAutoplayPreload(input: PreloadInput): PreloadPlan {
   const { cards, remainingMs, currentStyle, minCards = PRELOAD_MIN_CARDS, cover = PRELOAD_COVER } = input;
@@ -93,7 +94,7 @@ export function planAutoplayPreload(input: PreloadInput): PreloadPlan {
   let index = fromIndex;
   while (index < cards.length && (index - fromIndex < minCards || estimateMs < target)) {
     const card = cards[index];
-    style = card.preferredStyle ?? style;
+    if (index > fromIndex) style = card.preferredStyle ?? style;
     for (const text of card.texts) {
       const key = `${style}\n${text}`;
       if (seen.has(key)) continue;

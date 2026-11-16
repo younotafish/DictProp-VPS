@@ -65,6 +65,13 @@ test('each sentence is fetched in the voice it will play in: its own, else the o
   assert.equal(fromCasual.clips[0].style, 'casual', 'from the style now on');
 });
 
+test('the sentence on screen is fetched in the style now on, even when a click set it apart from its own voice', () => {
+  const styles: Array<PreloadCard['preferredStyle']> = ['clear', undefined, undefined, 'clear', undefined];
+  const cards = sentences(5, index => ({ preferredStyle: styles[index] }));
+  const plan = planAutoplayPreload(review(cards, { currentStyle: 'casual', remainingMs: 0 }));
+  assert.deepEqual(plan.clips.map(clip => clip.style), ['casual', 'casual', 'casual', 'clear', 'clear']);
+});
+
 test('a text comes once per voice, and the pictures of the cards covered come with their versions', () => {
   const cards: PreloadCard[] = [
     { id: 'a', texts: ['Same.'], image: { id: 'a', version: '3' } },

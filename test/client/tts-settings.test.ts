@@ -46,6 +46,24 @@ test('a new speech style is stored and announced once', async () => {
   assert.deepEqual(heard, ['clear', 'casual'], 'an unsubscribed listener hears nothing more');
 });
 
+test('a style the user picks is set and announced as a choice; one set otherwise, or picked again, is not', async () => {
+  const storage = storageWith({});
+  const settings = await loadWith(storage);
+  const styles: string[] = [];
+  const chosen: string[] = [];
+  settings.subscribeTtsStyle(style => styles.push(style));
+  const unsubscribe = settings.subscribeTtsStyleChosen(style => chosen.push(style));
+  settings.chooseTtsStyle('casual');
+  settings.chooseTtsStyle('casual');
+  settings.setTtsStyle('clear');
+  assert.deepEqual(chosen, ['casual'], 'only the pick that changed the style');
+  assert.deepEqual(styles, ['clear', 'casual', 'clear']);
+  assert.equal(storage.getItem('tts_style'), 'clear');
+  unsubscribe();
+  settings.chooseTtsStyle('casual');
+  assert.deepEqual(chosen, ['casual'], 'an unsubscribed listener hears nothing more');
+});
+
 test('a stored rate is kept within 1x to 2x, and an unreadable one falls back to 1x', async () => {
   const rateFrom = async (stored: string) => (await loadWith(storageWith({ tts_rate: stored }))).getPlaybackRate();
   assert.equal(await rateFrom('1.5'), 1.5);
