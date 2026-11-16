@@ -32,7 +32,7 @@ export function WordPlaybackControls({
     <div className="fixed bottom-[max(1.5rem,env(safe-area-inset-bottom))] right-6 z-[60] flex items-center gap-2">
       {/* Clear ⇄ Casual speech style (global) — sits with the playback controls. */}
       <SpeechStyleToggle className="bg-white shadow-lg border border-slate-200" />
-      {/* Voice speed (global): default 1.1×, up to 2×. Distinct from the "Speed per slide" pill below. */}
+      {/* Voice speed (global): default 1×, up to 2×. Distinct from the "Speed per slide" pill below. */}
       <PlaybackSpeedToggle className="bg-white shadow-lg border border-slate-200" />
       <button
         onClick={onCycleTimer}
