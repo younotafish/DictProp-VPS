@@ -32,7 +32,7 @@ async function runningAutoPlay() {
   const Probe = () => {
     plans.push(useAutoplayPreloadPlan({
       active: true, getCards: () => CARDS, position: 0, timerMinutes: 20, repeats: 1, gapMs: 2000, cardGapMs: 2000,
-      remainingMs: () => 0, styleTick: 0,
+      remainingMs: () => 0,
     }));
     return null;
   };

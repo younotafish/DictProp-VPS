@@ -256,7 +256,6 @@ export function WordDetailView(props: DetailViewBodyProps) {
   // What example auto-play preloads (see SessionPreload): the cards it can reach in the time left, in reading order from
   // the one on screen (every meaning of each word in turn), and their pictures. A click on Clear or Casual plans the
   // voices again.
-  const [styleTick, setStyleTick] = useState(0);
   const flatPosition = useMemo(() => {
     const groupIndex = Math.min(currentGroupIndex, groups.length - 1);
     return groups.slice(0, Math.max(0, groupIndex)).reduce((count, group) => count + group.items.length, 0) + currentItemIndex;
@@ -270,7 +269,6 @@ export function WordDetailView(props: DetailViewBodyProps) {
     gapMs: sentenceGap,
     cardGapMs: CARD_GAP_MS,
     remainingMs,
-    styleTick,
   });
 
   const autoPlayReader = useAutoPlayReader({
@@ -352,7 +350,6 @@ export function WordDetailView(props: DetailViewBodyProps) {
   // repeats; otherwise the sentence that was playing or loading (only that one, in a two-example E run) starts again
   // from the top in the new voice.
   const handleStyleClicked = useCallback((_style: TtsStyle, before: PlaybackState) => {
-    setStyleTick(tick => tick + 1);
     if (isSentenceAutoPlayingRef.current) { autoPlayReader.restartRead(); return; }
     if (styleChangeReplay(before.status) === 'replay' && before.text) speakNatural(before.text, { allowDownload: true });
   }, [isSentenceAutoPlayingRef, autoPlayReader]);

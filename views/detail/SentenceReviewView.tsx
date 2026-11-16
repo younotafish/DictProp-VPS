@@ -312,7 +312,6 @@ export function SentenceReviewView({
 
   // What sentence auto-play preloads (see SessionPreload): the sentences it can reach in the time left, from the one on
   // screen, in the voices they'll play in, and their pictures. A click on Clear or Casual plans the voices again.
-  const [styleTick, setStyleTick] = useState(0);
   const preloadPlan = useAutoplayPreloadPlan({
     active: isSentenceAutoPlaying,
     getCards: () => preloadCards(sentenceItemsRef.current ?? [], true),
@@ -322,7 +321,6 @@ export function SentenceReviewView({
     gapMs: sentenceGap,
     cardGapMs: sentenceGap,
     remainingMs,
-    styleTick,
   });
 
   // Auto-play's pause for the taps and keys below, which are set up before its reader (whose listens they count).
@@ -366,7 +364,6 @@ export function SentenceReviewView({
   // it stays paused); otherwise what was playing or loading starts again from the top in the new voice. The engine
   // has already stopped it; a programmatic change of style (moving to a sentence with its own voice) never replays.
   const handleStyleClicked = useCallback((_style: TtsStyle, before: PlaybackState) => {
-    setStyleTick(tick => tick + 1);
     if (isSentenceAutoPlayingRef.current) { autoPlayReader.restartRead(); return; }
     if (styleChangeReplay(before.status) !== 'replay' || !before.text) return;
     const sentence = currentSentenceRef.current;

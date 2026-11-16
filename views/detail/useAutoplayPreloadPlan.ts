@@ -17,8 +17,6 @@ interface AutoplayPreloadPlanOptions {
   cardGapMs: number;
   /** What's left of the Duration (useAutoPlay's remainingMs). */
   remainingMs: () => number;
-  /** Bumped by a click on Clear or Casual: the voices are planned again from the new style. */
-  styleTick: number;
 }
 
 /**
@@ -29,7 +27,7 @@ interface AutoplayPreloadPlanOptions {
  * never replans, and neither does the voice speed, which the plan's margin absorbs until the next plan.
  */
 export function useAutoplayPreloadPlan({
-  active, getCards, position, timerMinutes, repeats, gapMs, cardGapMs, remainingMs, styleTick,
+  active, getCards, position, timerMinutes, repeats, gapMs, cardGapMs, remainingMs,
 }: AutoplayPreloadPlanOptions): PreloadPlan | null {
   const [plan, setPlan] = useState<PreloadPlan | null>(null);
   // Clicks on Clear or Casual, wherever the switch is, while auto-play runs.
@@ -57,7 +55,7 @@ export function useAutoplayPreloadPlan({
     setPlan(active ? planFrom(positionRef.current) : null);
     // The cards, the time left and the place are read as the plan is made; these are what make a new one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, timerMinutes, repeats, gapMs, cardGapMs, styleTick, styleChoices]);
+  }, [active, timerMinutes, repeats, gapMs, cardGapMs, styleChoices]);
 
   // The card on screen left the planned cards: plan again from it.
   useEffect(() => {
