@@ -6,8 +6,8 @@ import { warn } from '../services/logger';
 import { mergeComparisons, readCachedComparisons, writeCachedComparisons } from '../components/search/storedComparisons';
 
 // ── Word comparisons (persisted server + local, keyed by the word-set) ──────
-// The GENERATION queue lives in GlobalSearch (the bottom-right search queue) so comparisons behave
-// exactly like word searches. This hook just owns the persisted store + the save/lookup callbacks.
+// The GENERATION queue is the search queue (components/search/useSearchQueue, which GlobalSearch hosts), so
+// comparisons behave exactly like word searches. This hook just owns the persisted store + the save/lookup callbacks.
 export function useComparisons(authState: AuthState) {
   const [comparisons, setComparisons] = useState<StoredComparison[]>([]);
   // The current list, set together with the state (as useLibrary's latestItemsRef is), so a change made before
@@ -60,6 +60,5 @@ export function useComparisons(authState: AuthState) {
     window.dispatchEvent(new CustomEvent('global-compare', { detail: { words, result: existing?.data ?? null } }));
   }, []);
 
-  // Opening a saved comparison from a word page is the same request.
-  return { comparisons, handleCompareReady, handleCompare, handleOpenComparison: handleCompare };
+  return { comparisons, handleCompareReady, handleCompare };
 }
