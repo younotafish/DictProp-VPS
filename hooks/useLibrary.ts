@@ -8,7 +8,7 @@ import { excludePendingReviewItems, readPendingReviewMutations } from '../servic
 import { createSerialLane } from '../services/serialLane';
 import { pullOrSnapshot, syncSnapshot } from '../services/serverSync';
 import { hasUnsentChanges as anyUnsentChanges, selectUnsent } from '../services/unsentChanges';
-import { log, warn, error as logError } from '../services/logger';
+import { log, logError, warn } from '../services/logger';
 
 /**
  * The library of account `userId` in memory, and the pulls and pushes that keep it in step with the server.

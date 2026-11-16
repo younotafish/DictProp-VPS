@@ -3,7 +3,7 @@ import { getItemSpelling, getItemTitle, isPhraseItem, isVocabItem, type SearchRe
 import { IMAGE_IDB_MARKER, attachImage, extractInlineImages, offloadImages, restoreInlineImages, unsavedImages } from '../services/libraryImages';
 import { makeVocabStoredItem, saveOverExisting } from '../services/items';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
-import { log, warn, error as logError } from '../services/logger';
+import { log, logError, warn } from '../services/logger';
 import type { DetailViewState } from './useDetailView';
 import type { Library } from './useLibrary';
 import type { UndoOfferState } from './useUndoOffer';

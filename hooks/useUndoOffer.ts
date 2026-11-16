@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { getItemTitle, type StoredItem } from '../types';
-import { error as logError } from '../services/logger';
+import { logError } from '../services/logger';
 import { findInDetailContext, nextDetailKey, type DetailContext, type DetailViewState } from './useDetailView';
 import type { Library } from './useLibrary';
 

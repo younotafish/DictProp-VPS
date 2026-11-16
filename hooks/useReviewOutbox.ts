@@ -9,7 +9,7 @@ import { describeRefusedReview, isRefusedReviewMutation, recordRefusedReview } f
 import { drainReviewOutbox, reviewSeed } from '../services/reviewOutbox';
 import { isRealLifeProgressItem } from '../services/realLifeProgressIdentity';
 import { isEssayProgressItem } from '../services/essayProgressIdentity';
-import { log, warn, error as logError } from '../services/logger';
+import { log, logError, warn } from '../services/logger';
 import { useReviewHistory } from './useReviewHistory';
 import type { Library } from './useLibrary';
 

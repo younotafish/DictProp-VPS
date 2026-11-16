@@ -11,7 +11,7 @@ import { readPendingReviewMutations } from '../services/reviewQueue';
 import { prepareStoredLibrary } from '../services/libraryLaunch';
 import { sendBeforeLeaving } from '../services/unsentChanges';
 import { subscribeToServerMutations } from '../services/syncSignals';
-import { log, warn, error as logError } from '../services/logger';
+import { log, logError, warn } from '../services/logger';
 import { useLatest } from './useStableValue';
 import type { Library } from './useLibrary';
 
