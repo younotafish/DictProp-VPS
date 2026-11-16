@@ -23,8 +23,8 @@ export function useComparisons(authState: AuthState) {
   }, [userId]);
 
   // Restore from localStorage instantly, then merge in the server's list, once auth resolves. The merge keeps the
-  // comparisons the server doesn't have yet, and the newer copy of each, and sends those to the server: a save that
-  // failed (offline, a deploy, an expired session) is tried again at each load until it lands.
+  // comparisons the server doesn't have yet, and the newer copy of each, and sends the server the ones it doesn't
+  // have: a save that failed (offline, a deploy, an expired session) is tried again at each load until it lands.
   useEffect(() => {
     if (authState.loading || !userId) return;
     const cached = readCachedComparisons(userId);

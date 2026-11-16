@@ -42,7 +42,9 @@ const isStoredComparison = (entry: unknown): entry is StoredComparison => {
  * The comparison list once the server's list has arrived: the server's copies, each replaced by this device's copy
  * when that one is newer, then the comparisons only this device has (one that finished while the list was
  * loading, or one whose save failed). A tie goes to the server's copy, and a malformed local entry is dropped.
- * `toUpload` lists the local copies the server lacks or holds an older version of.
+ * `toUpload` lists the local copies the server lacks. A word set the server holds is never sent again, even when
+ * this device's copy is newer: the device stamps a copy with its own clock, which the server caps at a few minutes
+ * ahead of its own, so a device whose clock runs fast would keep replacing a copy another device saved later.
  */
 export function mergeComparisons(
   local: readonly StoredComparison[],
@@ -55,12 +57,7 @@ export function mergeComparisons(
   for (const entry of server) {
     const mine = localOnly.get(entry.key);
     localOnly.delete(entry.key);
-    if (mine && mine.updatedAt > entry.updatedAt) {
-      merged.push(mine);
-      toUpload.push(mine);
-    } else {
-      merged.push(entry);
-    }
+    merged.push(mine && mine.updatedAt > entry.updatedAt ? mine : entry);
   }
   for (const entry of localOnly.values()) {
     merged.push(entry);

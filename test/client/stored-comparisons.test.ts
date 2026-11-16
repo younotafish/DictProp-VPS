@@ -44,8 +44,19 @@ test('the server list comes first, each entry replaced by a newer copy from this
   const local = [comparison('decay|rot', 25), comparison('a|b', 30), comparison('fable|parable', 5)];
   const { merged, toUpload } = mergeComparisons(local, server);
   assert.deepEqual(merged, [comparison('fable|parable', 10), comparison('decay|rot', 25), comparison('a|b', 30)]);
-  // An equal or older local copy stays as the server has it and isn't sent again.
-  assert.deepEqual(toUpload, [comparison('decay|rot', 25)]);
+  // A word set the server holds isn't sent again, whichever copy is newer.
+  assert.deepEqual(toUpload, []);
+});
+
+test('a copy stamped by a fast clock never replaces the server copy another device saved later', () => {
+  const minute = 60_000;
+  // The phone, an hour fast, made 'fable vs parable' at T and stamped it T+60m; the server capped it at T+5m. The
+  // laptop made it again at T+20m, and the server took that copy. At T+30m the phone loads.
+  const fromPhone = comparison('fable|parable', 60 * minute);
+  const fromLaptop = { ...comparison('fable|parable', 20 * minute), data: { ...fromPhone.data, verdict: 'laptop' } };
+  const { merged, toUpload } = mergeComparisons([fromPhone], [fromLaptop]);
+  assert.deepEqual(merged, [fromPhone], 'the phone still shows its own copy');
+  assert.deepEqual(toUpload, [], "and doesn't send it, which would replace the laptop's later copy");
 });
 
 test('comparisons only this device has are kept, after the server list, and listed for upload', () => {
