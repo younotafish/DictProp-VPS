@@ -33,3 +33,12 @@ test("a popup whose code couldn't be fetched closes at once instead, keeping wha
   assert.deepEqual(callsOnCatch({ variant: 'overlay' }, chunkLoadError()), ['onReset']);
   assert.deepEqual(callsOnCatch({ variant: 'screen' }, chunkLoadError()), ['onError'], 'a screen shows its fallback for it');
 });
+
+test('a quiet boundary, for a pill in the notice stack, shows nothing for an error it catches', () => {
+  const quiet = new ErrorBoundary({ children: null, variant: 'quiet' });
+  quiet.state = { hasError: true, error: renderError() };
+  assert.equal(quiet.render(), null);
+  const overlay = new ErrorBoundary({ children: null, variant: 'overlay' });
+  overlay.state = { hasError: true, error: renderError() };
+  assert.notEqual(overlay.render(), null, 'a popup still gets its dialog');
+});

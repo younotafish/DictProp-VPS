@@ -232,7 +232,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
         imageRestoreProgress={imageRestoreProgress}
         jobPills={(speechProgress || batchImportProgress || forceSync || jobNotice) && (
           <Suspense fallback={null}>
-            <ErrorBoundary variant="overlay">
+            <ErrorBoundary variant="quiet">
               <JobPills
                 speechProgress={speechProgress}
                 onHideSpeechProgress={stopWatchingSpeechGeneration}
@@ -252,7 +252,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
         // Pushes failing twice in a row are when the pill can first show (it waits a minute after the first).
         stuckSyncPill={library.pushTrouble.failures >= 2 && (
           <Suspense fallback={null}>
-            <ErrorBoundary variant="overlay">
+            <ErrorBoundary variant="quiet">
               <StuckSyncPill library={library} online={isOnline} onRetry={retrySync} />
             </ErrorBoundary>
           </Suspense>
@@ -262,7 +262,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
         offlineChip={connectivityNotice({ offline: offlineSettled, onTab: !detailContext && !cardPopup }) === 'chip'}
         refusedChangesNotice={library.refusedChanges.length > 0 && (
           <Suspense fallback={null}>
-            <ErrorBoundary variant="overlay">
+            <ErrorBoundary variant="quiet">
               <RefusedChangesNotice items={library.refusedChanges} />
             </ErrorBoundary>
           </Suspense>

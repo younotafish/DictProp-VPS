@@ -24,3 +24,24 @@ test('the search\'s error boundary forgets the pending searches as it catches, s
   assert.equal(onError?.initializer?.getText(), '{clearPendingSearches}');
   assert.match(source, /^import \{ clearPendingSearches \} from '\.\/services\/searchSessionKeys';$/m, 'the search\'s own');
 });
+
+test('the pills in the notice stack fail quietly, not with a dialog the stack would leave unpressable', () => {
+  // The notice stack takes no clicks (pointer-events-none) and is translated, so a crash dialog drawn inside it could
+  // be neither pressed nor, on a phone without Escape, closed, while it made the page behind it inert.
+  const source = readRepoFile('App.tsx');
+  const app = ts.createSourceFile('App.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const variants = new Map<string, string | undefined>();
+  const visit = (node: ts.Node) => {
+    if ((ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) && ['JobPills', 'StuckSyncPill', 'RefusedChangesNotice'].includes(node.tagName.getText())) {
+      const element = ts.isJsxSelfClosingElement(node) ? node : node.parent;
+      const boundary = element.parent;
+      assert.ok(ts.isJsxElement(boundary) && boundary.openingElement.tagName.getText() === 'ErrorBoundary', `${node.tagName.getText()} sits right inside an error boundary`);
+      const variant = boundary.openingElement.attributes.properties
+        .find((attribute): attribute is ts.JsxAttribute => ts.isJsxAttribute(attribute) && attribute.name.getText() === 'variant');
+      variants.set(node.tagName.getText(), variant?.initializer?.getText());
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(app);
+  assert.deepEqual(Object.fromEntries(variants), { JobPills: '"quiet"', StuckSyncPill: '"quiet"', RefusedChangesNotice: '"quiet"' });
+});

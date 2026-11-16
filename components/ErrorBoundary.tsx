@@ -13,8 +13,10 @@ interface ErrorBoundaryProps {
   fallbackMessage?: string;
   /** "fullscreen" (default) shows a fixed overlay; "screen" fills a tab, leaving the navigation usable; "inline" shows a card-sized fallback;
    *  "overlay" shows a dialog over the app for a popup that failed, whose Close calls onReset and tries again.
-   *  A popup whose code couldn't be fetched closes at once instead: the update notice offers the reload that fetches it */
-  variant?: 'fullscreen' | 'screen' | 'inline' | 'overlay';
+   *  A popup whose code couldn't be fetched closes at once instead: the update notice offers the reload that fetches it.
+   *  "quiet" shows nothing, for a pill in the notice stack: the stack takes no clicks, so a dialog drawn inside it
+   *  could be neither pressed nor, on a phone, closed. The error is still logged. */
+  variant?: 'fullscreen' | 'screen' | 'inline' | 'overlay' | 'quiet';
 }
 
 interface ErrorBoundaryState {
@@ -63,6 +65,7 @@ export class ErrorBoundary extends React.Component<
 
   render() {
     if (this.state.hasError) {
+      if (this.props.variant === 'quiet') return null;
       if (this.props.variant === 'overlay') {
         // React keeps a failed lazy import's error, so trying again would only fail again.
         if (isChunkLoadError(this.state.error)) return null;
