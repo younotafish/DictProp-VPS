@@ -1,6 +1,10 @@
-import { createHash } from 'crypto';
+import { corpusSourceHash } from './corpus-hash.js';
 import { isUsageAudit, resolveUsageArchive, shouldArchiveUsage } from './shared/usage-audit.js';
 import { isItemType, isPositiveFinite, isRecord, isSha256, type ItemType } from './validation-helpers.js';
+
+// The hash lives in corpus-hash.ts, which the offline scripts load under plain node; the exporter and the importers
+// keep reaching it here.
+export { corpusSourceHash };
 
 export type CorpusItemType = ItemType;
 
@@ -29,22 +33,6 @@ export interface CorpusAuditBundle {
   generatedAt: number;
   model: string;
   entries: CorpusAuditEntry[];
-}
-
-function withoutImageFields(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(withoutImageFields);
-  if (!isRecord(value)) return value;
-  return Object.fromEntries(Object.entries(value)
-    .filter(([key]) => key !== 'imageUrl')
-    .map(([key, child]) => [key, withoutImageFields(child)]));
-}
-
-export function corpusSourceHash(data: unknown): string {
-  const stableData = isRecord(data)
-    ? Object.fromEntries(Object.entries(data).filter(([key]) =>
-        key !== 'analysis' && key !== 'analysisGeneratedAt' && key !== 'preferredSpeechStyle'))
-    : data;
-  return createHash('sha256').update(JSON.stringify(withoutImageFields(stableData))).digest('hex');
 }
 
 export function corpusAuditDataState(
