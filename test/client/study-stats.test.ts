@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReviewEvent, ReviewHistory, ReviewRating, StoredItem } from '../../types.ts';
-import { computeStudyStats, countDueSpellings } from '../../services/studyStats.ts';
+import { combineStudyStats, computeHistoryStats, computeItemStats, computeStudyStats, countDueSpellings } from '../../services/studyStats.ts';
 import { LibraryCounts } from '../../views/detail/LibraryCounts.tsx';
 
 const HOUR = 3_600_000;
@@ -198,4 +198,16 @@ test('older reviews, known only by when they happened, extend the streak and the
   assert.equal(stats.weeklyReviews, 7);
   assert.equal(stats.weeklyRecallRate, 86);
   assert.equal(stats.totalLifetimeReviews, 1_008); // most older reviews are beyond a streak's reach
+});
+
+test('the numbers come from one pass over the items and one over the history, the lifetime total never below the items\' own', () => {
+  const items = [vocab('a', 'run', { strength: 40, reviews: 6, streak: 2, due: NOW - HOUR }), vocab('b', 'walk', { reviews: 1 })];
+  const history: ReviewHistory = { recent: [review(NOW - HOUR), review(NOW - 2 * DAY, 'again')], olderTimes: [midnight(20)], olderCount: 3 };
+  const itemStats = computeItemStats(items, NOW);
+  const historyStats = computeHistoryStats(history, NOW);
+  assert.equal(itemStats.legacyReviewFloor, 7);
+  assert.equal(historyStats.lifetimeCount, 5);
+  assert.deepEqual(computeStudyStats(items, history, NOW), combineStudyStats(itemStats, historyStats));
+  assert.equal(computeStudyStats(items, history, NOW).totalLifetimeReviews, 7, 'the items count more reviews than the history holds');
+  assert.equal(computeStudyStats(items, { ...history, olderCount: 30 }, NOW).totalLifetimeReviews, 32);
 });

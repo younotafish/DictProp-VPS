@@ -20,6 +20,18 @@ export interface StudyStats {
   last7Days: { day: number; reviews: number }[];
 }
 
+/** The numbers counted over the items, which change with the library and the clock. */
+export interface ItemStats extends Pick<StudyStats, 'due' | 'mastery' | 'total' | 'avgStrength' | 'longestStreak' | 'mostReviewed'> {
+  /** The items' own review counts summed: the lifetime total while the history holds fewer reviews. */
+  legacyReviewFloor: number;
+}
+
+/** The numbers counted over the review history, which change with the history and the day. */
+export interface HistoryStats extends Pick<StudyStats, 'streak' | 'weeklyReviews' | 'weeklyRecallRate' | 'last7Days'> {
+  /** How many reviews the history knows of, however old. */
+  lifetimeCount: number;
+}
+
 const STREAK_DAYS = 365;
 const MOST_REVIEWED = 3;
 
@@ -41,16 +53,8 @@ export function countDueSpellings(items: readonly StoredItem[], now: number): nu
   return spellings.size;
 }
 
-/**
- * The study dashboard's numbers, from a pass over the items (and countDueSpellings') and one over the review
- * history. Review days are found against precomputed local midnights rather than by formatting a date per
- * review, which mattered once the history grew to tens of thousands of reviews.
- */
-export function computeStudyStats(
-  items: readonly StoredItem[],
-  history: ReviewHistory,
-  now = Date.now(),
-): StudyStats {
+/** The study dashboard's numbers from one pass over the items (and countDueSpellings'). */
+export function computeItemStats(items: readonly StoredItem[], now: number): ItemStats {
   const mastery: Record<MasteryKey, number> = { grandmaster: 0, mastered: 0, proficient: 0, learning: 0, struggling: 0, new: 0 };
   let strengthSum = 0;
   let legacyReviewFloor = 0;
@@ -76,6 +80,23 @@ export function computeStudyStats(
     }
   }
 
+  return {
+    due: countDueSpellings(items, now),
+    mastery,
+    total: items.length,
+    avgStrength: items.length > 0 ? Math.round(strengthSum / items.length) : 0,
+    longestStreak,
+    mostReviewed,
+    legacyReviewFloor,
+  };
+}
+
+/**
+ * The study dashboard's numbers from one pass over the review history, for the day `now` falls on. Review days are
+ * found against precomputed local midnights rather than by formatting a date per review, which mattered once the
+ * history grew to tens of thousands of reviews.
+ */
+export function computeHistoryStats(history: ReviewHistory, now: number): HistoryStats {
   // bounds[0] is tomorrow's midnight and bounds[d + 1] the midnight starting the day d days ago, so a
   // review on day d satisfies bounds[d] > reviewedAt >= bounds[d + 1].
   const today = new Date(now);
@@ -120,19 +141,29 @@ export function computeStudyStats(
   }
 
   return {
-    due: countDueSpellings(items, now),
-    mastery,
-    total: items.length,
-    avgStrength: items.length > 0 ? Math.round(strengthSum / items.length) : 0,
     streak,
     weeklyReviews,
     weeklyRecallRate: weeklyReviews > 0 ? Math.round((weeklyRecalled / weeklyReviews) * 100) : 0,
-    totalLifetimeReviews: Math.max(history.olderCount + history.recent.length, legacyReviewFloor),
-    longestStreak,
-    mostReviewed,
+    lifetimeCount: history.olderCount + history.recent.length,
     last7Days: Array.from({ length: 7 }, (_, i) => {
       const day = 6 - i;
       return { day: bounds[day + 1], reviews: reviewsByDay[day] };
     }),
   };
+}
+
+/** The dashboard's numbers from the two passes: the lifetime total never falls below the items' own counts. */
+export function combineStudyStats(itemStats: ItemStats, historyStats: HistoryStats): StudyStats {
+  const { legacyReviewFloor, ...fromItems } = itemStats;
+  const { lifetimeCount, ...fromHistory } = historyStats;
+  return { ...fromItems, ...fromHistory, totalLifetimeReviews: Math.max(lifetimeCount, legacyReviewFloor) };
+}
+
+/** The study dashboard's numbers, from a pass over the items and one over the review history. */
+export function computeStudyStats(
+  items: readonly StoredItem[],
+  history: ReviewHistory,
+  now = Date.now(),
+): StudyStats {
+  return combineStudyStats(computeItemStats(items, now), computeHistoryStats(history, now));
 }
