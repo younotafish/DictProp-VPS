@@ -62,8 +62,8 @@ interface StudyEnhancedProps {
   ) => Promise<boolean>;
   onUndoReview: (eventId: string) => Promise<void>;
   onOpenExampleSentence: (text: string, sourceWord: string, sourceSense?: string) => void;
-  /** Opens the card view on `groups` (App's handleViewStoredItem): the summary's missed words open their cards
-   *  through it. */
+  /** Opens the card view on `groups` (App's handleViewStoredItem): the words the summary lists to look at again open
+   *  their cards through it. */
   onViewCards: (groups: ItemGroup[], groupIndex: number, itemIndex: number) => void;
   interactionLocked?: boolean;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
@@ -393,7 +393,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     const undo = () => void undoLastGrade();
     if (showingSummary || !currentItem) {
       const summary = summarizeSession(session);
-      // The missed words still in the library; each opens the card view with them all as its list.
+      // The words to look at again (rated Again or Hard) still in the library; each opens the card view with them all
+      // as its list.
       const missedItems = summary.missedIds.flatMap(id => itemsById.get(id) ?? []);
       const openMissed = (index: number) => onViewCards(
         missedItems.map(item => ({ title: getItemTitle(item), items: [item] })), index, 0,

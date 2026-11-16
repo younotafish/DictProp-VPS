@@ -476,7 +476,8 @@ test('undoing a miss takes the card off the missed list, unless another Again or
 });
 
 const summaryMarkup = (props: Partial<Parameters<typeof StudySummary>[0]> = {}) => renderToStaticMarkup(createElement(StudySummary, {
-  summary: { total: 50, graded: 50, counts: { again: 3, hard: 2, good: 40, easy: 5 }, missedIds: ['a', 'b'] },
+  // crestfallen was rated Again, then Good when it came back at the end; give up was rated Hard.
+  summary: { total: 50, graded: 50, counts: { again: 1, hard: 1, good: 44, easy: 5 }, missedIds: ['a', 'b'] },
   endedEarly: false,
   missed: [{ id: 'a', title: 'crestfallen' }, { id: 'b', title: 'give up' }],
   onOpenMissed: () => {}, canUndo: false, undoing: false, undoError: '', onUndo: () => {}, onDone: () => {},
@@ -484,16 +485,25 @@ const summaryMarkup = (props: Partial<Parameters<typeof StudySummary>[0]> = {}) 
 }));
 const summaryText = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
-test('the summary names the session\'s cards, the missed words in order, and ends with Done; with none missed there is no list', () => {
+test('the summary names the session\'s cards, the words to look at again in order, and ends with Done; with none there is no list', () => {
   const markup = summaryMarkup();
   assert.match(markup, /<h2 class="text-2xl font-bold text-slate-800">Session complete · 50 cards<\/h2>/);
-  assert.match(summaryText(markup), /Recalled 47 of 50 prompts\. Missed \(2\) Review missed words crestfallen give up Done$/);
+  assert.match(summaryText(markup), /Recalled 50 of 51 prompts\. To look at again \(2\) Open these cards crestfallen give up Done$/);
   assert.match(markup, /<button class="px-2\.5 py-1 rounded-full bg-rose-50 text-rose-700 text-sm hover:bg-rose-100">crestfallen<\/button><button [^>]*>give up<\/button>/);
   assert.match(markup, /<button class="w-full h-12 bg-slate-900 text-white font-semibold rounded-lg hover:bg-slate-800" aria-keyshortcuts="Enter">Done<\/button><\/div>$/);
   assert.doesNotMatch(markup, /Return to study/);
   const noneMissed = summaryMarkup({ summary: { total: 1, graded: 1, counts: { again: 0, hard: 0, good: 1, easy: 0 }, missedIds: [] }, missed: [] });
   assert.match(noneMissed, />Session complete · 1 card</);
-  assert.doesNotMatch(noneMissed, /Missed/, 'with none missed there is no list');
+  assert.doesNotMatch(noneMissed, /To look at again|Open these cards/, 'with none rated Again or Hard there is no list');
+});
+
+test('Hard counts as recalled, as FSRS and the dashboard count it, and its words are listed to look at again, never as missed', () => {
+  const ids = ['w0', 'w1', 'w2'];
+  const allHard = session({ itemIds: ids, grades: ids.map((itemId, at) => ({ itemId, rating: 'hard', at })) });
+  const summary = summarizeSession(allHard);
+  const text = summaryText(summaryMarkup({ summary, missed: summary.missedIds.map(id => ({ id, title: `word ${id}` })) }));
+  assert.match(text, /Recalled 3 of 3 prompts\. To look at again \(3\) Open these cards word w0 word w1 word w2 Done$/);
+  assert.doesNotMatch(text, /[Mm]issed/);
 });
 
 test('the summary keeps its undo for the last rating, and says when an undo failed', () => {

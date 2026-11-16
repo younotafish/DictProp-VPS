@@ -1,7 +1,7 @@
 import { Play, Undo2, X } from 'lucide-react';
 import { RATINGS, type SessionSummary } from '../../services/studySession';
 
-/** A missed word on the summary: its card's id and title. */
+/** A word on the summary's list to look at again (rated Again or Hard): its card's id and title. */
 export interface MissedWord {
   id: string;
   title: string;
@@ -14,9 +14,9 @@ interface StudySummaryProps {
   endedEarly: boolean;
   /** Takes up a session ended early at the card it was on; absent once no card is left. */
   onResume?: () => void;
-  /** The missed words still in the library, in the order they were first missed. */
+  /** The words rated Again or Hard still in the library, in the order of their first such grade (summarizeSession). */
   missed: MissedWord[];
-  /** Opens the card view on the missed word at `index`, with the missed words as its list. */
+  /** Opens the card view on the word at `index` of that list, with the list's words as its own. */
   onOpenMissed: (index: number) => void;
   /** Whether the session's last grade can still be undone, and whether an undo is under way. */
   canUndo: boolean;
@@ -29,8 +29,9 @@ interface StudySummaryProps {
 
 /**
  * The end of a study session, finished or ended early: how many cards it held and how many were reviewed, how each
- * grade was given, the words missed (each opens its card), an undo for the last grade, Resume for a session ended
- * early, and Done.
+ * grade was given, the words to look at again (each opens its card), an undo for the last grade, Resume for a session
+ * ended early, and Done. The recall line counts Hard as recalled, as FSRS and the dashboard do; the list holds the
+ * Hard words too, so its heading says they're worth another look rather than missed.
  */
 export function StudySummary({ summary, endedEarly, onResume, missed, onOpenMissed, canUndo, undoing, undoError, onUndo, onDone }: StudySummaryProps) {
   const { counts: ratings, total, graded } = summary;
@@ -56,8 +57,8 @@ export function StudySummary({ summary, endedEarly, onResume, missed, onOpenMiss
       {missed.length > 0 && (
         <section className="mb-6">
           <div className="flex items-baseline justify-between gap-3 mb-2">
-            <h3 className="text-sm font-semibold text-slate-700">Missed ({missed.length})</h3>
-            <button onClick={() => onOpenMissed(0)} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800">Review missed words</button>
+            <h3 className="text-sm font-semibold text-slate-700">To look at again ({missed.length})</h3>
+            <button onClick={() => onOpenMissed(0)} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800">Open these cards</button>
           </div>
           <div className="flex flex-wrap gap-2">
             {missed.map((word, index) => (
