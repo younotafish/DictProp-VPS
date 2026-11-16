@@ -336,6 +336,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
             onReview={updateSRS}
             onUndoReview={undoSRSReview}
             onOpenExampleSentence={handleOpenStudyExample}
+            onViewCards={handleViewStoredItem}
             interactionLocked={!!detailContext}
             onScroll={handleScroll}
           />
