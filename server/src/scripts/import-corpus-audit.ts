@@ -1,5 +1,5 @@
 import { corpusAuditImportState, validateCorpusAuditBundle, type CorpusAuditBundle } from '../corpus-audit.js';
-import { db, getAllItems, upsertMany } from '../db.js';
+import { getAllItems, upsertMany } from '../db.js';
 import { backupBeforeWrite, recordStale } from '../import-support.js';
 import { isSentenceAnalysis } from '../sentence-analysis.js';
 import { validateStoredItem } from '../validation.js';
@@ -110,20 +110,18 @@ const recordWrite = (candidate: any, conflicts: Set<string>) => {
 // The audited data is the whole item: it must match the audited hash exactly, so a server-owned field
 // it leaves out is removed rather than carried over from the stored row.
 const writeOptions = { replaceServerFields: true };
-// Each write takes the write lock before its first read: one that has read can't wait for a save the live app is
-// making, and would fail at once.
-const writeItems = db.transaction((items: typeof pending) => upsertMany(items, owner.id, writeOptions));
+// upsertMany takes the write lock as it begins, so a batch waits for a save the live app is making.
 for (let index = 0; index < pending.length; index += 500) {
   const batch = pending.slice(index, index + 500);
   try {
-    const write = writeItems.immediate(batch);
+    const write = upsertMany(batch, owner.id, writeOptions);
     const conflicts = new Set(write.conflicts);
     for (const candidate of batch) recordWrite(candidate, conflicts);
   } catch (batchError) {
     // Isolate a bad legacy record instead of losing every valid item in its transaction batch.
     for (const candidate of batch) {
       try {
-        const write = writeItems.immediate([candidate]);
+        const write = upsertMany([candidate], owner.id, writeOptions);
         recordWrite(candidate, new Set(write.conflicts));
       } catch (error) {
         result.skipped++;
