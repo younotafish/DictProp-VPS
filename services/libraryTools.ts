@@ -6,8 +6,9 @@
  * or they'd join that code.
  */
 export { runBatchImport } from './batchImport';
-export { describeBatchResult, describeDuplicateScan } from './jobNotices';
+export { describeBatchResult, describeDuplicateScan, describeSpeechResult, retryingPoll } from './jobNotices';
 export { findDuplicateClusterViews } from './duplicateClusters';
 export { applyMerges } from './mergeDuplicates';
 export { restoreImagesToServer } from './imageRestore';
-export { describeSweepOutcome, runSpeechSweep } from './speechSweep';
+export { runSpeechSweep } from './speechSweep';
+export { getTtsBackfillStatus } from './api/tts';

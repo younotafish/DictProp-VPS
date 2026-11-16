@@ -1,7 +1,7 @@
 import React from 'react';
-import { NoticePill } from './NoticePill';
+import { NoticePill, type NoticeAction } from './NoticePill';
 import type { BatchImportStatus } from '../hooks/useBatchImport';
-import type { SpeechBackfill } from '../hooks/useSpeechBackfill';
+import type { SpeechProgress } from '../hooks/useSpeechBackfill';
 import { count, type JobNotice } from '../services/jobNotices';
 
 /**
@@ -9,14 +9,6 @@ import { count, type JobNotice } from '../services/jobNotices';
  * group only while one shows, and their code loads with the notebook tools after the first screen, so none of it is
  * in the app's first chunk.
  */
-
-/** The speech sweep's progress line, with its rough time left. */
-const describeSpeechGeneration = ({ current, total }: { current: number; total: number }): string => {
-  const rem = total - current;
-  if (rem <= 0) return `Generating sentence audio · ${current}/${total}`;
-  const mins = Math.ceil((rem * 2.75) / 4 / 60);
-  return `Generating sentence audio · ${current}/${total} · ~${mins}m left`;
-};
 
 /** A batch import under way, with a × that stops it once the words under way are done. */
 const BatchImportPill: React.FC<{ status: BatchImportStatus; onStop: () => void }> = ({ status, onStop }) => {
@@ -36,9 +28,31 @@ const BatchImportPill: React.FC<{ status: BatchImportStatus; onStop: () => void 
   );
 };
 
+interface JobNoticePillProps {
+  notice: JobNotice;
+  /** A batch import is running, whose end a batch import's Retry waits for. */
+  importing: boolean;
+  onRetry: (notice: JobNotice) => void;
+  onDismiss: () => void;
+}
+
+/** A background job's result: Retry when it offers one, and a × that dismisses it. A failure is an alert. */
+const JobNoticePill: React.FC<JobNoticePillProps> = ({ notice, importing, onRetry, onDismiss }) => {
+  const dismiss: NoticeAction = { label: 'Dismiss this notice', title: 'Dismiss', dismiss: true, onClick: onDismiss };
+  const actions = notice.retryWords || notice.retry
+    ? [{ label: 'Retry', onClick: () => onRetry(notice), disabled: !!notice.retryWords && importing }, dismiss]
+    : [dismiss];
+  return (
+    <NoticePill tone={notice.tone} role={notice.tone === 'rose' ? 'alert' : 'status'} actions={actions}>
+      {notice.text}
+    </NoticePill>
+  );
+};
+
 export interface JobPillsProps {
-  ttsGenProgress: SpeechBackfill['ttsGenProgress'];
-  onStopSpeechGeneration: () => void;
+  /** The watched speech sweep; its × hides the pill, and the server carries on. */
+  speechProgress: SpeechProgress | null;
+  onHideSpeechProgress: () => void;
   /** A batch import under way, which the pill's × stops. */
   batchImportProgress: BatchImportStatus | null;
   onStopBatchImport: () => void;
@@ -50,35 +64,31 @@ export interface JobPillsProps {
 
 /** The progress group's job pills, in order: the speech sweep, a batch import, then the last job's result. */
 export const JobPills: React.FC<JobPillsProps> = ({
-  ttsGenProgress, onStopSpeechGeneration, batchImportProgress, onStopBatchImport, jobNotice, onRetryJob,
+  speechProgress, onHideSpeechProgress, batchImportProgress, onStopBatchImport, jobNotice, onRetryJob,
   onDismissJobNotice,
 }) => (
   <>
-    {ttsGenProgress?.isRunning && (
+    {speechProgress && (
       <NoticePill
         tone="indigo"
         spinner
-        progress={ttsGenProgress.total > 0 ? ttsGenProgress.current / ttsGenProgress.total : 0}
-        actions={[{ label: 'Stop generating sentence audio', title: 'Stop generating', dismiss: true, onClick: onStopSpeechGeneration }]}
+        progress={speechProgress.total > 0 ? speechProgress.current / speechProgress.total : 0}
+        actions={[{
+          label: 'Hide sentence audio progress; generation continues on the server', title: 'Hide', dismiss: true,
+          onClick: onHideSpeechProgress,
+        }]}
       >
-        {describeSpeechGeneration(ttsGenProgress)}
+        {`Sentence audio · ${count(speechProgress.current)}/${count(speechProgress.total)}`}
       </NoticePill>
     )}
     {batchImportProgress && <BatchImportPill status={batchImportProgress} onStop={onStopBatchImport} />}
     {jobNotice && (
-      <NoticePill
-        tone={jobNotice.tone}
-        role={jobNotice.tone === 'rose' ? 'alert' : 'status'}
-        actions={[
-          // A batch import's Retry waits for the import under way to end.
-          ...(jobNotice.retryWords
-            ? [{ label: 'Retry', onClick: () => onRetryJob(jobNotice), disabled: batchImportProgress !== null }]
-            : []),
-          { label: 'Dismiss this notice', title: 'Dismiss', dismiss: true, onClick: onDismissJobNotice },
-        ]}
-      >
-        {jobNotice.text}
-      </NoticePill>
+      <JobNoticePill
+        notice={jobNotice}
+        importing={batchImportProgress !== null}
+        onRetry={onRetryJob}
+        onDismiss={onDismissJobNotice}
+      />
     )}
   </>
 );

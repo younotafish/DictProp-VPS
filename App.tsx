@@ -146,8 +146,8 @@ function SignedInApp({ user }: { user: AuthUser }) {
     isLoaded, libraryReadFailed, retryLibraryLoad, openWithServerCopy, syncStatus, libraryWriteFailed, handleForceSync, handleSignOut,
   } = useLibrarySync(user.id, library, { flushPendingReviews, closeUndoOffer, prefetchImages: offlineImages.prefetchImages });
 
-  const speech = useSpeechBackfill(overlays);
-  const { ttsGenProgress, ttsGenAbortRef, handleGenerateAllSpeech } = speech;
+  const speech = useSpeechBackfill(jobs);
+  const { speechProgress, speechGenerationRunning, stopWatchingSpeechGeneration, handleGenerateAllSpeech } = speech;
   const { handleFindDuplicates, handleMergeDuplicates } = useDuplicateMerge(library, overlays, jobs);
   const actions = useLibraryActions(library, detail, undo);
   const {
@@ -155,11 +155,12 @@ function SignedInApp({ user }: { user: AuthUser }) {
     patchLiveItem, handleSaveSentence, handleRefreshReplace, resetSRS,
   } = actions;
   const { batchImportProgress, batchImportRunning, handleBatchImport, stopBatchImport } = useBatchImport(library, jobs, actions, speech);
-  // A job result's Retry: a batch import's failed words, imported again.
+  // A job result's Retry: a batch import's failed words imported again, or the speech sweep started again.
   const retryJob = useCallback((notice: JobNotice) => {
     dismissJobNotice();
     if (notice.retryWords) void handleBatchImport(notice.retryWords);
-  }, [dismissJobNotice, handleBatchImport]);
+    else if (notice.retry === 'speech') handleGenerateAllSpeech();
+  }, [dismissJobNotice, handleBatchImport, handleGenerateAllSpeech]);
 
   const { fetchSensesForWord, saveVocabSense } = useSenseLookup(handleSave);
 
@@ -224,12 +225,12 @@ function SignedInApp({ user }: { user: AuthUser }) {
         imagePrefetchProgress={imagePrefetchProgress}
         onStopImageDownload={stopImageDownload}
         imageRestoreProgress={imageRestoreProgress}
-        jobPills={(ttsGenProgress?.isRunning || batchImportProgress || jobNotice) && (
+        jobPills={(speechProgress || batchImportProgress || jobNotice) && (
           <Suspense fallback={null}>
             <ErrorBoundary variant="overlay">
               <JobPills
-                ttsGenProgress={ttsGenProgress}
-                onStopSpeechGeneration={() => { ttsGenAbortRef.current = true; }}
+                speechProgress={speechProgress}
+                onHideSpeechProgress={stopWatchingSpeechGeneration}
                 batchImportProgress={batchImportProgress}
                 onStopBatchImport={stopBatchImport}
                 jobNotice={jobNotice}
@@ -351,7 +352,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
             onJSONImported={handleForceSync}
             batchImportRunning={batchImportRunning}
             onGenerateAllSpeech={handleGenerateAllSpeech}
-            speechGenerationRunning={!!ttsGenProgress?.isRunning}
+            speechGenerationRunning={speechGenerationRunning}
             onRestoreImagesToServer={handleRestoreImagesToServer}
             imageRestoreRunning={imageRestoreProgress !== null}
             onDownloadOfflineImages={handleDownloadOfflineImages}

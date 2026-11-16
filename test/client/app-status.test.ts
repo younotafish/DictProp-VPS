@@ -37,8 +37,8 @@ const renderStack = (props: Partial<StackProps> = {}) => renderToStaticMarkup(cr
 
 type JobProps = ComponentProps<typeof JobPills>;
 const noJobs: JobProps = {
-  ttsGenProgress: null,
-  onStopSpeechGeneration: () => {},
+  speechProgress: null,
+  onHideSpeechProgress: () => {},
   batchImportProgress: null,
   onStopBatchImport: () => {},
   jobNotice: null,
@@ -87,10 +87,10 @@ test('the stack keeps its notices in order of how long they stay: undo, search, 
   const html = renderStack({
     undoMessage: 'Deleted “gamut”',
     imagePrefetchProgress: { done: 3, total: 40 },
-    jobPills: jobPills({ ttsGenProgress: { isRunning: true, current: 10, total: 100 } }),
+    jobPills: jobPills({ speechProgress: { current: 10, total: 100 } }),
   });
   const order = ['Deleted “gamut”', 'data-notice-slot="search"', 'data-notice-slot="progress"', 'Offline images · 3/40',
-    'Generating sentence audio · 10/100', '1 review wasn’t accepted', 'Update ready'].map(text => html.indexOf(text));
+    'Sentence audio · 10/100', '1 review wasn’t accepted', 'Update ready'].map(text => html.indexOf(text));
   assert.ok(order.every(index => index >= 0), `every notice renders: ${order}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order);
 });
@@ -130,7 +130,7 @@ test('every pill is capped short of the search button\'s column and truncates it
     undoMessage: 'Deleted “gamut”',
     imagePrefetchProgress: { done: 3, total: 40 },
     imageRestoreProgress: { phase: 'uploading', done: 1, total: 4, failed: 0 },
-    jobPills: jobPills({ ttsGenProgress: { isRunning: true, current: 10, total: 100 } }),
+    jobPills: jobPills({ speechProgress: { current: 10, total: 100 } }),
   });
   const pills = [...html.matchAll(/<div role="status"[^>]*class="([^"]*)"/g)].map(match => match[1]);
   assert.equal(pills.length, 6);
@@ -162,19 +162,22 @@ test('the update notice says it in two words, with the sentence as its title and
   }
 });
 
-test('the jobs keep their texts and their stop buttons', () => {
-  const html = renderStack({
-    imagePrefetchProgress: { done: 40, total: 40 },
-    jobPills: jobPills({ ttsGenProgress: { isRunning: true, current: 7_000, total: 7_000 } }),
-  });
+test('the image jobs keep their texts and their stop button', () => {
+  const html = renderStack({ imagePrefetchProgress: { done: 40, total: 40 } });
   assert.match(html, /aria-label="Stop downloading offline images"/);
   assert.match(html, /title="Stop downloading"/);
-  assert.match(html, /aria-label="Stop generating sentence audio"/);
-  assert.match(html, />Generating sentence audio · 7000\/7000</, 'no time left at the end');
-  assert.equal([...html.matchAll(/animate-spin/g)].length, 1, 'a finished download stops spinning; the speech sweep spins until it ends');
-  assert.match(renderJobs({ ttsGenProgress: { isRunning: true, current: 0, total: 100 } }), / · ~2m left</);
+  assert.doesNotMatch(html, /animate-spin/, 'a finished download stops spinning');
   assert.match(renderStack({ imageRestoreProgress: { phase: 'failed', done: 0, total: 0, failed: 0 } }), /bg-rose-600/);
   assert.match(renderStack({ imageRestoreProgress: { phase: 'done', done: 4, total: 4, failed: 0 } }), /bg-emerald-600[^>]*><span class="min-w-0 truncate">Restored 4 images to the server ✓/);
+});
+
+test('the speech sweep shows its progress, with no time estimate, and a × that only hides it: the server carries on', () => {
+  const html = renderJobs({ speechProgress: { current: 1_200, total: 7_000 } });
+  assert.match(html, /<span class="min-w-0 truncate">Sentence audio · 1,200\/7,000<\/span>/);
+  assert.match(html, /style="width:17%"/, 'the bar');
+  assert.match(html, /animate-spin/, 'it spins until the server is done');
+  assert.match(html, /<button type="button" title="Hide" aria-label="Hide sentence audio progress; generation continues on the server"/);
+  assert.doesNotMatch(html, /left<|Stop generating|Generating/);
 });
 
 const importing = (current: number, total: number, stopping = false) =>
@@ -214,12 +217,12 @@ test('the jobs come after the progress slot, and the last result just above the 
   const html = renderStack({
     imagePrefetchProgress: { done: 3, total: 40 },
     jobPills: jobPills({
-      ttsGenProgress: { isRunning: true, current: 10, total: 100 },
+      speechProgress: { current: 10, total: 100 },
       batchImportProgress: importing(12, 40),
       jobNotice: { text: 'No duplicates found', tone: 'emerald', timeoutMs: 3_000 },
     }),
   });
-  const order = ['data-notice-slot="progress"', 'Offline images · 3/40', 'Generating sentence audio', 'Adding words · 12/40',
+  const order = ['data-notice-slot="progress"', 'Offline images · 3/40', 'Sentence audio · 10/100', 'Adding words · 12/40',
     'No duplicates found', '1 review wasn’t accepted'].map(text => html.indexOf(text));
   assert.ok(order.every(index => index >= 0), `every notice renders: ${order}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order);
