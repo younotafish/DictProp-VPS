@@ -254,9 +254,9 @@ image_pipeline_busy() {
   log "another local image pipeline is active (pid ${pids% }); $1 wait for a later cycle"
 }
 
-# Has the sentence-backfill workflow export the production corpus, waits for that run and fetches the corpus
-# into CURRENT_CORPUS. The run's id names the cycle: CYCLE_ID.
-export_corpus() {
+# Has the sentence-backfill workflow export the production corpus and waits for that run, EXPORT_RUN_ID, to end;
+# EXPORT_CONCLUSION says how it ended. A run it can't find, or one that doesn't finish in time, ends the cycle.
+run_corpus_export() {
   PREVIOUS_RUN_ID="$(gh_bounded run list \
     --repo "$REPO" --workflow sentence-backfill.yml --event workflow_dispatch --limit 1 \
     --json databaseId --jq 'if length == 0 then 0 else .[0].databaseId end')"
@@ -287,7 +287,6 @@ export_corpus() {
     echo "Could not identify the dispatched corpus export workflow" >&2
     exit 1
   fi
-  CYCLE_ID="$EXPORT_RUN_ID"
 
   log "waiting for corpus export run $EXPORT_RUN_ID"
   EXPORT_DEADLINE="$(deadline_after "$CORPUS_EXPORT_WAIT_SECONDS")"
@@ -295,19 +294,25 @@ export_corpus() {
     EXPORT_STATE="$(gh_bounded run view "$EXPORT_RUN_ID" --repo "$REPO" --json status,conclusion \
       --jq '[.status, .conclusion] | @tsv' 2>/dev/null || true)"
     IFS=$'\t' read -r EXPORT_STATUS EXPORT_CONCLUSION <<< "$EXPORT_STATE"
-    if [ "$EXPORT_STATUS" = completed ]; then
-      if [ "$EXPORT_CONCLUSION" != success ]; then
-        echo "Corpus export run $EXPORT_RUN_ID ended as $EXPORT_CONCLUSION" >&2
-        exit 1
-      fi
-      break
-    fi
+    if [ "$EXPORT_STATUS" = completed ]; then return 0; fi
     if deadline_passed "$EXPORT_DEADLINE"; then
       echo "Corpus export run $EXPORT_RUN_ID did not finish within ${CORPUS_EXPORT_WAIT_SECONDS}s; ending this cycle" >&2
       exit 1
     fi
     sleep 10
   done
+}
+
+# Exports the production corpus into CURRENT_CORPUS. The successful run's id names the cycle: CYCLE_ID. The run's
+# conclusion is read from a variable rather than run_corpus_export's status, since calling it in a condition would
+# turn set -e off inside it.
+export_corpus() {
+  run_corpus_export
+  if [ "$EXPORT_CONCLUSION" != success ]; then
+    echo "Corpus export run $EXPORT_RUN_ID ended as $EXPORT_CONCLUSION" >&2
+    exit 1
+  fi
+  CYCLE_ID="$EXPORT_RUN_ID"
   # The run left the corpus as an encrypted artifact; fetching it deletes the artifact and the run's log.
   GH_BIN="$GH_BIN" NODE_BIN="$NODE_BIN" SENTENCE_BRIDGE_KEY_FILE="$KEY_FILE" GITHUB_REPOSITORY="$REPO" \
     scripts/offline/fetch-workflow-export.sh "$EXPORT_RUN_ID" corpus-export "$CURRENT_CORPUS"
