@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import ts from 'typescript';
+import { readRepoFile } from '../support/paths.ts';
+
+// App.tsx's wiring that no rendered test reaches, read from its source: the signed-in app needs a browser to mount.
+
+test('the search\'s error boundary forgets the pending searches as it catches, so closing it or reloading starts afresh', () => {
+  // Otherwise Close, Reload App or a browser reload runs the crashed search's requests again, bringing back a result
+  // that crashes it whenever it's opened (components/ErrorBoundary calls onError as it catches).
+  const source = readRepoFile('App.tsx');
+  const app = ts.createSourceFile('App.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const searches: ts.JsxSelfClosingElement[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxSelfClosingElement(node) && node.tagName.getText() === 'GlobalSearch') searches.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(app);
+  assert.equal(searches.length, 1, 'App renders the search once');
+  const boundary = searches[0].parent;
+  assert.ok(ts.isJsxElement(boundary) && boundary.openingElement.tagName.getText() === 'ErrorBoundary', 'right inside an error boundary');
+  const onError = boundary.openingElement.attributes.properties
+    .find((attribute): attribute is ts.JsxAttribute => ts.isJsxAttribute(attribute) && attribute.name.getText() === 'onError');
+  assert.equal(onError?.initializer?.getText(), '{clearPendingSearches}');
+  assert.match(source, /^import \{ clearPendingSearches \} from '\.\/services\/searchSessionKeys';$/m, 'the search\'s own');
+});

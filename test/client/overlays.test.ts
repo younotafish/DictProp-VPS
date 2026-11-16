@@ -2,14 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import ts from 'typescript';
 import { useModalDialog } from '../../components/overlayStack.ts';
 import {
   liftNoticesAbovePopup, openDialogs, popupIsEmpty, useOverlays, type CardPopup, type Overlays,
 } from '../../hooks/useOverlays.ts';
 import type { StoredItem } from '../../types.ts';
+import { readRepoFile } from '../support/paths.ts';
 
 // hooks/useOverlays.ts: which dialogs cover the page, when the card popup has nothing left to show, and when the
-// notice stack rises above it.
+// notice stack rises above it; and components/Modal, which registers every dialog it shows.
 
 const sense = (id: string): StoredItem => ({
   type: 'vocab',
@@ -69,10 +71,10 @@ const browser = Object.assign(new EventTarget(), { document: page, event: undefi
 page.defaultView = browser;
 const globals = globalThis as Record<string, unknown>;
 
-test('a dialog App didn\'t open, such as the sign-out confirmation, counts as modal for as long as one is on screen', async () => {
+test('a dialog that registers with useModalDialog counts as modal in useOverlays for as long as one is mounted, wherever it renders', async () => {
   Object.assign(globals, { window: browser, document: page, IS_REACT_ACT_ENVIRONMENT: true });
   const seen: Overlays[] = [];
-  // Every dialog (components/Modal) registers itself this way, wherever it renders.
+  // A stand-in for components/Modal, which registers every dialog this way (the test below checks that it does).
   const Dialog = () => { useModalDialog(); return null; };
   const Shell = ({ dialogs }: { dialogs: number }) => {
     seen.push(useOverlays([]));
@@ -102,4 +104,16 @@ test('a dialog App didn\'t open, such as the sign-out confirmation, counts as mo
     delete globals.document;
     delete globals.IS_REACT_ACT_ENVIRONMENT;
   }
+});
+
+test('Modal registers every dialog it shows: its component body calls useModalDialog()', () => {
+  // The sign-out confirmations (UserMenu's ConfirmModal) and an overlay's crash dialog are Modals App doesn't open: only
+  // this call makes them count, so ⌘Z doesn't undo behind them and the search status line doesn't show under them.
+  const source = ts.createSourceFile('Modal.tsx', readRepoFile('components/Modal.tsx'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const modal = source.statements.filter(ts.isVariableStatement)
+    .flatMap(statement => [...statement.declarationList.declarations])
+    .find(declaration => declaration.name.getText() === 'Modal')?.initializer;
+  assert.ok(modal && ts.isArrowFunction(modal) && ts.isBlock(modal.body), 'Modal is a component with a body');
+  const statements = modal.body.statements.filter(ts.isExpressionStatement).map(statement => statement.expression.getText());
+  assert.ok(statements.includes('useModalDialog()'), `a statement of the body itself, not inside a condition: ${statements.join('; ')}`);
 });
