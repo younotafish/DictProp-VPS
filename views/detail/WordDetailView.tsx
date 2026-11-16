@@ -365,8 +365,11 @@ export function WordDetailView(props: DetailViewBodyProps) {
             }
           }}
           isSaved={isSaved}
+          archived={!!savedItemMatch?.isArchived}
           onDelete={handleDeleteItem}
           onSave={handleSave}
+          onRemember={handleRemember}
+          onUnarchive={onUnarchive ? handleUnarchiveItem : undefined}
           moreActionsRef={moreActionsRef}
           showActionMenu={showActionMenu}
           onToggleActionMenu={() => setShowActionMenu(!showActionMenu)}
