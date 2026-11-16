@@ -8,9 +8,9 @@ import { srs } from './support/fixtures.js';
 import { png, sha256 } from './support/fs.js';
 
 const {
-  db, deleteUnreferencedBlobs, getComparisons, getImageManifest, getItemById, getItemImage, getItemImagesBatch,
-  getItemsAfterRevision, getSentenceEnrichmentImage, hasItemImage, softDeleteItem, upsertComparison, upsertItem,
-  upsertItemImageBinary, upsertMany, upsertSentenceEnrichment,
+  db, deleteUnreferencedBlobs, forEachItemChunk, getAllItems, getComparisons, getImageManifest, getItemById,
+  getItemImage, getItemImagesBatch, getItemsAfterRevision, getSentenceEnrichmentImage, hasItemImage, softDeleteItem,
+  upsertComparison, upsertItem, upsertItemImageBinary, upsertMany, upsertSentenceEnrichment,
 } = await import('../src/db.js');
 const { backupBeforeWrite, StaleEntryError, writeOverLiveItem } = await import('../src/import-support.js');
 const { sentenceLookupHash } = await import('../src/sentence-enrichment.js');
@@ -255,6 +255,41 @@ test('soft-deleting an id the user does not have leaves the revision clock alone
   assert.equal(softDeleteItem('soft-delete-me', USER), true);
   assert.equal(headRevision(), saved + 1);
   assert.equal(stored('soft-delete-me').isDeleted, true);
+});
+
+test('forEachItemChunk hands over every item once, in rowid order, 500 at a time, and can keep to one type', async () => {
+  const owner = 'chunk-reader-user';
+  const typeAt = (index: number) => (index % 5 === 0 ? 'vocab' : index % 5 === 1 ? 'phrase' : 'sentence');
+  // The ids run backwards, so the order they were written in, rowid order, is not id order.
+  const written = Array.from({ length: 1_201 }, (_, index) => {
+    const id = `chunk-${String(1_200 - index).padStart(4, '0')}`;
+    return { type: typeAt(index), data: { id, word: id }, srs: srs(id, typeAt(index)), savedAt: 1, updatedAt: 1_000 };
+  });
+  upsertMany(written, owner);
+
+  const sizes: number[] = [];
+  const seen: unknown[] = [];
+  await forEachItemChunk(owner, async items => {
+    await new Promise(resolve => setImmediate(resolve));
+    // Written while the first chunk is still being handled: the next chunk is read after that, so it comes last.
+    if (sizes.length === 0) upsertItem(vocab('chunk-late', {}, 1_000), owner);
+    sizes.push(items.length);
+    seen.push(...items);
+  });
+  assert.deepEqual(sizes, [500, 500, 202]);
+  assert.deepEqual(seen, getAllItems(owner));
+  assert.deepEqual(getAllItems(owner).map(item => item.data.id), [...written.map(item => item.data.id), 'chunk-late']);
+
+  const sentenceSizes: number[] = [];
+  const sentenceIds: string[] = [];
+  await forEachItemChunk(owner, items => {
+    sentenceSizes.push(items.length);
+    for (const item of items) sentenceIds.push(item.data.id);
+  }, { type: 'sentence' });
+  const expected = written.filter(item => item.type === 'sentence').map(item => item.data.id);
+  assert.equal(expected.length, 720);
+  assert.deepEqual(sentenceSizes, [500, 220]);
+  assert.deepEqual(sentenceIds, expected);
 });
 
 test('an older copy of a comparison does not replace a newer one', () => {

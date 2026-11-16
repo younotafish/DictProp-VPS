@@ -20,6 +20,7 @@ export {
   type SentenceEnrichmentImportResult,
 } from './db/sentence-enrichments.js';
 export {
+  forEachItemChunk,
   getAllItems,
   getAllSentenceTexts,
   getItemById,

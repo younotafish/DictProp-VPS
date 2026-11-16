@@ -18,6 +18,8 @@ import { getSentenceEnrichmentForText } from './sentence-enrichments.js';
 
 export const stmts = {
   getAllChunk: db.prepare(`SELECT rowid AS _rowid, * FROM items WHERE user_id = ? AND rowid > ? ORDER BY rowid LIMIT ?`),
+  getAllChunkOfType: db.prepare(`SELECT rowid AS _rowid, * FROM items
+    WHERE user_id = ? AND type = ? AND rowid > ? ORDER BY rowid LIMIT ?`),
   getAfterRevision: db.prepare(`SELECT * FROM items
     WHERE user_id = ? AND (revision > ? OR (revision = ? AND id > ?))
     ORDER BY revision, id LIMIT ?`),
@@ -119,17 +121,41 @@ function rowsToItems(rows: ItemRow[], userId: string) {
   });
 }
 
-export function getAllItems(userId: string) {
-  const CHUNK = 500;
-  const items: ItemRead[] = [];
+const ITEM_CHUNK = 500;
+
+/**
+ * The user's items, or those of one type, in rowid order, 500 rows at a time. Each chunk is its own statement,
+ * so none stays open while the caller works on a chunk.
+ */
+function* itemChunks(userId: string, type?: ItemType): Generator<ItemRead[]> {
   let lastRowId = 0;
   for (;;) {
-    const rows = stmts.getAllChunk.all(userId, lastRowId, CHUNK) as Array<ItemRow & { _rowid: number }>;
-    if (rows.length === 0) break;
-    for (const item of rowsToItems(rows, userId)) items.push(item);
+    const rows = (type === undefined
+      ? stmts.getAllChunk.all(userId, lastRowId, ITEM_CHUNK)
+      : stmts.getAllChunkOfType.all(userId, type, lastRowId, ITEM_CHUNK)) as Array<ItemRow & { _rowid: number }>;
+    if (rows.length === 0) return;
     lastRowId = rows[rows.length - 1]._rowid;
+    yield rowsToItems(rows, userId);
   }
+}
+
+export function getAllItems(userId: string): ItemRead[] {
+  const items: ItemRead[] = [];
+  for (const chunk of itemChunks(userId)) for (const item of chunk) items.push(item);
   return items;
+}
+
+/**
+ * Hands fn the user's items a chunk at a time, in getAllItems' order, and reads the next chunk only once fn has
+ * settled, so an export that writes each chunk out never holds the whole library. Like getAllItems, the walk is no
+ * snapshot: each chunk reads the database as it is then.
+ */
+export async function forEachItemChunk(
+  userId: string,
+  fn: (items: ItemRead[]) => void | Promise<void>,
+  { type }: { type?: ItemType } = {},
+): Promise<void> {
+  for (const chunk of itemChunks(userId, type)) await fn(chunk);
 }
 
 // All distinct speakable sentence texts across ALL users' non-deleted items (vocab examples, phrase
