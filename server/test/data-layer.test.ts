@@ -335,12 +335,12 @@ test('imports and deploys share one backup, which imports reuse for twelve hours
   utimesSync(fresh, hoursAgo(13), hoursAgo(13));
   const deployed = join(dir, 'dictprop-20260101T000000Z-0123abc.db');
   writeFileSync(deployed, 'deploy backup');
-  writeFileSync(`${deployed}.verified`, '');
+  writeFileSync(`${deployed}-shm`, '');
   utimesSync(deployed, hoursAgo(11), hoursAgo(11));
   assert.equal(await backupBeforeWrite('third'), deployed);
 
   // Once every copy is older than twelve hours, a new copy replaces them all, with the files that opening
-  // or verifying one left. A crashed run's partial copy is removed.
+  // one left. A crashed run's partial copy is removed.
   utimesSync(deployed, hoursAgo(12.5), hoursAgo(12.5));
   writeFileSync(`${fresh}-wal`, '');
   writeFileSync(join(dir, 'dictprop-20260101T010000Z-4567def.db.partial'), 'incomplete');

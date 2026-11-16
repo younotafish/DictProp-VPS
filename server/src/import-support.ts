@@ -13,10 +13,11 @@ const FREE_SPACE_RESERVE = 512 * 1024 * 1024;
 
 const isCopy = (name: string) => COPY_PREFIXES.some(prefix => name.startsWith(prefix));
 
-// A copy is in WAL mode like the live database, so opening it to inspect it leaves -wal and -shm files, and
-// the deploy workflow marks a copy it has checked with a .verified file.
+// Both writers, backupBeforeWrite and the deploy workflow, write a copy to a .partial file and rename it into place
+// once it is complete, so every listed copy is whole. A copy is in WAL mode like the live database, so opening it to
+// inspect it leaves -wal and -shm files, which go with it.
 function removeCopy(path: string): void {
-  for (const suffix of ['', '-wal', '-shm', '.verified']) rmSync(`${path}${suffix}`, { force: true });
+  for (const suffix of ['', '-wal', '-shm']) rmSync(`${path}${suffix}`, { force: true });
 }
 
 /**
