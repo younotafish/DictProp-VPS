@@ -5,6 +5,8 @@ import {
 } from '../../views/detail/cardKeys.ts';
 import type { StoredItem } from '../../types.ts';
 
+// views/detail/cardKeys.ts, the card view's letter shortcuts.
+
 type Modifiers = Partial<Pick<CardKeyEvent, 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey'>>;
 
 /** A key press that records whether a shortcut kept it from the browser. */
@@ -40,7 +42,7 @@ const wordOnScreen = (word: string, done: string[], flags: Partial<WordKeyHandle
   readCardExamples: () => done.push(`read ${word}`),
   handleRemember: () => done.push(`remember ${word}`),
   handleResetSRS: () => done.push(`reset ${word}`),
-  handleToggleSave: () => done.push(`toggle save ${word}`),
+  handleSaveShortcut: () => done.push(`save ${word}`),
   handleDeleteItem: () => done.push(`delete ${word}`),
   handleArchiveItem: () => done.push(`archive ${word}`),
   isSaved: false,
@@ -145,7 +147,17 @@ test('the word card\'s H, R, S, E, Space and + keys', () => {
   }
   handleWordKey(press(' '), wordOnScreen('apple', done, { isSentenceAutoPlaying: true }));
   assert.deepEqual(done, [
-    'header true', 'remember apple', 'reset apple', 'toggle save apple', 'read apple', 'toggle slideshow',
+    'header true', 'remember apple', 'reset apple', 'save apple', 'read apple', 'toggle slideshow',
     'cycle speed', 'cycle speed', 'toggle examples',
   ]);
+});
+
+test('S saves the card as Cmd/Ctrl+S does, on a saved card too, where saving does nothing: it never deletes', () => {
+  const done: string[] = [];
+  for (const isSaved of [false, true]) {
+    const key = press('s');
+    handleWordKey(key, wordOnScreen('apple', done, { isSaved }));
+    assert.equal(key.prevented, true);
+  }
+  assert.deepEqual(done, ['save apple', 'save apple']);
 });

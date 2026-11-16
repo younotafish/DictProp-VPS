@@ -50,26 +50,22 @@ export function useWordActions({
     }
   }, [isVocabSaved, onDelete, onSave, savedItemsRef]);
 
-  const handleToggleSave = useCallback(() => {
-    if (isSaved && savedItemMatch) {
-      onDelete(savedItemMatch.data.id);
-    } else {
-      if (!data.id) return;
-      
-      onSave({
-        data: data,
-        type: type,
-        savedAt: Date.now(),
-        srs: SRSAlgorithm.createNew(data.id, type)
-      });
-    }
-  }, [isSaved, savedItemMatch, data, type, onDelete, onSave]);
+  // Save only ever saves: on a card that's already saved it does nothing (Delete is the trash, D or the menu's).
+  const handleSave = useCallback(() => {
+    if (isSaved || !data.id) return;
+    onSave({
+      data: data,
+      type: type,
+      savedAt: Date.now(),
+      srs: SRSAlgorithm.createNew(data.id, type)
+    });
+  }, [isSaved, data, type, onSave]);
 
-  // Cmd/Ctrl+S only ever saves: it does nothing on a card that's already saved or while typing.
+  // S and Cmd/Ctrl+S save, and do nothing while typing.
   const handleSaveShortcut = useCallback(() => {
-    if (isSaved || isTypingTarget(document.activeElement)) return;
-    handleToggleSave();
-  }, [isSaved, handleToggleSave]);
+    if (isTypingTarget(document.activeElement)) return;
+    handleSave();
+  }, [handleSave]);
 
   // One delete, archive or reset per press (acceptDestructive): a double tap on the trash deletes the card on screen,
   // not then the one that slides into its place, and the header, the menu and D, A and Shift+R share the one guard.
@@ -188,7 +184,7 @@ export function useWordActions({
   }, [data, type, onSave, onUpdateSRS, title, savedItemsRef, tryRemember, showRemembered]);
 
   return {
-    handleSaveVocab, handleToggleSave, handleSaveShortcut, handleDeleteItem, handleArchiveItem, handleUnarchiveItem,
+    handleSaveVocab, handleSave, handleSaveShortcut, handleDeleteItem, handleArchiveItem, handleUnarchiveItem,
     handleResetSRS, handleRemember,
   };
 }

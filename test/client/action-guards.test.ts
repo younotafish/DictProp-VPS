@@ -5,10 +5,13 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { StoredItem } from '../../types.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import { acceptDestructive, acceptListReview, acceptRepeat } from '../../services/actionGuards.ts';
+import { getMasteryColors } from '../../components/mastery.tsx';
+import { WordCardHeader } from '../../views/detail/WordCardHeader.tsx';
 import { useSentenceActions } from '../../views/detail/useSentenceActions.ts';
 import { useWordActions } from '../../views/detail/useWordActions.ts';
 
-// services/actionGuards.ts, one action per press, and the card view's destructive actions that use it.
+// services/actionGuards.ts, one action per press, and the card view's destructive actions: each acts once, and
+// nothing that looks like a status pill deletes.
 
 /** Runs a hook once, in a server render, and hands back what it returned; refs and callbacks keep working after. */
 function capture<T>(useHook: () => T): T {
@@ -90,4 +93,66 @@ test('in sentence review a doubled Delete or Shift+R acts once, the two sharing 
   second.handleDeleteItem();
   second.handleDeleteItem();
   assert.deepEqual(done, ['reset sentence-1', 'delete sentence-1']);
+});
+
+const header = (isSaved: boolean) => {
+  const srs = SRSAlgorithm.createNew('apple-1', 'vocab', 0);
+  const mastery = SRSAlgorithm.getMasteryLevel(srs);
+  return renderToStaticMarkup(createElement(WordCardHeader, {
+    showHeader: true, onClose: () => {}, itemCount: 1, itemIndex: 0, onRefresh: () => {}, isSaved, onDelete: () => {},
+    onSave: () => {}, moreActionsRef: { current: null }, showActionMenu: false, onToggleActionMenu: () => {},
+    stats: isSaved ? { srs, mastery, colors: getMasteryColors(mastery.color) } : null, savedItems: [],
+  }));
+};
+
+/** The colour, border and size classes of the header button that `opening` (its tag up to the end of its attributes) starts. */
+const buttonLook = (markup: string, opening: RegExp) => {
+  const tag = markup.match(opening)?.[0];
+  assert.ok(tag, `no button matches ${opening}`);
+  const classes = tag.match(/class="([^"]*)"/)![1].split(/\s+/).filter(Boolean);
+  return classes.filter(name => /^(hover:)?(bg|text|border|rounded|px|py|gap)(-|$)/.test(name));
+};
+
+test('a saved card\'s header offers the trash and the More menu and no Saved pill; an unsaved one offers Save', () => {
+  const saved = header(true);
+  assert.match(saved, /title="Delete \(D\)"/);
+  assert.match(saved, /title="More actions" aria-haspopup="menu" aria-expanded="false"/);
+  assert.doesNotMatch(saved, />Saved?</, 'no Saved or Save button on a saved card');
+  assert.doesNotMatch(saved, /lucide-bookmark/);
+
+  const unsaved = header(false);
+  assert.match(unsaved, /lucide-bookmark[^>]*>.*?<\/svg><span class="text-xs font-bold">Save<\/span><\/button>/);
+  assert.doesNotMatch(unsaved, /title="Delete \(D\)"/);
+  assert.doesNotMatch(unsaved, /title="More actions"/);
+});
+
+test('the header\'s buttons carry the classes that render: slate-600 with a slate-100 hover, and Close stays ghost', () => {
+  const saved = header(true);
+  const base = ['rounded-xl', 'px-3', 'py-1.5', 'text-sm', 'text-slate-600', 'hover:bg-slate-100'];
+  assert.deepEqual(buttonLook(saved, /<button[^>]*title="Refresh with AI"[^>]*>/), [...base, 'hover:text-indigo-600']);
+  assert.deepEqual(buttonLook(saved, /<button[^>]*title="Delete \(D\)"[^>]*>/), [...base, 'hover:text-rose-600']);
+  assert.deepEqual(buttonLook(saved, /<button[^>]*title="More actions"[^>]*>/), base);
+  assert.deepEqual(
+    buttonLook(header(false), /<button[^>]*>(?=<svg[^>]*lucide-bookmark)/),
+    ['rounded-xl', 'px-3', 'py-1.5', 'text-sm', 'gap-1.5', 'border', 'border-transparent', 'text-slate-600', 'hover:bg-slate-100'],
+  );
+  assert.ok(buttonLook(saved, /<button[^>]*>(?=<svg[^>]*lucide-arrow-left)/).includes('bg-transparent'), 'Close keeps the ghost variant');
+});
+
+test('Save only ever saves: on a saved card it does nothing, on an unsaved one it saves the card as new', () => {
+  const saves: StoredItem[] = [];
+  const deletes: string[] = [];
+  const apple = vocabItem('apple-1', 'apple');
+  const saveFor = (isSaved: boolean) => capture(() => useWordActions({
+    data: apple.data, type: 'vocab', title: 'apple', savedItemMatch: isSaved ? apple : undefined, isSaved,
+    savedItemsRef: { current: isSaved ? [apple] : [] }, isVocabSaved: () => isSaved, onSave: item => { saves.push(item); },
+    onDelete: id => { deletes.push(id); }, setShowActionMenu: () => {}, tryRemember: () => true, showRemembered: () => {},
+  })).handleSave;
+
+  saveFor(true)();
+  assert.deepEqual([saves, deletes], [[], []]);
+  saveFor(false)();
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].data, apple.data);
+  assert.equal(saves[0].srs.totalReviews, 0);
 });

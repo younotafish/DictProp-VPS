@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { ArrowLeft, Bookmark, BookmarkMinus, MoreVertical, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowLeft, Bookmark, MoreVertical, RefreshCw, Trash2 } from 'lucide-react';
 import type { SRSData, StoredItem } from '../../types';
 import type { MasteryClasses } from '../../components/mastery';
 import { Button } from '../../components/Button';
@@ -14,9 +14,10 @@ interface WordCardHeaderProps {
   itemCount: number;
   itemIndex: number;
   onRefresh: () => void;
+  /** A saved card offers Delete and the More menu; an unsaved one, Save. */
   isSaved: boolean;
   onDelete: () => void;
-  onToggleSave: () => void;
+  onSave: () => void;
   moreActionsRef: RefObject<HTMLDivElement | null>;
   showActionMenu: boolean;
   onToggleActionMenu: () => void;
@@ -27,12 +28,13 @@ interface WordCardHeaderProps {
 }
 
 /**
- * The word card's sticky header, combined with its progress bar: Close, the meaning's position, Refresh with AI,
- * Delete, the save toggle and the More menu's button, then the saved card's memory. It opens to its own height
- * when the learner asks for it and closes at once, so a card change never slides the next card up after it appears.
+ * The word card's sticky header, combined with its progress bar: Close, the meaning's position, Refresh with AI, then
+ * Delete and the More menu's button on a saved card or Save on an unsaved one, then the saved card's memory. Nothing
+ * that looks like a status pill deletes. It opens to its own height when the learner asks for it and closes at once,
+ * so a card change never slides the next card up after it appears.
  */
 export function WordCardHeader({
-  showHeader, onClose, itemCount, itemIndex, onRefresh, isSaved, onDelete, onToggleSave, moreActionsRef,
+  showHeader, onClose, itemCount, itemIndex, onRefresh, isSaved, onDelete, onSave, moreActionsRef,
   showActionMenu, onToggleActionMenu, stats, savedItems,
 }: WordCardHeaderProps) {
   return (
@@ -75,15 +77,17 @@ export function WordCardHeader({
                 <Trash2 size={18} />
               </Button>
             )}
-            <Button
-              variant="plain"
-              size="sm"
-              onClick={onToggleSave}
-              className={`gap-1.5 border text-slate-600 hover:bg-slate-100 ${isSaved ? 'border-indigo-200' : 'border-transparent'}`}
-            >
-              {isSaved ? <BookmarkMinus size={18} /> : <Bookmark size={18} />}
-              <span className="text-xs font-bold">{isSaved ? 'Saved' : 'Save'}</span>
-            </Button>
+            {!isSaved && (
+              <Button
+                variant="plain"
+                size="sm"
+                onClick={onSave}
+                className="gap-1.5 border border-transparent text-slate-600 hover:bg-slate-100"
+              >
+                <Bookmark size={18} />
+                <span className="text-xs font-bold">Save</span>
+              </Button>
+            )}
             {/* Action menu for saved items */}
             {isSaved && (
               <div ref={moreActionsRef} className="relative">

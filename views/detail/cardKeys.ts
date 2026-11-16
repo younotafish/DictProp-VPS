@@ -93,7 +93,8 @@ export interface WordKeyHandlers {
   readCardExamples: () => void;
   handleRemember: () => void;
   handleResetSRS: () => void;
-  handleToggleSave: () => void;
+  /** Saves the card, as Cmd/Ctrl+S does; a saved card stays as it is. */
+  handleSaveShortcut: () => void;
   handleDeleteItem: () => void;
   handleArchiveItem: () => void;
   isSaved: boolean;
@@ -108,7 +109,7 @@ export interface WordKeyHandlers {
 /** The word card's keys: H, P, E, R and Shift+R, S, D, A, Space, +, and Cmd/Ctrl+1–4. */
 export function handleWordKey(e: CardKeyEvent, handlers: WordKeyHandlers): void {
   const {
-    speakSentenceAt, setShowHeader, title, readCardExamples, handleRemember, handleResetSRS, handleToggleSave,
+    speakSentenceAt, setShowHeader, title, readCardExamples, handleRemember, handleResetSRS, handleSaveShortcut,
     handleDeleteItem, handleArchiveItem, isSaved, savedItemMatch, onUnarchive, isSentenceAutoPlaying,
     toggleSentenceAutoPlay, toggleAutoPlay, cycleSpeed,
   } = handlers;
@@ -147,10 +148,10 @@ export function handleWordKey(e: CardKeyEvent, handlers: WordKeyHandlers): void 
     else handleRemember();
   }
 
-  // S: Toggle save
+  // S: Save, as Cmd/Ctrl+S does; it never unsaves (D deletes)
   if (e.key === 's' || e.key === 'S') {
     e.preventDefault();
-    handleToggleSave();
+    handleSaveShortcut();
   }
 
   // D: Delete the saved word directly

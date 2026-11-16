@@ -161,7 +161,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
   const masteryColors = mastery ? getMasteryColors(mastery.color) : null;
 
   const {
-    handleSaveVocab, handleToggleSave, handleSaveShortcut, handleDeleteItem, handleArchiveItem, handleUnarchiveItem,
+    handleSaveVocab, handleSave, handleSaveShortcut, handleDeleteItem, handleArchiveItem, handleUnarchiveItem,
     handleResetSRS, handleRemember,
   } = useWordActions({
     data, type, title, savedItemMatch, isSaved, savedItemsRef, isVocabSaved, onSave, onDelete, onArchive, onUnarchive,
@@ -291,7 +291,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
     readCardExamples,
     handleRemember,
     handleResetSRS,
-    handleToggleSave,
+    handleSaveShortcut,
     handleDeleteItem,
     handleArchiveItem,
     isSaved,
@@ -364,7 +364,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
           }}
           isSaved={isSaved}
           onDelete={handleDeleteItem}
-          onToggleSave={handleToggleSave}
+          onSave={handleSave}
           moreActionsRef={moreActionsRef}
           showActionMenu={showActionMenu}
           onToggleActionMenu={() => setShowActionMenu(!showActionMenu)}
