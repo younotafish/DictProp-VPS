@@ -95,11 +95,14 @@ test('each change that shipped with this release has its row', () => {
 
 test('during auto-play the blank-space tap or click, E and Space pause or resume it, and a long press opens its panel', () => {
   const during = 'during auto-play, pause or resume it';
-  assert.ok(hasRow(section(phone, 'touch').rows, ['Tap'], `In a sentence, on blank space: play or pause; ${during}`));
-  assert.ok(hasRow(section(mac, 'sentences').rows, ['Click'], `On blank space: play or pause; ${during}`));
-  assert.ok(hasRow(section(mac, 'sentences').rows, ['E'], `Read the sentence; press again to pause or resume; ${during}`));
+  assert.ok(hasRow(section(phone, 'touch').rows, ['Tap'], `In a sentence, on blank space: play or pause, or at 85% or more start it again; ${during}`));
+  assert.ok(hasRow(section(mac, 'sentences').rows, ['Click'], `On blank space: play or pause, or at 85% or more start it again; ${during}`));
+  assert.ok(hasRow(section(mac, 'sentences').rows, ['E'], `Read the sentence; press again to pause or resume, or at 85% or more to start it again; ${during}`));
   assert.ok(hasRow(section(mac, 'sentences').rows, ['Space'], `Pause or resume; with nothing playing, start auto-play; ${during}`));
-  assert.ok(hasRow(section(mac, 'card').rows, ['E'], `Read the examples; press again to pause or resume; ${during}`));
+  assert.ok(hasRow(section(mac, 'card').rows, ['E'], `Read the examples; press again to pause or resume, or at 85% or more to start them again; ${during}`));
+  // Every play control follows the speaker's rule (UX-22): Space on a word card plays or pauses before the slideshow.
+  assert.ok(hasRow(section(mac, 'card').rows, ['Space'],
+    'Pause or resume a playing sentence, else start or stop the slideshow; during example auto-play, stop it'));
   assert.ok(hasRow(section(phone, 'touch').rows, ['Long-press auto-play'],
     'In a sentence: open the auto-play panel (a tap resumes a paused auto-play)'));
 });

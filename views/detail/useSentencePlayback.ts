@@ -1,6 +1,9 @@
 import { useCallback, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { SentenceData, StoredItem } from '../../types';
-import { getPlaybackState, pauseCurrent, resumeCurrent, speakNatural, speakNaturalAt } from '../../services/neuralTts';
+import {
+  getPlaybackProgress, getPlaybackState, pauseCurrent, resumeCurrent, speakNatural, speakNaturalAt,
+} from '../../services/neuralTts';
+import { sentenceSpaceAction, toggleActionFor } from '../../services/audio/playbackToggle';
 import { setTtsStyle } from '../../services/ttsSettings';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { readInTurnOrToggle } from './useExampleSpeech';
@@ -70,20 +73,21 @@ export function useSentencePlayback({
     });
   }, [noteListened, currentSentenceRef, isSentenceAutoPlayingRef, stopAutoPlay]);
 
-  // Tap the sentence on blank space: pause it if it's playing, resume if paused, otherwise (re)start it from the top.
-  // Routed through the shared playback state so it stays in sync with the megaphone button — whoever started the
-  // audio, this controls it. During auto-play it pauses or resumes auto-play, wherever its reading is.
+  // Tap the sentence on blank space: the speaker's rule (pause it if it's playing, resume if paused, from the top
+  // once 85% of it has played, else start it). Routed through the shared playback state so it stays in sync with the
+  // megaphone button — whoever started the audio, this controls it. During auto-play it pauses or resumes auto-play,
+  // wherever its reading is.
   const toggleSentencePlayback = useCallback(() => {
     if (isSentenceAutoPlayingRef.current) { autoPlayRef.current?.togglePause(); return; }
     const s = currentSentenceRef.current;
     if (!s) return;
     const sentence = stripSentenceMarkers((s.data as SentenceData).text || '').trim();
     if (!sentence) return;
-    const pb = getPlaybackState();
-    if (pb.text === sentence) {
-      if (pb.status === 'loading') return;                       // already starting this one
-      if (pb.status === 'playing') { pauseCurrent(); return; }
-      if (pb.status === 'paused') { resumeCurrent(); return; }
+    switch (toggleActionFor(getPlaybackState(), sentence, getPlaybackProgress(), { onLoading: 'ignore', restartNearEnd: true })) {
+      case 'ignore': case 'cancel': return; // already starting this one
+      case 'pause': pauseCurrent(); return;
+      case 'resume': resumeCurrent(); return;
+      case 'restart': case 'start': break;
     }
     stopAutoPlay();
     speakNatural(sentence, {
@@ -92,14 +96,17 @@ export function useSentencePlayback({
     });
   }, [noteListened, currentSentenceRef, isSentenceAutoPlayingRef, autoPlayRef, stopAutoPlay]);
 
-  // Space: during auto-play, pause or resume it; otherwise pause or resume what's playing, and with nothing playing
-  // start auto-play.
+  // Space: during auto-play, pause or resume it; otherwise pause or resume what's playing, wait for a sentence still
+  // loading, and with nothing playing start auto-play.
   const handleSpace = useCallback(() => {
-    if (isSentenceAutoPlayingRef.current) { autoPlayRef.current?.togglePause(); return; }
-    const status = getPlaybackState().status;
-    if (status === 'playing') pauseCurrent();
-    else if (status === 'paused') resumeCurrent();
-    else startAutoPlay();
+    const autoPlay = isSentenceAutoPlayingRef.current ? 'running' : 'off';
+    switch (sentenceSpaceAction({ autoPlay, status: getPlaybackState().status })) {
+      case 'toggle-autoplay-pause': autoPlayRef.current?.togglePause(); return;
+      case 'pause': pauseCurrent(); return;
+      case 'resume': resumeCurrent(); return;
+      case 'ignore': return;
+      case 'start-autoplay': startAutoPlay(); return;
+    }
   }, [isSentenceAutoPlayingRef, autoPlayRef, startAutoPlay]);
 
   // Play the current sentence from a tapped or selected word (its character offset in the sentence as shown), in the

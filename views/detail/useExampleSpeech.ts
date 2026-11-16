@@ -6,15 +6,19 @@ import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { exampleAt, readableExamples } from './cardReading';
 
 /**
- * Reads sentences one after another with a short breath between, or pauses and resumes them when one of them is
- * the clip already playing. Other speech or a move to another card ends the run. `onRead` follows each finished read.
+ * Reads sentences one after another with a short breath between, or, when one of them is the clip already active,
+ * follows the speaker's rule: pause it, resume it, leave it loading, or once 85% of it has played start the run again
+ * from the first sentence. Other speech or a move to another card ends the run. `onRead` follows each finished read.
  */
 export function readInTurnOrToggle(sentences: string[], stopAutoPlay: () => void, onRead?: () => void) {
-  // Already reading one of these → toggle pause / resume.
   const pb = getPlaybackState();
-  if (pb.text && sentences.includes(pb.text) && (pb.status === 'playing' || pb.status === 'paused')) {
-    if (pb.status === 'playing') pauseCurrent(); else resumeCurrent();
-    return;
+  if (pb.text && sentences.includes(pb.text)) {
+    switch (toggleActionFor(pb, pb.text, getPlaybackProgress(), { onLoading: 'ignore', restartNearEnd: true })) {
+      case 'pause': pauseCurrent(); return;
+      case 'resume': resumeCurrent(); return;
+      case 'ignore': case 'cancel': return; // still loading
+      case 'restart': case 'start': break; // nearly over: the run starts again from its first sentence
+    }
   }
 
   stopAutoPlay();

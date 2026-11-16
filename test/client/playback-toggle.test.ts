@@ -16,12 +16,14 @@ test('a sentence shows its own status only while it is the active one', () => {
   assert.equal(playbackStatusFor(state('idle'), SENTENCE), 'idle');
 });
 
-test('each control variant decides a tap the way its call site does today', () => {
-  // The speaker button cancels a load; the zone taps, keyboard readers and popups let it carry on; tapping the
-  // sentence itself never restarts near the end.
+test('each control variant decides a tap the way its call site does', () => {
+  // The speaker button cancels a load; the zone taps, keyboard readers, popups and the tap on a sentence's blank space
+  // let it carry on, and all of them start the sentence again near its end (UX-22). A caller may still ask for a
+  // pause near the end.
   const speaker: ToggleOptions = { onLoading: 'cancel', restartNearEnd: true };
   const zones: ToggleOptions = { onLoading: 'ignore', restartNearEnd: true };
-  const sentenceTap: ToggleOptions = { onLoading: 'ignore', restartNearEnd: false };
+  const sentenceTap: ToggleOptions = { onLoading: 'ignore', restartNearEnd: true };
+  const pauseNearEnd: ToggleOptions = { onLoading: 'ignore', restartNearEnd: false };
   const cases: Array<[PlaybackState, number, ToggleOptions, string]> = [
     [state('idle'), 0, speaker, 'start'],
     [state('playing', 'Another.'), 0.5, speaker, 'start'],
@@ -34,8 +36,10 @@ test('each control variant decides a tap the way its call site does today', () =
     [state('playing'), RESTART_NEAR_END - 0.01, zones, 'pause'],
     [state('playing'), RESTART_NEAR_END, speaker, 'restart'],
     [state('playing'), 0.99, zones, 'restart'],
-    [state('playing'), 0.99, sentenceTap, 'pause'],
+    [state('playing'), 0.99, sentenceTap, 'restart'],
+    [state('playing'), 0.5, sentenceTap, 'pause'],
     [state('loading'), 0, sentenceTap, 'ignore'],
+    [state('playing'), 0.99, pauseNearEnd, 'pause'],
   ];
   for (const [current, progress, options, expected] of cases) {
     assert.equal(toggleActionFor(current, SENTENCE, progress, options), expected, `${current.status} ${current.text} at ${progress}`);

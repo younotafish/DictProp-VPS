@@ -14,7 +14,8 @@ import { findSavedCopy } from '../../services/items';
 import { useKeyboardNavigation, useWheelNavigation } from '../../hooks/useKeyboardNavigation';
 import { useWarmImages } from '../../hooks/useWarmImages';
 import { useLatest } from '../../hooks/useStableValue';
-import { prefetchTTS, speakWord, stopCurrent } from '../../services/neuralTts';
+import { getPlaybackState, pauseCurrent, prefetchTTS, resumeCurrent, speakWord, stopCurrent } from '../../services/neuralTts';
+import { wordCardSpaceAction } from '../../services/audio/playbackToggle';
 import { autoPlayTexts, preloadSession, pronounceOnCardChange, wordZoneBands as countWordZoneBands } from './cardReading';
 import { PLATFORM } from '../../services/platform';
 import { RememberToast } from './RememberToast';
@@ -313,6 +314,18 @@ export function WordDetailView(props: DetailViewBodyProps) {
     enabled: !detailInteractionLocked,
   });
 
+  // Space: during example auto-play, stop it (as its button does); otherwise pause or resume the sentence playing, wait
+  // for one still loading, or start or stop the slideshow.
+  const handleSpace = useCallback(() => {
+    switch (wordCardSpaceAction({ examplesRunning: isSentenceAutoPlayingRef.current, status: getPlaybackState().status })) {
+      case 'stop-examples': toggleSentenceAutoPlay(); return;
+      case 'pause': pauseCurrent(); return;
+      case 'resume': resumeCurrent(); return;
+      case 'ignore': return;
+      case 'toggle-slideshow': toggleAutoPlay(); return;
+    }
+  }, [isSentenceAutoPlayingRef, toggleSentenceAutoPlay, toggleAutoPlay]);
+
   const { zoneFlash, handleScroll, onContentTouchStart, onContentTouchEnd, handleDoubleClick } = useWordGestures({
     scrollContainerRef, showHeader, setShowHeader, currentGroup, currentItem, hasNextGroup, hasPrevGroup, hasPrevItem,
     setCurrentGroupIndex, setCurrentItemIndex, stopSlideshow, toggleSpeak, onClose, handleRemember,
@@ -337,6 +350,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
     toggleSentenceAutoPlay,
     toggleAutoPlay,
     cycleSpeed,
+    onSpace: handleSpace,
   });
 
   // Eyes-free read-zone band counts, so the guides only draw the bands that read something.
