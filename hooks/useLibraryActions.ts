@@ -15,8 +15,7 @@ export function useLibraryActions(
     Pick<Library, 'userId' | 'latestItemsRef' | 'updateItems' | 'replaceItem' | 'persistChangedItems'>,
   { removeFromDetailView, removeItemFromDetailContext, removeSentenceFromDetailContext }: Pick<DetailViewState,
     'removeFromDetailView' | 'removeItemFromDetailContext' | 'removeSentenceFromDetailContext'>,
-  // Without offerUndoChange, a refresh offers no undo; App passes the whole undo state.
-  { offerUndo, offerUndoChange }: Pick<UndoOfferState, 'offerUndo'> & Partial<Pick<UndoOfferState, 'offerUndoChange'>>,
+  { offerUndo, offerUndoChange }: Pick<UndoOfferState, 'offerUndo' | 'offerUndoChange'>,
 ) {
   /** Saves `item` over its saved copy, or as a new card. Returns the id it's saved under, or undefined when it isn't saved. */
   const handleSave = useCallback((item: StoredItem): string | undefined => {
@@ -203,7 +202,7 @@ export function useLibraryActions(
       }
       // Offered in the same task as the saves, which push nothing themselves, so every push finds the cards held.
       if (ids.size > 0) {
-        offerUndoChange?.({ ids: [...ids], message: `Refreshed “${word.trim()}”`, undo: undoRefreshReplace(before, latestItemsRef.current, ids) });
+        offerUndoChange({ ids: [...ids], message: `Refreshed “${word.trim()}”`, undo: undoRefreshReplace(before, latestItemsRef.current, ids) });
       }
     } catch (error) {
       logError('Refresh: the fresh result was not saved for', word, error);

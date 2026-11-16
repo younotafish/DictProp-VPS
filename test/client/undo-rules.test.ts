@@ -60,7 +60,7 @@ function renderActions(initial: StoredItem[]) {
     removeItemFromDetailContext: () => {},
     removeSentenceFromDetailContext: () => {},
   };
-  const undo = { offerUndo: (verb: string, before: StoredItem) => { calls.push(`offer ${verb} ${before.data.id}`); } };
+  const undo = { offerUndo: (verb: string, before: StoredItem) => { calls.push(`offer ${verb} ${before.data.id}`); }, offerUndoChange: () => {} };
   let actions: ReturnType<typeof useLibraryActions> | undefined;
   const Probe = () => { actions = useLibraryActions(library, detail, undo); return null; };
   renderToStaticMarkup(createElement(Probe));

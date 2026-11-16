@@ -70,7 +70,10 @@ function renderActions(initial: StoredItem[], { withUndoOffer = false } = {}) {
   let actions: ReturnType<typeof useLibraryActions> | undefined;
   const Probe = () => {
     if (!withUndoOffer) {
-      actions = useLibraryActions(library, detail, { offerUndo: (verb: string, before: StoredItem) => { calls.push(`offer ${verb} ${before.data.id}`); } });
+      actions = useLibraryActions(library, detail, {
+        offerUndo: (verb: string, before: StoredItem) => { calls.push(`offer ${verb} ${before.data.id}`); },
+        offerUndoChange: () => {},
+      });
       return null;
     }
     const offer = useUndoOffer(library, detail);
