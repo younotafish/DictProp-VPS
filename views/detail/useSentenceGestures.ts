@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, type Dispatch, type MouseEvent as React
 import { log } from '../../services/logger';
 import { TAP_CONTROL_SELECTOR, doubleTapControlSelector, isFlingStopTap } from '../../services/reviewGestures';
 import { scrollEdges, sentenceTouchAction, touchFacts, type ScrollEdges } from './touchGestures';
+import { flashWord } from './wordFlash';
 
 interface SentenceGesturesOptions {
   /** The view's root: a scroll anywhere in it (the sentence's page or the analysis) means a fling may be under way. */
@@ -27,7 +28,7 @@ interface SentenceGesturesOptions {
  * pauses or resumes the sentence (unless it only stops a fling) and a double tap off the controls (on the sentence's
  * words too) marks it remembered; ←/→ swipes switch between the sentence and its analysis, ↑/↓ swipes between
  * sentences. A tap or click on a word plays from it; a two-finger chord on a word (⌘-click on a laptop) runs the
- * word's lookup.
+ * word's lookup. Either way the word flashes at once (wordFlash.ts), before the audio or the search answers.
  */
 export function useSentenceGestures({
   rootRef, heroScrollRef, isMobile, sentencePage, setSentencePage, isSentenceAutoPlayingRef, setShowSentenceAutoPlayPanel,
@@ -189,6 +190,8 @@ export function useSentenceGestures({
     mobileWordChordActiveRef.current = true;
     suppressMobileWordClickUntilRef.current = Date.now() + 800;
     lastSentenceTapRef.current = null;
+    // The word's handler looks nothing up while text is selected, so the word flashes only when it will.
+    if (!window.getSelection()?.toString().trim()) flashWord(word, 'lookup');
     // A synchronous synthetic click reaches the word's own lookup handler; the capture handler lets it pass.
     mobileLookupClickRef.current = true;
     try {
@@ -218,7 +221,9 @@ export function useSentenceGestures({
     e.stopPropagation();
     if (window.getSelection()?.toString().trim()) return; // finishing a text selection, not a tap
     const offset = Number(word.dataset.wordOffset);
-    if (Number.isFinite(offset)) playFromWordOffset(offset);
+    if (!Number.isFinite(offset)) return;
+    flashWord(word, 'play');
+    playFromWordOffset(offset);
   };
 
   // Laptops mirror the phone gestures: a click plays from the clicked word, like a one-finger tap, and
@@ -228,7 +233,13 @@ export function useSentenceGestures({
       handleMobileWordClickCapture(e);
       return;
     }
-    if (e.metaKey || e.ctrlKey) return; // the word's own handler looks it up
+    if (e.metaKey || e.ctrlKey) {
+      // The word's own handler looks it up; it flashes now, unless text still selected keeps that handler from acting.
+      const target = e.target instanceof Element ? e.target : null;
+      const word = target?.closest('[data-word-offset]') as HTMLElement | null;
+      if (word && e.currentTarget.contains(word) && !window.getSelection()?.toString().trim()) flashWord(word, 'lookup');
+      return;
+    }
     playFromClickedWord(e);
   };
 
