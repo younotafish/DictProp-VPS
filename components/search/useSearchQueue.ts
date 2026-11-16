@@ -12,7 +12,7 @@ import { looksLikeSentence } from '../../services/queryMode';
 import { useLatest } from '../../hooks/useStableValue';
 import { subscribeSearchRequests, type CompareRequest, type LookupRequest } from '../../services/searchRequests';
 import { routeLookup } from './searchRouting';
-import { runLookup, type LookupEffects } from './runLookup';
+import { runLookup } from './runLookup';
 import {
   createRefreshLog, findLiveComparison, findLiveLookup, isBusyOf, isQueued, queueUpdate, readyItemsOf, runningCountOf,
   pendingRequestsOf, requestOf, savedCardsResult, searchQueueReducer, unseenReadyCount, type OpenPolicy, type QueueAction,
@@ -20,21 +20,6 @@ import {
 } from './searchQueue';
 
 let queueIdCounter = 0;
-
-/**
- * An analyze effect that keeps the error its request rejected with. runLookup reports a failure without it (and words a
- * toast the search no longer shows); the search keeps the failure on the entry, worded from that error.
- */
-function keepingRejection(analyze: LookupEffects['analyze']) {
-  const kept: { error?: unknown } = {};
-  return {
-    kept,
-    analyze: (query: string, analyzeMode?: 'batch') => analyze(query, analyzeMode).catch((error: unknown) => {
-      kept.error = error;
-      throw error;
-    }),
-  };
-}
 
 /** What a lookup or a comparison that needs the network says when the device is offline. */
 const OFFLINE_LOOKUP = "You're offline, so only saved words can be looked up.";
@@ -264,10 +249,8 @@ export function useSearchQueue({
     setQueue(queueUpdate({ type: 'start', id: itemId, at: Date.now() }));
 
     log('🔍 Queue: searching "' + item.query + '"' + (item.analyzeMode ? ' (' + item.analyzeMode + ')' : ''));
-    const request = keepingRejection(lookupEffects.analyze);
     void runLookup({ query: item.query, analyzeMode: item.analyzeMode, refresh: !!item.forceAI }, {
       ...lookupEffects,
-      analyze: request.analyze,
       // A refresh of the same word replaces this entry while its request runs; the outcome then belongs to the
       // newer request, so this one changes nothing: no toast, no queue change, no saved-card write.
       isCurrent: () => isQueued(queueRef.current, itemId),
@@ -275,12 +258,12 @@ export function useSearchQueue({
         setQueue(queueUpdate({ type: 'search-ready', id: itemId, results: result }));
         if (item.openOnReady === 'any') openWhenReady(itemId); // refresh → open the fresh result (like the reuse path auto-opens)
       },
-      showFailure: () => setQueue(queueUpdate({
-        type: 'fail', id: itemId, failure: failureOf({ kind: 'analysis', label: item.query }, request.kept.error, Date.now()),
-      })),
-      // runLookup words a toast here, which the entry's failure replaces; it has just kept a lookup whose session
-      // expired as a refresh, so the request it really was is kept over it, to run as itself after signing in.
-      showError: () => { if (isAuthenticationError(request.kept.error)) rememberSearchRetry(requestOf(item)); },
+      // The entry keeps its failure, worded from the error, for the error toast. A lookup whose session expired is
+      // kept as the request it was, to run as itself after signing in.
+      showFailure: error => {
+        setQueue(queueUpdate({ type: 'fail', id: itemId, failure: failureOf({ kind: 'analysis', label: item.query }, error, Date.now()) }));
+        if (isAuthenticationError(error)) rememberSearchRetry(requestOf(item));
+      },
     }).finally(done);
   }, [findSavedByWord, lookupEffects, enqueue, onCompareReady, openWhenReady, queueRef]);
 
@@ -298,18 +281,20 @@ export function useSearchQueue({
     // its result and reports its failure: the user asked for that refresh.
     const replaced = refreshLog.watch(item.query);
     // An expression taken from a sentence is refreshed as the same unit, not re-split into its words.
-    const request = keepingRejection(lookupEffects.analyze);
     void runLookup({ query, analyzeMode, refresh: true }, {
       ...lookupEffects,
-      analyze: request.analyze,
       isCurrent: () => !replaced(),
       showResult: results => {
         setQueue(queueUpdate({ type: 'refresh-ready', id, query, results }));
         onFresh();
       },
       // The entry keeps its old result, so the failure is a passing notice: the card's refresh button is still there.
-      showFailure: () => setQueue(queueUpdate({ type: 'refresh-fail', id })),
-      showError: () => showNotice(describeSearchError({ kind: 'analysis', label: query }, request.kept.error)),
+      // A refresh whose session expired is kept, to run again after signing in, as a refresh.
+      showFailure: error => {
+        setQueue(queueUpdate({ type: 'refresh-fail', id }));
+        showNotice(describeSearchError({ kind: 'analysis', label: query }, error));
+        if (isAuthenticationError(error)) rememberSearchRetry({ kind: 'analyze', query, analyzeMode, forceAI: true });
+      },
     });
   }, [lookupEffects, refreshLog, showNotice]);
 

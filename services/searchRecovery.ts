@@ -10,15 +10,6 @@ export type SearchRequest =
   | { kind: 'analyze'; query: string; analyzeMode?: 'batch'; forceAI?: boolean }
   | { kind: 'compare'; words: string[] };
 
-/**
- * The retry builds before search requests existed kept, and components/search/runLookup.ts still writes: a lookup,
- * run again as a refresh. Read once more after a deploy, since an OAuth redirect can straddle it.
- */
-export interface PendingSearchRetry {
-  query: string;
-  analyzeMode?: 'batch';
-}
-
 const SEARCH_RETRY_KEY = 'dictprop_pending_search_retry';
 
 export function isAuthenticationError(error: unknown): error is HttpError {
@@ -59,8 +50,8 @@ function searchRequestOf(value: unknown): SearchRequest | null {
 }
 
 /** Keeps `request`, whose session expired, to run once the user signs in again (the OAuth redirect keeps sessionStorage). */
-export function rememberSearchRetry(request: SearchRequest | PendingSearchRetry, storage: StorageLike | null = defaultSessionStorage()): void {
-  const kept = 'kind' in request ? searchRequestOf(request) : isQuery(request.query) ? request : null;
+export function rememberSearchRetry(request: SearchRequest, storage: StorageLike | null = defaultSessionStorage()): void {
+  const kept = searchRequestOf(request);
   if (!storage || !kept) return;
   try {
     storage.setItem(SEARCH_RETRY_KEY, JSON.stringify(kept));
@@ -69,7 +60,11 @@ export function rememberSearchRetry(request: SearchRequest | PendingSearchRetry,
   }
 }
 
-/** The request kept to run after signing in again, once: a retry from an older build reads as a refresh. */
+/**
+ * The request kept to run after signing in again, once. Builds before search requests existed kept a lookup as
+ * { query, analyzeMode }, to run again as a refresh; one is still read that way, since an OAuth redirect can straddle a
+ * deploy.
+ */
 export function consumeSearchRetry(storage: StorageLike | null = defaultSessionStorage()): SearchRequest | null {
   if (!storage) return null;
   try {
@@ -170,8 +165,8 @@ const VERB: Record<SearchSubject['kind'], string> = { analysis: 'analyze', compa
  * A request that never reached DictProp says so, a timeout says so, and the server's statuses keep their own words.
  * The toast offers the retry itself, when there is one to offer, so no message asks for it.
  *
- * Given a plain query (the form components/search/runLookup.ts and the Notebook's AI box still use), it keeps the
- * wording it had before subjects existed; both move to a subject with their next owner, and the form goes then.
+ * Given a plain query (the form the Notebook's AI box still uses), it keeps the wording it had before subjects existed;
+ * the box moves to a subject with its next owner, and the form goes then.
  */
 export function describeSearchError(subject: SearchSubject, error: unknown): string;
 export function describeSearchError(query: string, error: unknown): string;

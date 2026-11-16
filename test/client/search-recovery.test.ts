@@ -10,8 +10,8 @@ import { MemoryStorage } from '../support/memory-storage.ts';
 
 test('expired-session searches survive an OAuth redirect and retain a useful error', () => {
   const storage = new MemoryStorage();
-  // components/search/runLookup.ts still keeps a lookup this way, and builds before typed requests did: a refresh.
-  rememberSearchRetry({ query: 'visceral', analyzeMode: 'batch' }, storage);
+  // Builds before typed requests kept a lookup this way, to run again as a refresh.
+  storage.setItem('dictprop_pending_search_retry', JSON.stringify({ query: 'visceral', analyzeMode: 'batch' }));
 
   assert.deepEqual(consumeSearchRetry(storage), { kind: 'analyze', query: 'visceral', analyzeMode: 'batch', forceAI: true });
   assert.equal(consumeSearchRetry(storage), null);

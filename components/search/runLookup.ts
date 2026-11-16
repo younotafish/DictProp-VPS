@@ -1,6 +1,5 @@
 import type { SearchResult, VocabCard } from '../../types';
 import { log, warn } from '../../services/logger';
-import { describeSearchError, isAuthenticationError, isRetryableSearchError, rememberSearchRetry } from '../../services/searchRecovery';
 
 /** One AI lookup: what it asks for, and whether it's a refresh. */
 export interface Lookup {
@@ -21,22 +20,20 @@ export interface LookupEffects {
   savedCards: (word: string) => VocabCard[];
   /** Shows the result in the lookup's queue entry, with whatever else the caller does then. */
   showResult: (result: SearchResult) => void;
-  /** Marks the lookup's queue entry as failed; the error toast is runLookup's. */
-  showFailure: () => void;
+  /** Marks the lookup's queue entry as failed, with the error it failed with. */
+  showFailure: (error: unknown) => void;
   /** Gets the audio of the result's example sentences ready. */
   prepareAudio: (sentences: string[]) => void;
   /** Replaces a word's saved cards with fresh ones, keeping their SRS. */
   replaceSaved?: (word: string, vocabs: VocabCard[]) => void;
-  /** The error toast, carrying the query its retry sends again, if retrying could help. */
-  showError: (message: string, retryQuery?: string, analyzeMode?: 'batch') => void;
 }
 
 /**
  * Runs one lookup and applies its outcome. A result is shown and its audio prepared, and a refresh replaces the
  * word's saved cards (keeping their SRS) if the word is saved when the result arrives: a card deleted during the
  * request stays deleted, and a word saved during it gets the fresh result. The fresh cards have no pictures; the
- * Mac's enrichment cycle makes them. A failure shows the error toast, and an expired session's lookup is kept to
- * run again after signing in. An outcome that a newer request owns changes nothing at all.
+ * Mac's enrichment cycle makes them. A failure goes to showFailure with its error, for the caller to keep and word.
+ * An outcome that a newer request owns changes nothing at all.
  */
 export const runLookup = (lookup: Lookup, effects: LookupEffects): Promise<void> => {
   const { query, analyzeMode, refresh } = lookup;
@@ -54,8 +51,6 @@ export const runLookup = (lookup: Lookup, effects: LookupEffects): Promise<void>
   }).catch(err => {
     if (superseded()) return;
     warn('🔍 Lookup failed "' + query + '":', (err as Error | undefined)?.message);
-    effects.showFailure();
-    if (isAuthenticationError(err)) rememberSearchRetry({ query, analyzeMode });
-    effects.showError(describeSearchError(query, err), isRetryableSearchError(err) ? query : undefined, analyzeMode);
+    effects.showFailure(err);
   });
 };
