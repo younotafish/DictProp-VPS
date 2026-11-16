@@ -119,9 +119,8 @@ export function PhraseBody({
                     onSaveVocab={onSaveVocab}
                     isSaved={isVocabSaved(vocab)}
                     onSearch={onSearch}
-                    scrollable={false}
                     showSave={true}
-                    className="!h-auto !overflow-visible border-slate-200 shadow-sm hover:shadow-md transition-shadow"
+                    className="border-slate-200 shadow-sm hover:shadow-md transition-shadow"
                     onCompare={onCompare}
                     onSaveSentence={onSaveSentence}
                     onOpenExampleSentence={onOpenExampleSentence}

@@ -380,8 +380,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
                 data={data as VocabCard}
                 showSave={false}
                 onSearch={onSearch}
-                scrollable={false}
-                className="min-h-full shadow-none border-0 !p-0 bg-transparent !h-auto !overflow-visible max-w-3xl md:max-w-5xl lg:max-w-6xl xl:max-w-[1400px] 2xl:max-w-[1600px] mx-auto"
+                className="min-h-full shadow-none border-0 !p-0 max-w-3xl md:max-w-5xl lg:max-w-6xl xl:max-w-[1400px] 2xl:max-w-[1600px] mx-auto"
                 showRefresh={false}
                 onCompare={onCompare}
                 onSaveSentence={onSaveSentence}

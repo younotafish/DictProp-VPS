@@ -109,7 +109,7 @@ export const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = React
             onSave={handleSave}
             showSave={true}
             onSearch={onSearch}
-            className="border-violet-200 shadow-sm hover:shadow-md transition-shadow bg-white"
+            className="border-violet-200 shadow-sm hover:shadow-md transition-shadow"
             onSaveSentence={onSaveSentence}
             isSentenceSaved={isSentenceSaved}
           />
