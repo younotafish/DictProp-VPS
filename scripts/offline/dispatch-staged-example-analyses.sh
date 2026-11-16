@@ -57,9 +57,6 @@ while :; do
   # The archive is bound to this operation and release, so it decrypts for no other import.
   ARCHIVE="$WAVE_DIR/sentence-enrichments.enc"
   seal_wave "$ARCHIVE" --purpose "import:enrichment-import:$RELEASE_TAG" manifest.json
-  # Waiting before the release exists means a wait that gives up leaves no release behind.
-  GH_BIN="$GH_BIN" GITHUB_REPOSITORY="$REPO" \
-    scripts/offline/wait-for-incremental-enrichment.sh
   ensure_release "Temporary encrypted example analyses $WAVE_NAME" \
     "Locally generated and verified example-sentence analyses; removed after import."
   publish_wave "$ARCHIVE" sentence-enrichments.enc enrichment-import

@@ -149,10 +149,9 @@ test('saved-sentence publication does not count a publication production has sin
     mkdirSync(offline, { recursive: true });
     mkdirSync(join(root, 'tmp'));
     symlinkSync(waveScript, join(offline, 'prepare-saved-sentence-analysis-wave.mjs'));
-    writeFileSync(join(offline, 'wait-for-incremental-enrichment.sh'), '#!/bin/sh\nexit 0\n');
     writeFileSync(join(offline, 'publish-backfill-release.sh'), `#!/bin/sh\necho "$1" >> '${releases}'\n`);
     writeFileSync(join(root, 'gh'), '#!/bin/sh\nexit 0\n');
-    for (const script of ['scripts/offline/wait-for-incremental-enrichment.sh', 'scripts/offline/publish-backfill-release.sh', 'gh']) {
+    for (const script of ['scripts/offline/publish-backfill-release.sh', 'gh']) {
       chmodSync(join(root, script), 0o700);
     }
     writeFileSync(join(root, 'key'), 'test-key\n');
@@ -255,7 +254,6 @@ function savedSentenceDispatchFixture(prefix: string) {
   mkdirSync(offline, { recursive: true });
   mkdirSync(join(root, 'tmp'));
   symlinkSync(waveScript, join(offline, 'prepare-saved-sentence-analysis-wave.mjs'));
-  writeFileSync(join(offline, 'wait-for-incremental-enrichment.sh'), '#!/bin/sh\nexit 0\n');
   // Like the real publisher, a transient failure leaves its state alone and a terminal one marks it failed.
   writeFileSync(join(offline, 'publish-backfill-release.sh'), `#!/bin/sh
 echo "$1" >> '${releases}'
@@ -265,7 +263,7 @@ case "$FAKE_PUBLISH_MODE" in
 esac
 `);
   writeFileSync(join(root, 'gh'), '#!/bin/sh\nexit "${FAKE_GH_STATUS:-0}"\n');
-  for (const script of ['scripts/offline/wait-for-incremental-enrichment.sh', 'scripts/offline/publish-backfill-release.sh', 'gh']) {
+  for (const script of ['scripts/offline/publish-backfill-release.sh', 'gh']) {
     chmodSync(join(root, script), 0o700);
   }
   writeFileSync(join(root, 'key'), 'test-key\n');

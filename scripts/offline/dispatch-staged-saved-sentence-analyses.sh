@@ -59,9 +59,6 @@ while :; do
   # The archive is bound to this operation and release, so it decrypts for no other import.
   ARCHIVE="$WAVE_DIR/sentence-backfill.enc"
   seal_wave "$ARCHIVE" --purpose "import:import:$RELEASE_TAG" manifest.json
-  # Waiting before the release exists means a wait that gives up leaves no release behind.
-  GH_BIN="$GH_BIN" GITHUB_REPOSITORY="$REPO" \
-    scripts/offline/wait-for-incremental-enrichment.sh
   ensure_release "Temporary encrypted saved sentence grammar $WAVE_NAME" \
     "Locally generated detailed sentence analyses; removed after import."
   publish_wave "$ARCHIVE" sentence-backfill.enc import

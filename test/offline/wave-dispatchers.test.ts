@@ -99,7 +99,6 @@ async function dispatch(root: string, name: string, run: Run) {
     'prepare-example-enrichment-wave.mjs', 'prepare-offline-image-wave.mjs', 'prepare-offline-audio-wave.mjs',
   ]) writeFileSync(join(offline, preparer), PREPARE_STUB);
   writeExecutable(join(offline, 'publish-backfill-release.sh'), PUBLISHER_STUB);
-  writeExecutable(join(offline, 'wait-for-incremental-enrichment.sh'), '#!/bin/sh\nexit 0\n');
   writeExecutable(join(cwd, 'gh'), GH_STUB);
   // The cycle runs the dispatchers from the repository root, where the image check finds sharp.
   symlinkSync(repoPath('node_modules'), join(cwd, 'node_modules'));

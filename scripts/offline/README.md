@@ -119,8 +119,6 @@ Each dispatcher splits its stage's results into waves. Its wave preparer leaves 
 - `wave-dispatch.sh` — Sourced by the six `dispatch-staged-*.sh` scripts: the published waves, opening a fresh wave (setting an abandoned one aside), sealing it for `import:<op>:<tag>`, its release, and handing it to `publish-backfill-release.sh`.
 - `publish-backfill-release.sh` — Uploads one encrypted wave to the release its dispatcher created. It waits for the required deploy, and dispatches that deploy itself if no deploy run exists. It then dispatches `sentence-backfill.yml`'s import, waits for the import to finish, and deletes the release.
   `scripts/offline/publish-backfill-release.sh <release-tag> <encrypted-archive> <asset-name> <operation> <required-deploy-sha> [poll-seconds]`
-- `wait-for-incremental-enrichment.sh` — Waits until no `incremental-enrichment.yml` run is active, because that workflow owns the next production slot. The three sentence dispatchers call it before they create a wave's release.
-  `GH_BIN=.tools/gh scripts/offline/wait-for-incremental-enrichment.sh`
 - `dispatch-staged-corpus-audit.sh` — Publishes vocabulary records with `corpus-import`.
   `GH_BIN=.tools/gh scripts/offline/dispatch-staged-corpus-audit.sh <source-manifest.json> [batch-size=500] [required-deploy-sha]`
 - `prepare-corpus-audit-wave.mjs` — The corpus-audit wave preparer.
