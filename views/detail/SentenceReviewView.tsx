@@ -189,13 +189,16 @@ export function SentenceReviewView({
     return { sentenceMemorizedCount: memorizedCount(sentenceItems, now), sentenceReviewPill: lessonReviewPill(sentenceItems, now) };
   }, [sentenceItems]);
 
+  // A catalog line takes a picture whether or not it has a record yet (attaching one creates it), so the attach button
+  // doesn't appear with the first listen. An unsaved example isn't in the library, so it takes none: the button is
+  // hidden and a paste is ignored.
+  const takesPicture = !!currentSentence && (!isSentencePreview || catalogSentencePreview);
   const {
     showImagePanel, setShowImagePanel, imageUploading, imageDragOver, setImageDragOver, imageError, setImageError,
     imageReloadTick, attachImageFromFile, handleImageFabTap,
   } = useSentenceImageAttach({
     currentSentenceRef,
-    // A preview isn't in the library, so it takes no picture: the attach button is hidden and a paste is ignored.
-    onAttachImage: isSentencePreview ? undefined : onAttachImage,
+    onAttachImage: takesPicture ? onAttachImage : undefined,
     interactionLocked,
   });
   const { sentenceCopy, handleCopySentence } = useSentenceCopy(currentSentenceRef);
@@ -508,14 +511,14 @@ export function SentenceReviewView({
 
       {/* Attach-image FAB (sentence mode only), in the right rail 4rem above the search button (see SentenceImageFab).
           Hidden while its own paste panel is open. */}
-      {currentSentence && !isSentencePreview && !showImagePanel && (
+      {takesPicture && !showImagePanel && (
         <SentenceImageFab hasImage={hasSentenceImage} onTap={handleImageFabTap} />
       )}
 
       {/* Paste / drop / pick panel — mirrors the bottom-right AI-search input overlay. The card is
           focusable + data-image-panel so an in-panel ⌘V lands on onPaste (the window listener is the
           primary path). */}
-      {currentSentence && !isSentencePreview && showImagePanel && (
+      {takesPicture && showImagePanel && (
         <SentenceImagePanel
           hasImage={hasSentenceImage}
           uploading={imageUploading}
