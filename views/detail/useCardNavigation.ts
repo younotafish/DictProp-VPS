@@ -9,9 +9,9 @@ interface CardNavigationOptions {
   /**
    * The card's scroller, put back at its top whenever another card shows: after a move to another word, or when a
    * delete or archive slides the next card into place. Moving between a word's meanings keeps the place. Sentence
-   * review has none.
+   * review passes its sentence page's scroller.
    */
-  scrollContainerRef?: RefObject<HTMLElement | null>;
+  scrollContainerRef: RefObject<HTMLElement | null>;
   /** Sentence review keeps its analysis page open between sentences, scrolled back to the top. */
   sentenceReview: boolean;
 }
@@ -54,7 +54,7 @@ export function useCardNavigation(
   useLayoutEffect(() => {
     if (prevGroupIndexRef.current !== currentGroupIndex) {
       prevGroupIndexRef.current = currentGroupIndex;
-      if (scrollContainerRef?.current) scrollContainerRef.current.scrollTop = 0;
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
       // The analysis page stays open while moving between saved sentences, scrolled back to its top. (Word
       // cards never leave their one page.)
       if (sentenceReview) {

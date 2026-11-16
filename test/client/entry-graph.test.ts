@@ -31,6 +31,7 @@ const LAZY_ONLY = [
   'services/authGate.ts',
   'services/catalogQueue.ts',
   'services/reviewGestures.ts',
+  'services/selectionLookup.ts',
   'services/studyKeys.ts',
   'services/studyPrompt.ts',
   'services/notebook/listScroll.ts',
@@ -40,6 +41,10 @@ const LAZY_ONLY = [
   'services/readingPosition.ts',
   'components/activateOnKey.ts',
   'services/reviewHistory.ts',
+  'components/Sheet.tsx',
+  'components/textAnalyzerMarks.ts',
+  'components/study/sessionAudio.ts',
+  'components/swipeDirection.ts',
 ];
 
 const ENTRY = 'index.tsx';

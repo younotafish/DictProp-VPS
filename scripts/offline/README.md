@@ -91,7 +91,7 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
   `node scripts/offline/reconcile-sentence-analyses.mjs <final-source.json> <base-analysis.json> <output-directory> [supplemental-analysis.json]`
 - `enrich-sentences.mjs` — Sentence analysis. It asks the model for each sentence's detailed explanation, checks it against `sentence-analysis-contract.mjs`, and checkpoints each batch. Sentences that keep failing go into the failure ledger.
   `node scripts/offline/enrich-sentences.mjs <sentence-export.json> <manifest.json> [work-directory] [base-analysis.json]`
-- `failure-ledger.mjs` — Items that keep failing a stage wait out a growing backoff, recorded in `failure-ledger.json`. This tool filters the sentences and image targets that are waiting one out, records image outcomes, and prints a summary. The text stages also import it.
+- `failure-ledger.mjs` — Items that keep failing a stage wait out a growing backoff, recorded in `failure-ledger.json`. This tool filters the sentences and image targets that are waiting one out, gives an image target that comes back with an unchanged prompt a `seedRound` equal to its failure count, so it renders from new seeds, records image outcomes, and prints a summary. The text stages also import it.
   `node scripts/offline/failure-ledger.mjs <filter-sentences|filter-image-targets|record-image-outcomes|summary> <ledger> ...`
 - `prepare-incremental-item-images.mjs` — Writes image targets, with their prompts, for the live saved sentences, words and phrases that have no image, or whose advanced rewrite has no matching local image yet. It also writes the manifest that the image dispatcher publishes. The manifest's hashes and the markers it checks are the server's own, imported from `server/src/corpus-hash.ts` and `server/src/local-enrichment-markers.ts`.
   `node scripts/offline/prepare-incremental-item-images.mjs <corpus-export.json> <sentence-analysis.json|-> <vocab-completion.json|-> <output-directory> [model]`
@@ -169,7 +169,7 @@ The repository is public, so everything that crosses it is encrypted. `sentence-
 
 These modules are imported by other scripts and never run on their own.
 
-- `offline-io.mjs` — `readJson`, `writePrivateJson` (a temp file renamed into place, mode 0600) and `linkOrCopy`.
+- `offline-io.mjs` — `readJson`, `writePrivateJson` (atomic-file.mjs's `writeJsonAtomic`, re-exported) and `linkOrCopy`.
 - `atomic-file.mjs` — `writeFileAtomic`, `writeJsonAtomic` and `copyFileAtomic`, which write a private temp file beside the target and rename it over it, and `fileReady`, which treats an empty file as missing.
 - `model-stage.mjs` — What the four model stages share: their settings, lifecycle and worker pool, the cached batch request with its three attempts, the halving of a batch that fails as a whole, and the pruning of cached batches older than two weeks.
 - `vocab-completion.mjs` — The vocabulary-completion stage's own logic: which cards need work, what is sent for each, how an answer is checked and how it is merged into its card. `complete-corpus-fields.mjs` runs it. The source hash and the archive rule it writes are the server's own, imported from `server/src/corpus-hash.ts` and `server/src/shared/usage-audit.ts`.
@@ -202,7 +202,7 @@ Essays:
 
 Real Life (`content/real-life-catalog.json`):
 
-- `generate-themed-sentence-collection.mjs` — Writes one Real Life collection from a brief in `content/research/*-brief.json`, with one bounded Codex call per section. A section that fails validation is retried. Add the result to the catalog by hand.
+- `generate-themed-sentence-collection.mjs` — Writes one Real Life collection from a brief in `content/research/*-brief.json`, with one bounded Codex call per section. A section that fails validation is retried. A brief's `forbiddenPatterns`, case-insensitive regular expressions, lists what its lines must never match; only the executive communication brief has any. Add the result to the catalog by hand.
   `node scripts/offline/generate-themed-sentence-collection.mjs content/research/<name>-brief.json <collection.json> [work-directory]`
 - `audit-themed-sentence-collection.mjs` — Has Codex review a generated collection against its brief. It writes the report only once the report passes its checks.
   `node scripts/offline/audit-themed-sentence-collection.mjs <collection.json> <brief.json> <report.json>`
