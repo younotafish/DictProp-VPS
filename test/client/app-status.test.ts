@@ -94,6 +94,12 @@ test('every pill is capped short of the search button\'s column and truncates it
   assert.equal([...html.matchAll(/<span class="min-w-0 truncate">/g)].length, 6);
 });
 
+test('the undo pill names its shortcut to assistive technology, with no hint on screen', () => {
+  const html = renderStack({ undoMessage: 'Deleted “gamut”' });
+  assert.match(html, /<span class="min-w-0 truncate">Deleted “gamut”<\/span><button type="button" aria-keyshortcuts="Meta\+Z Control\+Z" class="[^"]*">Undo<\/button>/);
+  assert.doesNotMatch(html, /⌘|Ctrl/);
+});
+
 test('the update notice says it in two words, with the sentence as its title and name, and a new version waits while covered', t => {
   t.after(dismissUpdate);
   announceUpdate('service-worker');

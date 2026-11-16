@@ -84,7 +84,7 @@ export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
 }) => (
   <div className={`fixed ${aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+0.5rem)]' : 'bottom-[var(--card-float-bottom)]'} left-1/2 -translate-x-1/2 ${liftAbovePopup ? 'z-[110]' : 'z-[80]'} flex flex-col items-center gap-2 pointer-events-none`}>
     {undoMessage && (
-      <NoticePill tone="dark" actions={[{ label: 'Undo', onClick: onUndo }]}>{undoMessage}</NoticePill>
+      <NoticePill tone="dark" actions={[{ label: 'Undo', onClick: onUndo, keyShortcuts: 'Meta+Z Control+Z' }]}>{undoMessage}</NoticePill>
     )}
     <div ref={noticeSlotRef('search')} data-notice-slot="search" className="flex flex-col items-center gap-2 empty:hidden" />
 

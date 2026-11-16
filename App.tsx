@@ -109,7 +109,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
   const overlays = useOverlays(allActiveItems);
   const {
     cardPopup, openCardPopup, closeCardPopup, popupItems, duplicateClusters, setDuplicateClusters, confirmModal, setConfirmModal,
-    showKeyboardHelp, setShowKeyboardHelp, openKeyboardHelp, showRefusedReviews, setShowRefusedReviews, openRefusedReviews, dialogOpen,
+    showKeyboardHelp, setShowKeyboardHelp, openKeyboardHelp, showRefusedReviews, setShowRefusedReviews, openRefusedReviews, dialogOpen, modalOpen,
   } = overlays;
 
   // The notebook sits under DetailView and the card popup, so it skips the reviews made there as they
@@ -125,7 +125,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
   // The console's item inspector, for diagnosing sync and schedule problems: __debugItems('atlas').
   useEffect(() => installDebugItems(() => latestItemsRef.current), [latestItemsRef]);
 
-  useAppShortcuts(setCurrentView, detail, overlays);
+  useAppShortcuts(setCurrentView, detail, overlays, { undoMessage, undoLastChange, modalOpen });
   const { isOnline, showOfflineBanner } = useOnlineStatus();
   const offlineImages = useOfflineImages(library);
   const { imagePrefetchProgress, imageRestoreProgress, stopImageDownload, handleDownloadOfflineImages, handleRestoreImagesToServer } = offlineImages;
