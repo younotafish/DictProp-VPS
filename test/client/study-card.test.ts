@@ -112,7 +112,7 @@ test('before the reveal the footer holds one full-width Show answer and no grade
   assert.match(buttons[0], /class="mt-1\.5 w-full h-14 [^"]*"/);
   assert.match(buttons[0], /aria-keyshortcuts="Space Enter"/);
   assert.match(footer, /Show answer<\/button>/);
-  assert.doesNotMatch(body, /<button/, 'nothing to press in the body of a meaning prompt');
+  assert.doesNotMatch(body, /<button/, 'nothing to press in the body of a meaning prompt without an IPA');
   assert.match(body, /^<section class="flex-1 min-h-0 overflow-y-auto px-4"><div class="max-w-2xl mx-auto pt-\[8vh\] pb-6 text-center">/);
 });
 
@@ -134,6 +134,44 @@ test('a listening card\'s prompt is the 64 px dark speaker, which pauses, resume
   assert.match(buttons[0], /aria-label="Listen to this sentence"/);
   assert.match(body, /<svg[^>]* width="26" height="26"[^>]*class="lucide lucide-volume2 /);
   assert.doesNotMatch(textOf(body), /crestfallen|loss/, 'the sentence is heard, not read');
+});
+
+const IPA = '/ˈkrestˌfɔːlən/';
+/** The IPA chips (PronunciationBlock) in some markup: the IPA each shows. */
+const ipaChipsOf = (markup: string) =>
+  [...markup.matchAll(/<button type="button" class="[^"]*font-mono[^"]*" title="Click to listen">[^]*?<span[^>]*>([^<]*)<\/span><\/button>/g)].map(match => match[1]);
+
+test('a listening card\'s answer shows the IPA under the word, the chip that says it, and never before the reveal', () => {
+  const item = listening({ ipa: IPA });
+  assert.deepEqual(ipaChipsOf(render({ item })), []);
+  const { body } = partsOf(render({ item, session: session({ revealed: true }) }));
+  assert.match(body, /<div class="text-3xl font-bold text-slate-900 mb-2">crestfallen<\/div><div class="mb-3"><button type="button" class="[^"]*font-mono[^"]*" title="Click to listen">/);
+  assert.deepEqual(ipaChipsOf(body), [IPA]);
+  // The prompt's speaker is still there, above the answer.
+  assert.match(buttonsOf(body)[0], /w-16 h-16 rounded-full/);
+});
+
+test('a meaning prompt shows the IPA under its word, where it gives nothing away; a production prompt doesn\'t', () => {
+  const meaning = render({ item: card({ ipa: IPA, word: 'lead', sense: 'noun: emotion' }), session: session({ siblingCounts: { a: 2 } }) });
+  assert.match(meaning, /<div class="text-4xl font-bold text-slate-900">lead<\/div><div class="mt-3"><button type="button" class="[^"]*font-mono/);
+  assert.deepEqual(ipaChipsOf(partsOf(meaning).body), [IPA]);
+  assert.match(meaning, /<\/button><\/div><div class="mt-2 text-sm text-slate-400">noun · one of 2 meanings<\/div>/, 'the sense hint follows it');
+  const production = card({ ipa: IPA }, PRODUCTION);
+  assert.deepEqual(ipaChipsOf(render({ item: production })), []);
+  assert.deepEqual(ipaChipsOf(render({ item: production, session: session({ revealed: true }) })), [IPA], 'it shows with the answer');
+  // Without an IPA there's no chip, before the reveal or after.
+  assert.deepEqual(ipaChipsOf(render({ item: card(), session: session({ revealed: true }) })), []);
+});
+
+test('the revealed example has its speaker beside Open sentence review', () => {
+  const { body } = partsOf(render({ item: card({ examples: ['She looked {{crestfallen}}.'] }), session: session({ revealed: true }) }));
+  const row = body.match(/<div class="flex items-start gap-2 border-l-2[^]*?<\/div>/)?.[0] ?? '';
+  assert.match(row, /<span class="min-w-0 flex-1 pt-1\.5">She looked crestfallen\.<\/span>/);
+  const [speaker, open] = buttonsOf(row);
+  assert.match(speaker, /class=" transition-colors text-indigo-300 hover:text-indigo-600 grid h-9 w-9 shrink-0 place-items-center rounded-md hover:bg-slate-200 /);
+  assert.match(speaker, /aria-label="Listen to this sentence"/);
+  assert.match(open, /aria-label="Open sentence review"/);
+  assert.match(row, /<svg[^>]* width="17" height="17"[^>]*class="lucide lucide-volume2 /);
 });
 
 test('the header keeps the count, the instruction and End, and no longer holds Undo', () => {

@@ -6,6 +6,7 @@ import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { RATINGS, formatReviewInterval, getStudyContent, selectReviewTask, type GradeReceiptText, type StudySession } from '../../services/studySession';
 import { TASK_INSTRUCTIONS, judgeTypedAnswer, studyPrompt, verdictLine } from '../../services/studyPrompt';
 import { isImeKey } from '../keyboardTarget';
+import { PronunciationBlock } from '../PronunciationBlock';
 import { SentenceSpeakerButton } from '../SentenceSpeakerButton';
 import { GradeReceipt } from './GradeReceipt';
 
@@ -88,6 +89,8 @@ export function StudyCard({
   const verdict = task === 'production' && session.revealed
     ? verdictLine(judgeTypedAnswer(session.typedAnswer, content), content.word)
     : null;
+  // How the word is said, tap to hear it: under the answer's word, and under a meaning prompt's, which shows the word.
+  const pronunciation = content.ipa ? <PronunciationBlock text={content.word} ipa={content.ipa} /> : null;
   return (
     <div className="flex-1 min-h-0 flex flex-col">
       <header className="shrink-0 px-4 pt-4">
@@ -114,6 +117,7 @@ export function StudyCard({
           ) : (
             <>
               <div className={task === 'meaning' ? `${prompt.multiWord ? 'text-2xl' : 'text-4xl'} font-bold text-slate-900` : 'text-xl leading-relaxed text-slate-800'}>{prompt.text}</div>
+              {task === 'meaning' && pronunciation && <div className="mt-3">{pronunciation}</div>}
               {prompt.sub && <div className="mt-2 text-sm text-slate-400">{prompt.sub}</div>}
               {prompt.detail && <div className="mt-2 text-sm text-slate-500">{prompt.detail}</div>}
             </>
@@ -154,6 +158,7 @@ export function StudyCard({
           {session.revealed && (
             <div className="mt-10 pt-8 border-t border-slate-200 text-left" aria-live="polite">
               <div className="text-3xl font-bold text-slate-900 mb-2">{content.word}</div>
+              {pronunciation && <div className="mb-3">{pronunciation}</div>}
               {sense && <div className="text-sm text-slate-500 mb-2">{sense}</div>}
               {verdict && <div className={`text-sm font-medium mb-3 ${VERDICT_STYLES[verdict.tone]}`}>{verdict.text}</div>}
               {content.chinese && <div className="text-lg text-slate-700 mb-2">{content.chinese}</div>}
@@ -161,6 +166,11 @@ export function StudyCard({
               {example && (
                 <div className="flex items-start gap-2 border-l-2 border-slate-300 pl-3 text-sm leading-relaxed text-slate-500">
                   <span className="min-w-0 flex-1 pt-1.5">{example}</span>
+                  <SentenceSpeakerButton
+                    text={example}
+                    iconSize={17}
+                    className="grid h-9 w-9 shrink-0 place-items-center rounded-md hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                  />
                   <button
                     type="button"
                     onClick={event => {

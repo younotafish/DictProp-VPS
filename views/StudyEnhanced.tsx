@@ -16,6 +16,7 @@ import {
   applyUndoneGrade,
   endSessionEarly,
   findSessionCard,
+  getStudyContent,
   gradeSessionCard,
   isSessionCardLive,
   listeningPrompt,
@@ -197,6 +198,8 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   const reveal = () => {
     if (undoing) return;
     lastActionAtRef.current = performance.now();
+    // The answer says its word as it shows, unless a sentence (the listening prompt) is still being read.
+    if (session && currentItem && !session.revealed) audio.sayWordOnReveal(getStudyContent(currentItem).word);
     setSession(revealAnswer);
   };
 
