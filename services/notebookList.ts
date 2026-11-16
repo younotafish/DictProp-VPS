@@ -126,14 +126,6 @@ export const findFuzzyMatchesRanked = (items: StoredItem[], query: string): { ma
   return { matches: withAllSenses(items, order), order };
 };
 
-/** findFuzzyMatchesRanked's matches alone. */
-export const findFuzzyMatches = (items: StoredItem[], query: string): StoredItem[] =>
-  findFuzzyMatchesRanked(items, query).matches;
-
-/** The whole search at once: literal matches, else fuzzy ones. The notebook runs the two steps separately. */
-export const findNotebookMatches = (items: StoredItem[], query: string): StoredItem[] =>
-  findLiteralMatches(items, query) ?? findFuzzyMatches(items, query);
-
 const byTitle = (a: StoredItem, b: StoredItem): number => getItemTitle(a).localeCompare(getItemTitle(b));
 
 // Due items first (isNotebookDue), weakest memory then longest overdue; the rest by next review.

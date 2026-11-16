@@ -77,7 +77,7 @@ test('base words join the substring hits, and a query neither finds waits for th
   assert.deepEqual([...bases], ['run']);
   assert.deepEqual(findSearchCandidates(items, 'ran', bases)?.map(item => item.data.id), ['run:', 'ranch:']);
   assert.equal(findSearchCandidates(items, 'xyzzy', new Set()), null);
-  // Without the base words (App hasn't passed matchSavedBases), only the substring hits.
+  // With no base words, as for a query that inflects no saved word, only the substring hits.
   assert.deepEqual(findSearchCandidates(items, 'ran', new Set())?.map(item => item.data.id), ['ranch:']);
 });
 

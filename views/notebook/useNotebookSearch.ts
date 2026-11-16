@@ -19,8 +19,8 @@ interface NotebookSearchOptions {
   filterMode: NotebookFilter;
   /** Moves the list's clock on when the notebook says the view changed (a card opened over the list). */
   clockBump: number;
-  /** The saved base words a query inflects (ran -> run), listed with the literal matches; none without it. */
-  matchSavedBases?: (query: string) => Set<string>;
+  /** The saved base words a query inflects (ran -> run), listed with the literal matches. */
+  matchSavedBases: (query: string) => Set<string>;
 }
 
 /**
@@ -41,7 +41,7 @@ export function useNotebookSearch({ items, query, sortMode, filterMode, clockBum
     return () => window.clearTimeout(timer);
   }, [searchQuery]);
   const bases = useMemo(
-    () => (searchQuery && matchSavedBases ? matchSavedBases(searchQuery) : NO_BASES),
+    () => (searchQuery ? matchSavedBases(searchQuery) : NO_BASES),
     [searchQuery, matchSavedBases],
   );
   const literalMatches = useMemo(

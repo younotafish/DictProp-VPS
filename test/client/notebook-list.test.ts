@@ -3,9 +3,8 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
-  buildNotebookList, buildNotebookRows, filterNoun, findFuzzyMatches, findLiteralMatches, findNotebookMatches,
-  groupByTitle, isNotebookDue, listNoteFor, nextNotebookFilter, nextNotebookSort, notebookStats, type NotebookFilter,
-  type NotebookRow,
+  buildNotebookList, buildNotebookRows, filterNoun, findFuzzyMatchesRanked, findLiteralMatches, groupByTitle,
+  isNotebookDue, listNoteFor, nextNotebookFilter, nextNotebookSort, notebookStats, type NotebookFilter, type NotebookRow,
 } from '../../services/notebookList.ts';
 import type { ItemGroup, SearchResult, StoredItem, UsageStatus, VocabCard } from '../../types.ts';
 import { NotebookHeader } from '../../views/notebook/NotebookHeader.tsx';
@@ -77,6 +76,13 @@ const phrase = (query: string, translation: string, options: Options = {}): Stor
 const ids = (items: StoredItem[]) => items.map(item => item.data.id);
 const titles = (groups: ItemGroup[]) => groups.map(group => group.title);
 
+/**
+ * What useNotebookSearch lists for a query that inflects no saved word: the literal matches, else, once typing pauses,
+ * the fuzzy ones. (notebook-search-rank.test.ts adds the base words and the ranking.)
+ */
+const literalThenFuzzy = (items: StoredItem[], query: string) =>
+  findLiteralMatches(items, query) ?? findFuzzyMatchesRanked(items, query).matches;
+
 test('groups keep first-appearance order and put the most useful sense first', () => {
   const groups = groupByTitle([
     vocab('Bank', { sense: 'river', status: 'rare_or_dated' }),
@@ -128,10 +134,10 @@ test('search matches words, phrases and Chinese, and brings along the other sens
     vocab('apple', { chinese: '苹果' }),
     phrase('break the bank', '花大钱'),
   ];
-  assert.deepEqual(ids(findNotebookMatches(items, ' BANK ')), ['bank:money', 'bank:river', 'embankment:', 'break the bank']);
-  assert.deepEqual(ids(findNotebookMatches(items, '银行')), ['bank:money', 'bank:river']);
-  assert.deepEqual(ids(findNotebookMatches(items, '花大钱')), ['break the bank']);
-  assert.equal(findNotebookMatches(items, '  '), items);
+  assert.deepEqual(ids(literalThenFuzzy(items, ' BANK ')), ['bank:money', 'bank:river', 'embankment:', 'break the bank']);
+  assert.deepEqual(ids(literalThenFuzzy(items, '银行')), ['bank:money', 'bank:river']);
+  assert.deepEqual(ids(literalThenFuzzy(items, '花大钱')), ['break the bank']);
+  assert.equal(literalThenFuzzy(items, '  '), items);
 });
 
 test('while searching, due items outside the results follow them, weakest first', () => {
@@ -142,15 +148,15 @@ test('while searching, due items outside the results follow them, weakest first'
     vocab('lake', { due: NOW + DAY }),
     vocab('pond', { due: NOW - DAY, archived: true }),
   ];
-  const list = buildNotebookList(items, findNotebookMatches(items, 'bank'), 'familiarity', 'all', NOW);
+  const list = buildNotebookList(items, literalThenFuzzy(items, 'bank'), 'familiarity', 'all', NOW);
   assert.deepEqual(titles(list.groups), ['bank']);
   assert.deepEqual(titles(list.dueGroups), ['stream', 'river']);
 });
 
 test('a search without substring hits falls back to fuzzy spelling so typos still match', () => {
   const items = [vocab('accommodate'), vocab('recommend'), vocab('apple')];
-  assert.deepEqual(ids(findNotebookMatches(items, 'acommodate')), ['accommodate:']);
-  assert.deepEqual(ids(findNotebookMatches(items, 'xyzzy')), []);
+  assert.deepEqual(ids(literalThenFuzzy(items, 'acommodate')), ['accommodate:']);
+  assert.deepEqual(ids(literalThenFuzzy(items, 'xyzzy')), []);
 });
 
 test('literal matching reports a query nothing contains as null, so the caller can wait to scan fuzzily', () => {
@@ -161,16 +167,16 @@ test('literal matching reports a query nothing contains as null, so the caller c
 
 test('the fuzzy index keeps up with spellings added and removed after it was built', () => {
   const items = [vocab('accommodate'), vocab('apple')];
-  assert.deepEqual(ids(findFuzzyMatches(items, 'acommodate')), ['accommodate:']);
+  assert.deepEqual(ids(findFuzzyMatchesRanked(items, 'acommodate').matches), ['accommodate:']);
   const reviewed = items.map(item => ({ ...item, srs: { ...item.srs!, totalReviews: 1 } }));
-  assert.deepEqual(ids(findFuzzyMatches(reviewed, 'acommodate')), ['accommodate:']);
-  assert.deepEqual(ids(findFuzzyMatches([...items, vocab('necessary')], 'neccessary')), ['necessary:']);
-  assert.deepEqual(ids(findFuzzyMatches(items, 'neccessary')), []);
+  assert.deepEqual(ids(findFuzzyMatchesRanked(reviewed, 'acommodate').matches), ['accommodate:']);
+  assert.deepEqual(ids(findFuzzyMatchesRanked([...items, vocab('necessary')], 'neccessary').matches), ['necessary:']);
+  assert.deepEqual(ids(findFuzzyMatchesRanked(items, 'neccessary').matches), []);
 });
 
 test('substring hits leave out near misses the fuzzy fallback would find', () => {
   const items = [vocab('affect'), vocab('effect')];
-  assert.deepEqual(ids(findNotebookMatches(items, 'affect')), ['affect:']);
+  assert.deepEqual(ids(literalThenFuzzy(items, 'affect')), ['affect:']);
 });
 
 test('the filter button cycles all, words, phrases; the sort button toggles; each filter names what it lists', () => {
@@ -325,14 +331,14 @@ test('search rows list the matches, then the archived matches open under their h
     vocab('embankment', { archived: true, sense: 'road' }),
     vocab('river', { due: NOW - DAY }),
   ];
-  const list = buildNotebookList(items, findNotebookMatches(items, 'bank'), 'familiarity', 'all', NOW);
+  const list = buildNotebookList(items, literalThenFuzzy(items, 'bank'), 'familiarity', 'all', NOW);
   // N counts the archived spellings listed, whatever the toggle says.
   for (const showArchived of [false, true]) {
     assert.deepEqual(rowSummary(buildNotebookRows(list, { compareMode: false, showListNote: false, showArchived })),
       ['main:bank', 'archived-header(2)', 'archived:bankrupt', 'archived:embankment', 'due-header(1)', 'due:river']);
   }
   // With nothing archived among the matches there's no heading, and no archived toggle either.
-  const unarchived = buildNotebookList(items, findNotebookMatches(items, 'river'), 'familiarity', 'all', NOW);
+  const unarchived = buildNotebookList(items, literalThenFuzzy(items, 'river'), 'familiarity', 'all', NOW);
   assert.deepEqual(rowSummary(buildNotebookRows(unarchived, { compareMode: false, showListNote: false, showArchived: true })),
     ['main:river']);
 });
@@ -412,7 +418,7 @@ test('a rebuild keeps the earlier object of every group whose senses are unchang
   const fewer = buildNotebookList(reviewed.filter(item => item.data.id !== 'bank:river'), null, 'familiarity', 'all', NOW, second);
   assert.notEqual(fewer.groups[0], second.groups[0]);
   assert.deepEqual(fewer.groups[0].items.map(item => item.data.id), ['bank:money']);
-  const searching = buildNotebookList(reviewed, findNotebookMatches(reviewed, 'pear'), 'familiarity', 'all', NOW, second);
+  const searching = buildNotebookList(reviewed, literalThenFuzzy(reviewed, 'pear'), 'familiarity', 'all', NOW, second);
   assert.deepEqual(titles(searching.dueGroups), ['bank']);
   assert.notEqual(searching.dueGroups[0], second.groups[0]);
   assert.equal(searching.groups[0], second.groups[2]);
@@ -447,7 +453,7 @@ test('a card saved or reset after the list’s clock lists with the due cards at
     vocab('archived new', { reviews: 0, archived: true }),
   ];
   assert.deepEqual(titles(buildNotebookList(items, null, 'familiarity', 'all', NOW).groups), ['just saved', 'overdue', 'resting']);
-  const searching = buildNotebookList(items, findNotebookMatches(items, 'resting'), 'familiarity', 'all', NOW);
+  const searching = buildNotebookList(items, literalThenFuzzy(items, 'resting'), 'familiarity', 'all', NOW);
   assert.deepEqual(titles(searching.dueGroups), ['just saved', 'overdue']);
 });
 
