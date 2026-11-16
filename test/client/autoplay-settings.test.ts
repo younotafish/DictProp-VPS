@@ -64,9 +64,43 @@ test('each control steps to its next preset, back to the first after the last, a
   assert.deepEqual((await loadWith(storage)).getAutoPlaySettings(), { ...chosen, repeats: 5 }, 'the next launch has them');
 });
 
-test('blocked storage leaves the defaults working, and a change holds for the session', async () => {
+test('blocked storage leaves the defaults working, and each change holds for the session', async () => {
   const settings = await loadWith('blocked');
   assert.deepEqual(settings.getAutoPlaySettings(), DEFAULTS);
   settings.cycleAutoPlaySetting('gapMs');
   assert.equal(settings.getAutoPlaySettings().gapMs, 3000);
+  settings.cycleAutoPlaySetting('repeats');
+  assert.deepEqual(settings.getAutoPlaySettings(), { ...DEFAULTS, gapMs: 3000, repeats: 4 }, 'the gap chosen before stays');
+});
+
+test('two open tabs keep each other\'s changes: each starts from what is stored, and shows in the other tab', async t => {
+  // The browser tells every other tab of a change to localStorage with a storage event on its window.
+  const page = new EventTarget();
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: page });
+  t.after(() => { Reflect.deleteProperty(globalThis, 'window'); });
+  const storedChange = (key: string) => page.dispatchEvent(Object.assign(new Event('storage'), { key }));
+  const storage = storageWith();
+  const tabA = await loadWith(storage);
+  const tabB = await loadWith(storage);
+  let heardInA = 0;
+  tabA.subscribeAutoPlaySettings(() => { heardInA++; });
+
+  tabA.cycleAutoPlaySetting('minutes');
+  // Tab B still holds the 20 minutes it read when it loaded; its change keeps tab A's 25.
+  tabB.cycleAutoPlaySetting('repeats');
+  const both = { ...DEFAULTS, minutes: 25, repeats: 4 };
+  assert.deepEqual(JSON.parse(storage.getItem('autoplay_settings') ?? 'null'), both);
+  assert.deepEqual(tabB.getAutoPlaySettings(), both);
+  assert.deepEqual((await loadWith(storage)).getAutoPlaySettings(), both, 'the next card or lesson opens with both');
+
+  storedChange('autoplay_settings');
+  assert.deepEqual(tabA.getAutoPlaySettings(), both, 'tab A shows tab B\'s change');
+  assert.equal(heardInA, 2, 'tab A\'s views hear of it');
+  storedChange('tts_rate');
+  assert.equal(heardInA, 2, 'another key\'s change is none of theirs');
+
+  // A control moves on from the value its tab shows, though the other tab's change hasn't reached it yet.
+  tabA.cycleAutoPlaySetting('gapMs');
+  tabB.cycleAutoPlaySetting('gapMs');
+  assert.deepEqual(JSON.parse(storage.getItem('autoplay_settings') ?? 'null'), { ...both, gapMs: 3000 });
 });
