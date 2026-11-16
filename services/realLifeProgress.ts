@@ -4,10 +4,6 @@ import type { RealLifeSentence } from './realLifeCatalog';
 import { catalogProgressItemId } from './catalogProgressIdentity';
 import { catalogStudyItems, indexCatalogProgress, type CatalogProgressIndex } from './catalogProgress';
 
-// DetailView still imports this from here. This module reads only the catalog's types, so that import doesn't
-// load the catalog; new code imports it from realLifeProgressIdentity.
-export { isRealLifeProgressItem } from './realLifeProgressIdentity';
-
 /** A new progress record for a Real Life line, as it stands before its first review. */
 export function createRealLifeProgressItem(
   sentence: RealLifeSentence,
