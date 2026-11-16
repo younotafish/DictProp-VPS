@@ -96,6 +96,9 @@ export interface TokenizeOptions {
  */
 export function tokenizeSentence(text: string, { itemWord, findSaved, lookupAnyWord }: TokenizeOptions): SentencePiece[] {
   const wordLower = itemWord.trim().toLowerCase();
+  // A split word is the studied one when they match without edge punctuation, which look-ups strip too: 'word,' and
+  // '“word”' are the studied 'word', and 'etc.' still matches a studied 'etc.'.
+  const studiedKey = stripEdgePunct(wordLower);
   // Split plain runs into words whenever words need saved-card lookup or tap-any lookup.
   const tokenize = !!findSaved || lookupAnyWord;
 
@@ -107,8 +110,9 @@ export function tokenizeSentence(text: string, { itemWord, findSaved, lookupAnyW
     if (kind === 'uncommon') return { kind: 'uncommon', key, text: word, offset };
     if (kind === 'item') return { kind: 'item', key, text: word, offset, term: lookupAnyWord ? stripEdgePunct(word) : '' };
     // A plain word (runs are split only when tokenizing). Edge punctuation is stripped so "cat." looks up "cat".
-    const studied = !!wordLower && word.toLowerCase() === wordLower;
-    const term = lookupAnyWord ? stripEdgePunct(word) : '';
+    const bare = stripEdgePunct(word);
+    const studied = !!studiedKey && bare.toLowerCase() === studiedKey;
+    const term = lookupAnyWord ? bare : '';
     if (term) return { kind: 'lookup', key, text: word, offset: off, term, studied };
     return studied ? { kind: 'emphasis', key, text: word } : { kind: 'text', key, text: word };
   };

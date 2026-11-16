@@ -166,6 +166,18 @@ test('tap-any-word makes every unsaved word a lookup of its edge-trimmed text; p
   assert.deepEqual(unitsOf(tokenizeSentence('thin ice', { itemWord: 'ice', lookupAnyWord: true }))[2], { kind: 'lookup', key: 'p0-2', text: 'ice', offset: 5, term: 'ice', studied: true });
 });
 
+test('a split word is the studied word without its edge punctuation, as look-ups strip it', () => {
+  const studied = (text: string, itemWord: string) =>
+    unitsOf(tokenizeSentence(text, { itemWord, lookupAnyWord: true })).filter(u => u.kind === 'lookup' && u.studied).map(u => u.text);
+  assert.deepEqual(studied('A word, a “word” and words.', 'word'), ['word,', '“word”']);
+  assert.deepEqual(studied('Touché! I said touché.', 'touché'), ['Touché!', 'touché.']);
+  // A studied word that ends in punctuation still matches itself.
+  assert.deepEqual(studied('Apples, pears, etc. and so on', 'etc.'), ['etc.']);
+  // Split for saved lookup alone, the studied word is emphasized.
+  const units = unitsOf(tokenizeSentence('Say the word, please.', { itemWord: 'word', findSaved: findSavedFrom([]), lookupAnyWord: false }));
+  assert.deepEqual(units.filter(u => u.kind === 'emphasis').map(u => u.text), ['word,']);
+});
+
 test('keys follow the markers: the run before marker n is p{n}, the item i{n}, the uncommon term l{n}', () => {
   const keys = tokenizeSentence('a {{b}} c [[d]] e', { itemWord: '', lookupAnyWord: false }).map(piece => piece.key);
   assert.deepEqual(keys, ['p0', 'i0', 'p1', 'l1', 'p2']);
