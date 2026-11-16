@@ -243,7 +243,8 @@ export function SentenceReviewView({
     : null;
   const sentenceMasteryColors = sentenceMastery ? getMasteryColors(sentenceMastery.color) : null;
   // The run's counters, recounted when a review or a sync changes its sentences, so swiping through it never changes
-  // them: what's left to review (never reviewed or due) and what's memorized (reviewed and not due).
+  // them: what's left to review (never reviewed or due) and what's memorized (reviewed and not due). An example's
+  // preview, which has no list to count, shows neither (examplePreview).
   const { sentenceMemorizedCount, sentenceReviewPill } = useMemo(() => {
     const now = Date.now();
     return { sentenceMemorizedCount: memorizedCount(sentenceItems, now), sentenceReviewPill: lessonReviewPill(sentenceItems, now) };
@@ -555,7 +556,7 @@ export function SentenceReviewView({
               srs={currentSentence.srs}
               mastery={sentenceMastery}
               masteryColors={sentenceMasteryColors}
-              memorizedCount={sentenceMemorizedCount}
+              memorizedCount={examplePreview ? null : sentenceMemorizedCount}
               preview={isSentencePreview}
               catalog={catalogSentencePreview}
               catalogKind={catalogPreviewKind}

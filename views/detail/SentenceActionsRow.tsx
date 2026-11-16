@@ -9,8 +9,11 @@ interface SentenceActionsRowProps {
   /** The sentence's mastery and its colors, shown once it has been reviewed (sentenceRowState); null until then. */
   mastery: { label: string; color: string; percentage: number } | null;
   masteryColors: MasteryClasses | null;
-  /** Sentences in this list memorized: reviewed, and not due again yet (memorizedCount). */
-  memorizedCount: number;
+  /**
+   * Sentences in this list memorized: reviewed, and not due again yet (memorizedCount). Null in an example's preview
+   * (SentenceUnderReview's examplePreview), which has no list to count, as its header has no pill.
+   */
+  memorizedCount: number | null;
   /** Nothing in the library backs the sentence yet. */
   preview: boolean;
   /** A Real Life or essay sentence: Got it creates its progress record, and the lesson's lines have no Delete. */
@@ -36,14 +39,16 @@ export function SentenceActionsRow({
   srs, mastery, masteryColors, memorizedCount, preview, catalog, catalogKind, onRemember, onSaveSentence, onReset, onDelete,
 }: SentenceActionsRowProps) {
   const { showDelete, primary } = sentenceRowState({ catalog, preview, totalReviews: srs?.totalReviews ?? 0 });
-  const memorizedLabel = `${memorizedCount} memorized in this list`;
+  const memorizedLabel = memorizedCount === null ? null : `${memorizedCount} memorized in this list`;
   return (
     <div className="mt-2 flex items-center gap-2 text-xs">
       {mastery && masteryColors && (
         <SrsStats srs={srs} mastery={mastery} colors={masteryColors} compact>
-          <span className="text-emerald-600 flex items-center gap-0.5" role="img" aria-label={memorizedLabel} title={memorizedLabel}>
-            <CheckCircle2 size={12} />{memorizedCount}
-          </span>
+          {memorizedLabel && (
+            <span className="text-emerald-600 flex items-center gap-0.5" role="img" aria-label={memorizedLabel} title={memorizedLabel}>
+              <CheckCircle2 size={12} />{memorizedCount}
+            </span>
+          )}
         </SrsStats>
       )}
       <div className="ml-auto flex items-center gap-1">

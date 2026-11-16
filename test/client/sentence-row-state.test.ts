@@ -2,12 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createElement, type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import ts from 'typescript';
 import type { SRSData, StoredItem } from '../../types.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import { getMasteryColors } from '../../components/mastery.tsx';
 import { lessonReviewPill, memorizedCount, sentenceRowState } from '../../views/detail/sentenceRowState.ts';
+import { resolveSentenceUnderReview } from '../../views/detail/sentenceUnderReview.ts';
 import { SentenceActionsRow } from '../../views/detail/SentenceActionsRow.tsx';
 import { SentenceHeaderRow } from '../../views/detail/SentenceHeaderRow.tsx';
+import { readRepoFile } from '../support/paths.ts';
 
 // Sentence review's bottom row (views/detail/sentenceRowState.ts and SentenceActionsRow.tsx): it goes by the
 // sentence's reviews, so a first listen that creates a catalog line's record changes nothing, and Got it keeps one
@@ -162,4 +165,45 @@ test('the memorized count says what it counts, and the header shows the pill in 
   assert.match(header(lessonReviewPill([], NOW)), /<span class="text-\[11px\] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0\.5 rounded-full">All reviewed<\/span>/);
   assert.doesNotMatch(header(null), /to review|All reviewed/, 'no pill in an unsaved example\'s preview');
   assert.doesNotMatch(header(lessonReviewPill([line('a')], NOW)), / due</);
+});
+
+/** The source of the `name` attribute's expression on the `component` element that SentenceReviewView renders. */
+const reviewViewAttribute = (component: string, name: string): string | undefined => {
+  const file = ts.createSourceFile(
+    'SentenceReviewView.tsx', readRepoFile('views/detail/SentenceReviewView.tsx'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX,
+  );
+  let found: string | undefined;
+  const visit = (node: ts.Node) => {
+    if ((ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) && node.tagName.getText() === component) {
+      const attribute = node.attributes.properties.find(property => ts.isJsxAttribute(property) && property.name.getText() === name);
+      if (attribute && ts.isJsxAttribute(attribute) && attribute.initializer && ts.isJsxExpression(attribute.initializer)) {
+        found = attribute.initializer.expression?.getText();
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+};
+
+test('an example opened under a study answer shows its memory after Save sentence and Got it, but no ✓ count, as it shows no pill', () => {
+  // Study's example keeps the unsaved preview in its run after Save sentence, while the screen shows the saved copy.
+  const preview = line('sentence-preview:5');
+  const saved: StoredItem = {
+    ...preview,
+    data: { ...preview.data, id: 's5' },
+    srs: { ...SRSAlgorithm.createNew('s5', 'sentence', 0), totalReviews: 1, nextReview: NOW + DAY, memoryStrength: 40 },
+  };
+  const shown = resolveSentenceUnderReview(preview, undefined, [saved], () => saved, false);
+  assert.equal(shown.examplePreview, true);
+  const row = sentenceRowState({ catalog: false, preview: shown.isSentencePreview, totalReviews: shown.currentSentence?.srs.totalReviews ?? 0 });
+  assert.equal(row.showStats, true, 'Got it shows the memory');
+  assert.equal(memorizedCount([preview], NOW), 0, 'the run would count the sentence just remembered as not memorized');
+
+  // Sentence review hands the row no count there, as it hands the header no pill.
+  assert.equal(reviewViewAttribute('SentenceHeaderRow', 'reviewPill'), 'examplePreview ? null : sentenceReviewPill');
+  assert.equal(reviewViewAttribute('SentenceActionsRow', 'memorizedCount'), 'examplePreview ? null : sentenceMemorizedCount');
+  const html = rowFor('saved', false, 1, { memorizedCount: null });
+  assert.match(html, /1×/, 'the memory shows');
+  assert.doesNotMatch(html, /memorized in this list/, 'without the count');
 });
