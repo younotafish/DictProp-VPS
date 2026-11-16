@@ -65,6 +65,10 @@ test('the sheet drops what the app no longer does', () => {
   assert.ok(hasRow(sentences, ['Click'], 'On a word: play from it'));
   assert.ok(hasRow(sentences, ['⌘', 'Click'], 'Look up the word, or the selected phrase when you click inside a selection'));
   assert.ok(!sentences.some(row => row.keys.includes('⌘') && /play/i.test(row.label)));
+  // A double-click on a word selects it, as on any page, so only one on blank space is Got it; on a touch screen a
+  // double tap on the words is Got it too.
+  assert.ok(hasRow(sentences, ['Double-click'], 'On blank space: Got it'));
+  assert.ok(hasRow(section(phone, 'touch').rows, ['Double-tap'], 'On blank space or a sentence’s words: Got it'));
   // S only saves, as ⌘S does (UX-04).
   assert.ok(hasRow(section(mac, 'card').rows, ['S', '⌘', 'S'], 'Save the card'));
   // + and = change the slideshow's time per slide, not the voice's speed (useAutoPlay's cycleSpeed).
