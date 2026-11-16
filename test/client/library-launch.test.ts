@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getItemContentHash, isItemDirty } from '../../services/itemHash.ts';
-import { needsSrsMigration, prepareStoredLibrary } from '../../services/libraryLaunch.ts';
+import { prepareStoredLibrary } from '../../services/libraryLaunch.ts';
 import type { PendingReviewMutation } from '../../services/reviewQueue.ts';
 import type { RevisionCursor, SRSData, StoredItem } from '../../types.ts';
 
@@ -45,17 +45,21 @@ test('a record without an id, schedule or type is left out, and the cursor with 
 });
 
 test('old schedules are migrated, and so are never-reviewed sentences carrying other starting values', () => {
-  assert.equal(needsSrsMigration(schedule('a'), 'vocab'), false);
-  assert.equal(needsSrsMigration({ ...schedule('a'), memoryStrength: undefined } as unknown as SRSData, 'vocab'), true);
-  assert.equal(needsSrsMigration(schedule('s', { type: 'sentence', memoryStrength: 30 }), 'sentence'), true);
-  assert.equal(needsSrsMigration(schedule('s', { type: 'sentence', stability: 2 }), 'sentence'), true);
-  assert.equal(needsSrsMigration(schedule('s', { type: 'sentence', memoryStrength: 30, totalReviews: 4 }), 'sentence'), false);
-
+  // Which schedules need it is SRSAlgorithm.needsMigration's rule, pinned in srs-algorithm.test.ts.
   const legacy = card('legacy', { srs: { ...schedule('legacy'), memoryStrength: undefined } as unknown as SRSData });
-  const [migrated] = prepareStoredLibrary({ items: [legacy], cursor }, [], NOW).items;
+  const sentence: StoredItem = {
+    type: 'sentence',
+    data: { id: 'line', text: 'They led the way.', sourceWord: 'lead' },
+    srs: schedule('line', { type: 'sentence', memoryStrength: 30 }),
+    savedAt: 1,
+    updatedAt: 1,
+  };
+  const [migrated, migratedSentence] = prepareStoredLibrary({ items: [legacy, sentence], cursor }, [], NOW).items;
   assert.notEqual(migrated, legacy);
   assert.equal(typeof migrated.srs.memoryStrength, 'number');
   assert.equal(migrated.data, legacy.data, 'the card itself is untouched');
+  assert.equal(migratedSentence.srs.memoryStrength, 0, 'a never-reviewed sentence shows no strength');
+  assert.equal(migratedSentence.data, sentence.data);
 });
 
 test('a record without timestamps takes the launch time, and the legacy project field goes', () => {

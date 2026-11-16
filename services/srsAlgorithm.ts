@@ -6,7 +6,7 @@
  * - Passive listening records recency for queue rotation without changing mastery
  */
 
-import { SRSData } from '../types';
+import type { SRSData, StoredItem } from '../types';
 
 /**
  * The mastery levels, strongest first: a badge and the study dashboard's breakdown both use this table. A reviewed
@@ -62,6 +62,16 @@ export class SRSAlgorithm {
       lastReviewDate: srs.lastReviewDate ?? 0,
       lastExposureDate: srs.lastExposureDate ?? 0,
     };
+  }
+
+  /**
+   * Whether a stored schedule predates the current one, so migrate() has to bring it up to date: it has no memory
+   * strength at all, or it is a never-reviewed sentence carrying another item type's starting values.
+   */
+  static needsMigration(srs: SRSData | undefined, type: StoredItem['type']): boolean {
+    return typeof srs?.memoryStrength !== 'number' ||
+      (type === 'sentence' && (srs?.totalReviews ?? 0) === 0 &&
+        ((srs?.memoryStrength ?? 0) !== 0 || (srs?.stability ?? 0.5) !== 0.5));
   }
 
   /**

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { SRSData } from '../../types.ts';
 import { MASTERY_LEVELS, SRSAlgorithm, masteryLevelFor } from '../../services/srsAlgorithm.ts';
 import { masteryText } from '../../components/mastery.tsx';
 
@@ -37,6 +38,20 @@ test('ensure creates a record for an item without one and migrates one that exis
   assert.deepEqual(ensure(legacy, 'old', 'vocab'), migrate(legacy));
   assert.equal(migrate(legacy).memoryStrength, 37);
   assert.equal(migrate(legacy).lastExposureDate, 0);
+});
+
+test('a schedule needs migrating when it has no memory strength, or is a never-reviewed sentence with other starting values', () => {
+  const current = SRSAlgorithm.createNew('a', 'vocab', 0);
+  assert.equal(SRSAlgorithm.needsMigration(current, 'vocab'), false);
+  assert.equal(SRSAlgorithm.needsMigration({ ...current, memoryStrength: undefined } as unknown as SRSData, 'vocab'), true);
+  assert.equal(SRSAlgorithm.needsMigration(undefined, 'vocab'), true, 'no schedule at all');
+
+  const sentence = SRSAlgorithm.createNew('s', 'sentence', 0);
+  assert.equal(SRSAlgorithm.needsMigration(sentence, 'sentence'), false);
+  assert.equal(SRSAlgorithm.needsMigration({ ...sentence, memoryStrength: 30 }, 'sentence'), true, "another type's strength");
+  assert.equal(SRSAlgorithm.needsMigration({ ...sentence, stability: 2 }, 'sentence'), true, "another type's stability");
+  assert.equal(SRSAlgorithm.needsMigration({ ...sentence, memoryStrength: 30, totalReviews: 4 }, 'sentence'), false, 'a reviewed sentence keeps its strength');
+  assert.equal(SRSAlgorithm.needsMigration({ ...current, memoryStrength: 30 }, 'vocab'), false, 'only sentences drop seed strength');
 });
 
 test('mastery levels run from Grandmaster down to Struggling by minimum strength, then New, which has none', () => {

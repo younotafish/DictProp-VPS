@@ -1,4 +1,4 @@
-import type { RevisionCursor, SRSData, StoredItem } from '../types';
+import type { RevisionCursor, StoredItem } from '../types';
 import { getItemContentHash, isItemDirty } from './itemHash';
 import { overlayPendingReviews, type PendingReviewMutation } from './reviewQueue';
 import { SRSAlgorithm } from './srsAlgorithm';
@@ -8,15 +8,6 @@ export interface StoredLibrary {
   items: StoredItem[];
   cursor: RevisionCursor | null;
 }
-
-/**
- * Whether a stored schedule predates the current one: no memory strength at all, or a never-reviewed sentence
- * carrying another item type's starting values.
- */
-export const needsSrsMigration = (srs: SRSData | undefined, type: StoredItem['type']): boolean =>
-  typeof srs?.memoryStrength !== 'number' ||
-  (type === 'sentence' && (srs?.totalReviews ?? 0) === 0 &&
-    ((srs?.memoryStrength ?? 0) !== 0 || (srs?.stability ?? 0.5) !== 0.5));
 
 /**
  * Brings the library read from this device up to date before it's shown, `now` being the time of the launch:
@@ -36,7 +27,7 @@ export function prepareStoredLibrary(stored: StoredLibrary, pending: readonly Pe
 
   const migrated = usable.map(item => {
     let next = item;
-    if (needsSrsMigration(next.srs, next.type)) {
+    if (SRSAlgorithm.needsMigration(next.srs, next.type)) {
       next = { ...next, srs: SRSAlgorithm.migrate(next.srs) };
     }
     if (!next.updatedAt && !next.savedAt) {
