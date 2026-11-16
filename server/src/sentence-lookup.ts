@@ -1,4 +1,5 @@
-// Imported by scripts/offline under plain node: no relative imports.
+// Loadable by plain node, so no relative imports, for scripts/offline to import. Until it does,
+// scripts/offline/sentence-pool.mjs keeps a copy, which server/test/sentence-pool.test.ts holds to this one.
 import { createHash } from 'node:crypto';
 
 /**
