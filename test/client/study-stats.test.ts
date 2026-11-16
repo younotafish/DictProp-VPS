@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ReviewEvent, ReviewHistory, ReviewRating, StoredItem } from '../../types.ts';
-import { computeStudyStats } from '../../services/studyStats.ts';
+import { computeStudyStats, countDueSpellings } from '../../services/studyStats.ts';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -53,6 +53,22 @@ test('study stats bucket items by memory strength and count due spellings once',
   assert.equal(stats.due, 2);
   assert.equal(stats.total, 6);
   assert.equal(stats.avgStrength, Math.round((90 + 72 + 55 + 30 + 12) / 6));
+});
+
+test('the due count takes each spelling once, reviewed and due, leaving out new, archived and deleted cards', () => {
+  const items = [
+    vocab('run-noun', 'Run', { reviews: 2, due: NOW - HOUR }),
+    vocab('run-verb', ' run ', { reviews: 1, due: NOW }),
+    vocab('walk', 'walk', { reviews: 3, due: NOW + 1 }),
+    vocab('fresh', 'fresh', { due: NOW - DAY }),
+    { ...vocab('kept', 'kept', { reviews: 1, due: NOW - HOUR }), isArchived: true },
+    { ...vocab('gone', 'gone', { reviews: 1, due: NOW - HOUR }), isDeleted: true },
+    vocab('jump', 'jump', { reviews: 1, due: NOW - DAY }),
+  ];
+  // run (both senses) and jump; walk isn't due yet, and fresh, never reviewed, waits with the new cards.
+  assert.equal(countDueSpellings(items, NOW), 2);
+  assert.equal(computeStudyStats(items, recentOnly([]), NOW).due, 2);
+  assert.equal(countDueSpellings([], NOW), 0);
 });
 
 test('each band starts at its minimum strength, and a strength below every band counts as new', () => {

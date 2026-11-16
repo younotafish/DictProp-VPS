@@ -8,6 +8,7 @@ import {
   isVocabItem,
 } from '../types';
 import { stripSentenceMarkers } from './sentenceMarkers';
+import { sentenceReviewState } from './sentenceReviewState';
 // The review-time labels live in services/reviewTime.ts; these names stay reachable here for the modules that import
 // them from this file.
 export { formatReviewInterval, formatTimeUntil } from './reviewTime';
@@ -20,11 +21,12 @@ export interface StudyContent {
 }
 
 /**
- * Whether a card is due: studied before, and its next review has come. Never-studied cards wait in the new
- * cards' queue instead, so the dashboard's due count and the review queue both leave them out.
+ * Whether a card is due: studied before, and its next review has come ('due' in services/sentenceReviewState.ts).
+ * Never-studied cards wait in the new cards' queue instead, so the dashboard's due count and the review queue
+ * both leave them out.
  */
 export function isDueForReview(item: StoredItem, now: number): boolean {
-  return (item.srs?.totalReviews ?? 0) > 0 && (item.srs?.nextReview ?? 0) <= now;
+  return sentenceReviewState(item.srs, now) === 'due';
 }
 
 export function getStudyContent(item: StoredItem): StudyContent {

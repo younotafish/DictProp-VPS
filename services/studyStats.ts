@@ -1,9 +1,9 @@
 import { getItemSpelling, type ReviewHistory, type StoredItem } from '../types';
 import { masteryLevelFor, type MasteryKey } from './srsAlgorithm';
-import { isDueForReview } from './studySession';
+import { sentenceReviewState } from './sentenceReviewState';
 
 export interface StudyStats {
-  /** Distinct due spellings: the review session buries same-spelling senses, so the count follows it. */
+  /** Distinct due spellings (countDueSpellings). */
   due: number;
   /** How many items each mastery band holds, by their stored display strength. */
   mastery: Record<MasteryKey, number>;
@@ -26,16 +26,31 @@ const MOST_REVIEWED = 3;
 const reviewsOf = (item: StoredItem) => item.srs?.totalReviews ?? 0;
 
 /**
- * The study dashboard's numbers, from one pass over the items and one over the review history. Review
- * days are found against precomputed local midnights rather than by formatting a date per review, which
- * mattered once the history grew to tens of thousands of reviews.
+ * How many distinct spellings are due: studied (not archived or deleted), reviewed before, and with their next
+ * review come, the 'due' of services/sentenceReviewState.ts. A never-reviewed card waits with the new ones
+ * instead, and the review session buries same-spelling senses, so a spelling counts once. The Study dashboard
+ * shows this number.
+ */
+export function countDueSpellings(items: readonly StoredItem[], now: number): number {
+  const spellings = new Set<string>();
+  for (const item of items) {
+    if (item.isDeleted || item.isArchived || sentenceReviewState(item.srs, now) !== 'due') continue;
+    const spelling = getItemSpelling(item);
+    if (spelling) spellings.add(spelling);
+  }
+  return spellings.size;
+}
+
+/**
+ * The study dashboard's numbers, from a pass over the items (and countDueSpellings') and one over the review
+ * history. Review days are found against precomputed local midnights rather than by formatting a date per
+ * review, which mattered once the history grew to tens of thousands of reviews.
  */
 export function computeStudyStats(
   items: readonly StoredItem[],
   history: ReviewHistory,
   now = Date.now(),
 ): StudyStats {
-  const dueSpellings = new Set<string>();
   const mastery: Record<MasteryKey, number> = { grandmaster: 0, mastered: 0, proficient: 0, learning: 0, struggling: 0, new: 0 };
   let strengthSum = 0;
   let legacyReviewFloor = 0;
@@ -44,11 +59,6 @@ export function computeStudyStats(
 
   for (const item of items) {
     const srs = item.srs;
-    if (isDueForReview(item, now)) {
-      const spelling = getItemSpelling(item);
-      if (spelling) dueSpellings.add(spelling);
-    }
-
     const strength = srs?.memoryStrength ?? 0;
     const level = masteryLevelFor(strength);
     if (level) mastery[level.key]++;
@@ -110,7 +120,7 @@ export function computeStudyStats(
   }
 
   return {
-    due: dueSpellings.size,
+    due: countDueSpellings(items, now),
     mastery,
     total: items.length,
     avgStrength: items.length > 0 ? Math.round(strengthSum / items.length) : 0,
