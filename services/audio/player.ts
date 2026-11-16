@@ -59,10 +59,16 @@ interface PlayerRecord {
   pendingPause: boolean;
   /** ...and the output is ready and held: a clip set on the element but not played, or one paused as it started. */
   armed: boolean;
+  /**
+   * The playUrl call whose clip the pause held before it ever played. It settles with the play that ends the hold, so a
+   * clip that can't be played fails it and its caller falls back to another voice, as without the pause.
+   */
+  heldPlay: { resolve: () => void; reject: (error: unknown) => void } | null;
 }
 
 const player: PlayerRecord = {
   token: 0, state: { text: null, status: 'idle' }, backend: null, request: null, pendingPause: false, armed: false,
+  heldPlay: null,
 };
 const playbackListeners = new Set<(s: PlaybackState) => void>();
 
@@ -134,6 +140,14 @@ const resumePlayback = (onRefused: () => void): void => {
   }
 };
 
+/** Let the held playUrl call go: done (its clip plays, or its request is over), or failed with `failure.error`. */
+const settleHeldPlay = (failure?: { error: unknown }): void => {
+  const held = player.heldPlay;
+  player.heldPlay = null;
+  if (failure) held?.reject(failure.error);
+  else held?.resolve();
+};
+
 /** Tell a request's owner once, after the code that ended it has finished, unless the owner let go first. */
 const reportInterruption = (record: RequestRecord, reason: InterruptReason): void => {
   queueMicrotask(() => {
@@ -154,6 +168,7 @@ export const supersedePlayback = (reason: InterruptReason = 'superseded'): (() =
   player.request = null;
   player.pendingPause = false;
   player.armed = false;
+  settleHeldPlay();
   if (live) reportInterruption(live, reason);
   return () => token === player.token;
 };
@@ -204,6 +219,7 @@ export const endPlayback = (): void => {
   player.request = null;
   player.pendingPause = false;
   player.armed = false;
+  settleHeldPlay();
   setPlaybackState({ text: null, status: 'idle' });
 };
 
@@ -249,6 +265,35 @@ export const pauseCurrent = (): void => {
   setPlaybackState({ status: 'paused' });
 };
 
+/** A refused play() that a later one may get past: the browser wants a fresh tap, or the play was cut short. */
+const mayPlayLater = (error: unknown): boolean => {
+  const name = (error as { name?: unknown } | null | undefined)?.name;
+  return name === 'NotAllowedError' || name === 'AbortError';
+};
+
+/**
+ * Play the clip a pause holds, for a resume or a seek. A refusal a later play may get past holds it again, so the next
+ * resume tries again. Any other failure (a clip the browser can't decode, say) fails the playUrl call still waiting on
+ * the hold, whose caller falls back to another voice as it does when play() fails without a pause; with no call waiting
+ * (a clip paused as it started), the clip is held again then too.
+ */
+const playHeldClip = (el: HTMLAudioElement): void => {
+  const token = player.token;
+  el.play().then(() => {
+    if (token === player.token) settleHeldPlay();
+  }, (error: unknown) => {
+    if (token !== player.token || player.state.status !== 'playing') return;
+    if (player.heldPlay && !mayPlayLater(error)) {
+      setPlaybackState({ status: 'loading' });
+      settleHeldPlay({ error });
+      return;
+    }
+    player.pendingPause = true;
+    player.armed = true;
+    setPlaybackState({ status: 'paused' });
+  });
+};
+
 /** Resume after pauseCurrent() (no-op unless paused). A read held while it loaded starts, or goes on loading. */
 export const resumeCurrent = (): void => {
   if (player.state.status !== 'paused') return;
@@ -260,13 +305,7 @@ export const resumeCurrent = (): void => {
     player.armed = false;
     // Held at its start, so play whatever its position (resumePlayback's position check would refuse a clip at 0).
     if (player.backend === 'clip') {
-      audioEl?.play().catch(() => {
-        // Refused: held as before, so the next resume tries again.
-        if (token !== player.token || player.state.status !== 'playing') return;
-        player.pendingPause = true;
-        player.armed = true;
-        setPlaybackState({ status: 'paused' });
-      });
+      if (audioEl) playHeldClip(audioEl);
     } else {
       try { window.speechSynthesis?.resume(); } catch { /* ignore */ }
     }
@@ -305,10 +344,12 @@ export const seekCurrent = (timeSec: number): void => {
   const a = audioEl;
   if (!a || player.backend !== 'clip') return;
   // A clip held as it loaded plays from the seek, as a paused one does.
+  const held = player.armed;
   player.pendingPause = false;
   player.armed = false;
   try { a.currentTime = Math.max(0, timeSec); } catch { /* ignore */ }
-  if (a.paused && !a.ended) {
+  if (held) playHeldClip(a);
+  else if (a.paused && !a.ended) {
     const token = player.token;
     a.play().catch(() => {
       // The browser refused, as it can on iOS after an interruption: it's still paused (see resumeCurrent).
@@ -337,7 +378,11 @@ export interface ClipCallbacks {
   onError?: (error: unknown) => void;
 }
 
-// Play an object URL through the shared, iOS-unlocked <audio> element (cached MiMo + Kokoro both use this).
+/**
+ * Play an object URL through the shared, iOS-unlocked <audio> element (cached MiMo + Kokoro both use this). It settles
+ * with play(), rejecting when the browser won't play the clip, so a caller whose request is still current falls back to
+ * another voice. A clip a pause holds waits for the play that ends the hold, or for a newer request or a stop.
+ */
 export const playUrl = async (
   url: string,
   isCurrent: () => boolean,
@@ -361,16 +406,18 @@ export const playUrl = async (
   el.src = url;
   setUrlInUse(url);
   player.backend = 'clip';
-  // A pause asked for while this clip loaded leaves it ready but silent, for resumeCurrent() to play.
-  const holdForPause = () => {
-    if (!player.pendingPause) return false;
+  // A pause asked for while this clip loaded leaves it ready but silent, for resumeCurrent() or a seek to play. The call
+  // then waits for that play (playHeldClip), failing if the clip can't be played.
+  const holdForPause = (): Promise<void> | null => {
+    if (!player.pendingPause) return null;
     player.armed = true;
-    return true;
+    return new Promise<void>((resolve, reject) => { player.heldPlay = { resolve, reject }; });
   };
   if (begin <= 0) {
     try { el.currentTime = 0; } catch { /* ignore */ }
     applyRate(el);
-    if (holdForPause()) return;
+    const held = holdForPause();
+    if (held) return held;
     await el.play();
     return;
   }
@@ -390,7 +437,8 @@ export const playUrl = async (
       if (!isCurrent()) { resolve(); return; } // superseded → let the newer call drive playback
       try { el.currentTime = begin; } catch { /* ignore */ }
       applyRate(el);
-      if (holdForPause()) { resolve(); return; }
+      const held = holdForPause();
+      if (held) { held.then(resolve, reject); return; }
       el.play().then(() => resolve(), reject); // a refused play() falls back, as on the path above
     };
     if (el.readyState >= 1 /* HAVE_METADATA */) go();

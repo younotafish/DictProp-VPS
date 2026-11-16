@@ -505,3 +505,49 @@ test('a held clip plays from a word tapped meanwhile, and a newer read forgets t
   el.startPlaying();
   assert.deepEqual(engine.getPlaybackState(), { text: next, status: 'playing' });
 });
+
+/** The element can't play its clip, as when the browser can't decode it: play() rejects with NotSupportedError. */
+const undecodable = async (el: ReturnType<typeof media.element>, act: () => Promise<void>) => {
+  el.play = () => Promise.reject(new DOMException('The element has no supported sources.', 'NotSupportedError'));
+  try { await act(); } finally { Reflect.deleteProperty(el, 'play'); }
+};
+
+test('a held clip refused until a tap is held again, and one the browser can\'t play is read by the system voice once resumed', async () => {
+  const text = await sentence(true);
+  const callbacks = reads();
+  engine.speakNatural(text, { allowDownload: true, ...callbacks });
+  engine.pauseCurrent();
+  const el = media.element();
+  await until(() => el.src.startsWith('blob:'), 'the clip is ready');
+  await microtasks();
+  const spoken = media.synth.spoken.length;
+
+  FakeAudioElement.playPolicy = 'refuse';
+  engine.resumeCurrent();
+  await until(() => engine.getPlaybackState().status === 'paused', 'held again');
+  assert.equal(media.synth.spoken.length, spoken, 'the next resume tries the clip again');
+
+  FakeAudioElement.playPolicy = 'allow';
+  await undecodable(el, async () => {
+    engine.resumeCurrent();
+    await until(() => media.synth.last?.text === text, 'the system voice reads it instead');
+  });
+  assert.deepEqual(engine.getPlaybackState(), { text, status: 'loading' });
+  media.synth.last?.onstart?.();
+  assert.equal(engine.getPlaybackState().status, 'playing');
+  media.synth.last?.onend?.();
+  assert.deepEqual(callbacks.heard, ['end']);
+});
+
+test('a held clip the browser can\'t play from a word tapped meanwhile is read by the system voice too', async () => {
+  const text = await sentence(true);
+  engine.speakNatural(text, { allowDownload: true });
+  engine.pauseCurrent();
+  const el = media.element();
+  await until(() => el.src.startsWith('blob:'), 'the clip is ready');
+  await microtasks();
+  await undecodable(el, async () => {
+    engine.seekCurrent(1);
+    await until(() => media.synth.last?.text === text, 'the system voice reads it instead');
+  });
+});
