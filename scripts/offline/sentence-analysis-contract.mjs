@@ -1,9 +1,16 @@
-const string = (value, max = 12_000) =>
-  typeof value === 'string' && value.trim().length > 0 && value.length <= max;
-const stringList = (value, { min = 0, max = 12 } = {}) =>
-  Array.isArray(value) && value.length >= min && value.length <= max &&
-  value.every(item => string(item, 2_000));
-const slashIpa = value => string(value, 2_000) && /^\/[^/\n]+\/$/.test(value.trim());
+// The detailed sentence analysis the cycle asks the model for: its schema and prompt, and the repairs for grammar
+// excerpts the model abbreviates or misquotes. The import contract the analyses must meet is the server's own, from
+// server/src/sentence-analysis.ts.
+import {
+  hasCompleteSentenceAnalysis,
+  isSentenceAnalysis,
+  isSentenceGrammarAnalysis,
+} from '../../server/src/sentence-analysis.ts';
+
+// isSentenceAnalysis also admits the legacy shape that production-covered analyses may keep as transport metadata for
+// a missing image, whose newer complete analysis the server preserves; isDetailedSentenceAnalysis is the complete
+// analysis every new one must be.
+export { hasCompleteSentenceAnalysis as isDetailedSentenceAnalysis, isSentenceAnalysis, isSentenceGrammarAnalysis };
 
 export function sentenceGrammarExcerptMatchesText(text, excerpt) {
   if (text.includes(excerpt)) return true;
@@ -183,75 +190,13 @@ export const detailedSentenceAnalysisSchema = {
   },
 };
 
-export function isSentenceGrammarAnalysis(value) {
-  return !!value && typeof value === 'object' && !Array.isArray(value) &&
-    string(value.structure, 4_000) && Array.isArray(value.points) && value.points.length <= 12 &&
-    value.points.every(point => point && typeof point === 'object' && !Array.isArray(point) &&
-      string(point.label, 300) && string(point.excerpt, 1_000) && string(point.explanation, 4_000));
-}
-
-function isSentencePronunciationGuide(value) {
-  return !!value && typeof value === 'object' && !Array.isArray(value) &&
-    slashIpa(value.slowIpa) && slashIpa(value.fastIpa) &&
-    string(value.carefulSpeakerGuide, 4_000) &&
-    stringList(value.fastSpeechFeatures, { max: 6 }) &&
-    string(value.intonationAndChunking, 4_000) && string(value.keyDifference, 4_000);
-}
-
-// Mirrors the server's import contract. Production-covered analyses may use this legacy shape as
-// transport metadata for a missing image; the server preserves its newer complete analysis.
-export function isSentenceAnalysis(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const american = value.americanEnglish;
-  if (!string(value.translation) || !string(value.imagePrompt, 4_000)) return false;
-  if (value.naturalSpeechIpa !== undefined && !string(value.naturalSpeechIpa, 2_000)) return false;
-  if (value.grammar !== undefined && !isSentenceGrammarAnalysis(value.grammar)) return false;
-  if (value.pronunciation !== undefined && !isSentencePronunciationGuide(value.pronunciation)) return false;
-  if (!american || typeof american !== 'object' || Array.isArray(american) ||
-      !['american', 'shared', 'not_american'].includes(american.status) ||
-      !string(american.explanation, 4_000)) return false;
-  if (american.evidence !== undefined && !stringList(american.evidence, { max: 6 })) return false;
-  if (!Array.isArray(value.terms) || value.terms.length > 20) return false;
-  return value.terms.every(term => term && typeof term === 'object' && !Array.isArray(term) &&
-    string(term.term, 300) && string(term.chinese, 1_000) && string(term.ipa, 500) &&
-    string(term.originalMeaning, 4_000) && stringList(term.synonyms, { max: 12 }) &&
-    stringList(term.antonyms, { max: 12 }) && stringList(term.examples, { max: 5 }) &&
-    string(term.historicalEvolution, 4_000));
-}
-
-export function isDetailedSentenceAnalysis(value) {
-  if (!isSentenceAnalysis(value)) return false;
-  const american = value.americanEnglish;
-  const pronunciation = value.pronunciation;
-  const grammar = value.grammar;
-  if (!string(value.translation) || !string(value.imagePrompt, 4_000)) return false;
-  if (!american || typeof american !== 'object' || Array.isArray(american) ||
-      !['american', 'shared', 'not_american'].includes(american.status) ||
-      !string(american.explanation, 4_000) || !stringList(american.evidence, { min: 1, max: 6 })) return false;
-  if (!pronunciation || typeof pronunciation !== 'object' || Array.isArray(pronunciation) ||
-      !slashIpa(pronunciation.slowIpa) || !slashIpa(pronunciation.fastIpa) ||
-      !string(pronunciation.carefulSpeakerGuide, 4_000) ||
-      !stringList(pronunciation.fastSpeechFeatures, { min: 1, max: 6 }) ||
-      !string(pronunciation.intonationAndChunking, 4_000) ||
-      !string(pronunciation.keyDifference, 4_000)) return false;
-  if (value.naturalSpeechIpa !== undefined &&
-      (!string(value.naturalSpeechIpa, 2_000) || value.naturalSpeechIpa.trim() !== pronunciation.fastIpa.trim())) return false;
-  if (!isSentenceGrammarAnalysis(grammar)) return false;
-  if (!Array.isArray(value.terms) || value.terms.length > 20) return false;
-  return value.terms.every(term => term && typeof term === 'object' && !Array.isArray(term) &&
-    string(term.term, 300) && string(term.chinese, 1_000) && string(term.ipa, 500) &&
-    string(term.originalMeaning, 4_000) && stringList(term.synonyms, { min: 1, max: 12 }) &&
-    stringList(term.antonyms, { max: 12 }) && stringList(term.examples, { min: 2, max: 2 }) &&
-    string(term.historicalEvolution, 4_000));
-}
-
 export function normalizeDetailedSentenceAnalysis(value, preservedGrammar, label = 'sentence') {
   const analysis = {
     ...value,
     ...(preservedGrammar ? { grammar: preservedGrammar } : {}),
     naturalSpeechIpa: value?.pronunciation?.fastIpa,
   };
-  if (!isDetailedSentenceAnalysis(analysis)) throw new Error(`${label}: incomplete detailed sentence analysis`);
+  if (!hasCompleteSentenceAnalysis(analysis)) throw new Error(`${label}: incomplete detailed sentence analysis`);
   return analysis;
 }
 

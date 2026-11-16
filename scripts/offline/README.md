@@ -170,7 +170,7 @@ These modules are imported by other scripts and never run on their own.
 - `structured-model.mjs` — Sends one schema-bound request to Claude Code or Codex, whichever `ENRICHMENT_MODEL_PROVIDER` selects.
 - `codex-process.mjs` — Starts and stops `codex` child processes, and stops them when the parent gets a signal.
 - `vocab-card-contract.mjs` — What a complete vocabulary card is. Both the vocabulary selector and the completion stage use it.
-- `sentence-analysis-contract.mjs` — The import contract for sentence analyses, and the detailed analysis schema.
+- `sentence-analysis-contract.mjs` — The detailed analysis schema and prompt, and the repairs for grammar excerpts. The import contract for sentence analyses is the server's own, imported from `server/src/sentence-analysis.ts`.
 - `local-advanced-enrichment.mjs` — Writes the `advancedEnrichment` marker, which ties a card's advanced rewrite to a hash of its content. The hash, and what makes a marker current, are the server's own, imported from `server/src/local-enrichment-markers.ts`.
 
 ## Manual content tools
