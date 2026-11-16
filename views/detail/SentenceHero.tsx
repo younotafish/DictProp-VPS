@@ -14,6 +14,8 @@ interface SentenceHeroProps {
   /** The sentence with its {{studied}} and [[uncommon]] markers. */
   text: string;
   sourceWord: string;
+  /** The sentence's connected-speech IPA (services/sentencePronunciation.ts connectedSpeechIpa), shown under it. */
+  connectedIpa?: string;
   findSaved?: (term: string) => StoredItem | null;
   onOpenCard?: (item: StoredItem) => void;
   onSearchWord: (text: string) => void;
@@ -32,13 +34,17 @@ interface SentenceHeroProps {
   onCopy: () => void;
 }
 
+/** What the connected-speech IPA line says to a screen reader, and on hover. */
+const CONNECTED_IPA_LABEL = 'Natural American IPA (connected speech)';
+
 /**
- * The sentence under review, the page's hero, with its speaker, copy button and (on a Mac) the Command-click
- * hint beneath it. Words play from where they're tapped or clicked and look themselves up with a two-finger tap
- * or Command/Ctrl-click; the handlers come from the view.
+ * The sentence under review, the page's hero, with its connected-speech IPA under it when the analysis has one, then
+ * its speaker, copy button and (on a Mac) the Command-click hint. Words play from where they're tapped or clicked and
+ * look themselves up with a two-finger tap or Command/Ctrl-click; the handlers come from the view. The IPA line sits
+ * outside the sentence's element, so it's no word and no part of a selection to look up.
  */
 export function SentenceHero({
-  layout, text, sourceWord, findSaved, onOpenCard, onSearchWord, commandHeld,
+  layout, text, sourceWord, connectedIpa, findSaved, onOpenCard, onSearchWord, commandHeld,
   onWordTouchStartCapture, onWordClickCapture, onSentencePointerDownCapture, onListened, onSpeakerToggle, copyState, onCopy,
 }: SentenceHeroProps) {
   const { isMobile, isMacDesktop } = PLATFORM;
@@ -68,6 +74,20 @@ export function SentenceHero({
           searchAnyWord
         />
       </p>
+      {/* No line, and no space for one, without the IPA. */}
+      {connectedIpa && (
+        <p
+          data-no-lookup
+          role="note"
+          className={split
+            ? 'mt-3 text-center md:text-left font-mono text-sm sm:text-base leading-relaxed text-indigo-700 break-words'
+            : 'mt-3 max-w-2xl mx-auto text-center font-mono text-sm sm:text-base leading-relaxed text-indigo-700 break-words'}
+          title={CONNECTED_IPA_LABEL}
+          aria-label={CONNECTED_IPA_LABEL}
+        >
+          {connectedIpa}
+        </p>
+      )}
       <div className={split ? 'mt-5 flex flex-wrap items-center justify-center md:justify-start gap-3' : 'mt-5 flex flex-wrap items-center justify-center gap-3'}>
         <SentenceSpeakerButton
           text={stripSentenceMarkers(text)}

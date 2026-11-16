@@ -9,6 +9,7 @@ import { isDialogOpenOutside } from '../../components/keyboardTarget';
 import { useOverlay } from '../../components/overlayStack';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { analysisPlaceholderState } from '../../services/sentenceAnalysisState';
+import { connectedSpeechIpa } from '../../services/sentencePronunciation';
 import { useKeyboardNavigation, useWheelNavigation } from '../../hooks/useKeyboardNavigation';
 import { useWarmImages } from '../../hooks/useWarmImages';
 import { useLatest } from '../../hooks/useStableValue';
@@ -472,6 +473,7 @@ export function SentenceReviewView({
   const heroProps: Omit<ComponentProps<typeof SentenceHero>, 'layout'> | null = currentSentence ? {
     text: currentSentenceText,
     sourceWord: (currentSentence.data as SentenceData).sourceWord,
+    connectedIpa: connectedSpeechIpa((currentSentence.data as SentenceData).analysis),
     findSaved,
     onOpenCard,
     onSearchWord: searchWithContext,
