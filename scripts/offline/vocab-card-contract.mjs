@@ -1,7 +1,10 @@
 // One definition of a complete vocabulary card, shared by the incremental selector and the completion
 // stage. When they disagreed, a card the completion stage accepted was selected again on every cycle.
 
-export const USAGE_STATUSES = ['modern_american', 'current_general', 'british_only', 'rare_or_dated', 'narrow_specialized'];
+import { USAGE_STATUSES } from '../../server/src/shared/usage-audit.ts';
+
+// The server's list, in its order, which complete-corpus-fields.mjs's schema, and so every batch fingerprint, repeats.
+export { USAGE_STATUSES };
 export const USAGE_CONFIDENCES = ['high', 'medium', 'low'];
 
 export function validString(value) {

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { isUsageAudit, shouldArchiveUsage } from '../../server/src/shared/usage-audit.ts';
 import { isDeferred, ledgerFromEnvironment, parentHash, readLedger } from './failure-ledger.mjs';
 import { hasCurrentLocalAdvancedEnrichment } from './local-advanced-enrichment.mjs';
 import { readJson, writePrivateJson } from './offline-io.mjs';
@@ -29,11 +30,8 @@ const failureLedger = ledgerFromEnvironment('vocab');
 const deferredEntries = failureLedger ? readLedger(failureLedger.path).stages[failureLedger.stage] || {} : {};
 const now = Date.now();
 
-// The server's shouldArchiveUsage (server/src/usage-audit.ts), which the corpus importer applies.
-function shouldArchive(audit) {
-  return audit?.confidence !== 'low' &&
-    ['british_only', 'rare_or_dated', 'narrow_specialized'].includes(audit?.status);
-}
+// Whether the corpus importer archives an item for its usage audit; it refuses an entry that says otherwise.
+const shouldArchive = audit => isUsageAudit(audit) && shouldArchiveUsage(audit.status, audit.confidence);
 
 const candidates = [];
 let ignoredOlderNonCritical = 0;

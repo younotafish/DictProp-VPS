@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { corpusSourceHash } from '../../server/src/corpus-hash.ts';
 import {
   hasCurrentLocalAdvancedEnrichment,
   markLocalAdvancedEnrichment,
@@ -8,7 +9,6 @@ import {
   applyCompletions,
   collectCompletionTasks,
   compactTask,
-  corpusHash,
   fillCard,
   normalizeCompletion,
   readCompletionResults,
@@ -176,9 +176,9 @@ test('completed cards are merged into their parents, and a failed card holds bac
   assert.deepEqual(result.checkFailures.map(failure => failure.id), ['broken']);
 
   const [alpha, phrase, untouched] = result.entries;
-  // The source hash is the item before this pass, without its image fields.
-  assert.equal(alpha.sourceHash, corpusHash(entries[0].data));
-  assert.equal(corpusHash(entries[0].data), sha256(JSON.stringify(card('alpha'))));
+  // The source hash is the corpus source hash of the item before this pass, so its images don't count.
+  assert.equal(alpha.sourceHash, corpusSourceHash(entries[0].data));
+  assert.equal(alpha.sourceHash, sha256(JSON.stringify(card('alpha'))));
   assert.equal(alpha.archiveForUsage, true);
   assert.equal(alpha.data.imageUrl, 'server:has_image:v1');
   assert.equal(phrase.archiveForUsage, undefined);

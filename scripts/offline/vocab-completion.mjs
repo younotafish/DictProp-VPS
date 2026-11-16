@@ -1,7 +1,8 @@
 // The vocabulary-completion stage's own logic: which cards need work, what is sent for each, how an answer
 // is checked, and how accepted answers are merged into their cards. complete-corpus-fields.mjs runs it.
 
-import { createHash } from 'node:crypto';
+import { corpusSourceHash } from '../../server/src/corpus-hash.ts';
+import { shouldArchiveUsage } from '../../server/src/shared/usage-audit.ts';
 import { errorMessage, indexedResults } from './model-stage.mjs';
 import {
   hasCurrentLocalAdvancedEnrichment,
@@ -10,7 +11,6 @@ import {
 import { missingCardFields } from './vocab-card-contract.mjs';
 
 const REQUIRED_TEXT_FIELDS = ['sense', 'chinese', 'ipa', 'definition', 'history', 'register', 'mnemonic', 'imagePrompt'];
-const ARCHIVED_USAGE_STATUSES = ['british_only', 'rare_or_dated', 'narrow_specialized'];
 
 // A card needs work when it misses a field, or when it lacks a current local advanced enrichment, in which
 // case every learning field is rewritten.
@@ -118,18 +118,6 @@ export function readCompletionResults(parsed, batch) {
   });
 }
 
-function withoutImageFields(value) {
-  if (Array.isArray(value)) return value.map(withoutImageFields);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value)
-    .filter(([key]) => key !== 'imageUrl')
-    .map(([key, child]) => [key, withoutImageFields(child)]));
-}
-
-export function corpusHash(data) {
-  return createHash('sha256').update(JSON.stringify(withoutImageFields(data))).digest('hex');
-}
-
 // Fills the fields the card was missing, or every learning field when it is being rewritten, and stamps
 // the advanced-enrichment marker. marker is { model, provider, generatedAt }.
 export function fillCard(card, completion, { model, provider, generatedAt }) {
@@ -205,12 +193,11 @@ export function applyCompletions(entries, completedTasks, failures, marker) {
     const nextEntry = {
       ...entry,
       // The previous audited target is the source for this second, resumable completion pass.
-      sourceHash: corpusHash(originalData),
+      sourceHash: corpusSourceHash(originalData),
       data,
     };
     if (entry.type === 'vocab' && data.usageAudit) {
-      nextEntry.archiveForUsage = data.usageAudit.confidence !== 'low' &&
-        ARCHIVED_USAGE_STATUSES.includes(data.usageAudit.status);
+      nextEntry.archiveForUsage = shouldArchiveUsage(data.usageAudit.status, data.usageAudit.confidence);
     }
     completedEntries.push(nextEntry);
   }

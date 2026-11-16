@@ -22,6 +22,7 @@ import {
   stageSettings,
 } from './model-stage.mjs';
 import { resolveStructuredModel, runStructuredModel } from './structured-model.mjs';
+import { USAGE_STATUSES } from './vocab-card-contract.mjs';
 import {
   applyCompletions,
   collectCompletionTasks,
@@ -97,10 +98,7 @@ const completionSchema = {
             additionalProperties: false,
             required: ['status', 'reason', 'confidence'],
             properties: {
-              status: {
-                type: 'string',
-                enum: ['modern_american', 'current_general', 'british_only', 'rare_or_dated', 'narrow_specialized'],
-              },
+              status: { type: 'string', enum: [...USAGE_STATUSES] },
               reason: { type: 'string', minLength: 1, maxLength: 1_000 },
               confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
             },
