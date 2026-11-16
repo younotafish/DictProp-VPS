@@ -16,6 +16,7 @@ import { readNotebookListView, writeNotebookListView } from '../services/noteboo
 import { aiCardStillValid, retryOffered, shouldBlurOnDrag } from '../services/notebook/searchBox';
 import { firstVisibleRowIndex, nextScrollAction, type ListScrollInputs } from '../services/notebook/listScroll';
 import { PLATFORM } from '../services/platform';
+import { onTabReselect } from '../services/navReselect';
 import { isImeKey, isTypingTarget } from '../components/keyboardTarget';
 import { NotebookGroup } from './notebook/NotebookGroup';
 import { SearchResultsCarousel } from './notebook/SearchResultsCarousel';
@@ -118,6 +119,14 @@ export const NotebookView: React.FC<NotebookProps> = ({
   // The search box, which a drag of the list or a lookup from a phone's keyboard blurs to drop the keyboard.
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [searchFocused, setSearchFocused] = useState(false);
+
+  // A tap on the Notebook tab while it shows (or 1): the tab bar has scrolled the list up, so it catches up with the
+  // clock as it would on a view change, and at the top the tap puts the caret in the search box, inside the tap, so a
+  // phone's keyboard opens.
+  useEffect(() => onTabReselect('notebook', action => {
+    startTransition(() => setClockBump(n => n + 1));
+    if (action === 'focus-search') searchInputRef.current?.focus();
+  }), []);
 
   // Every change to the query goes through here. Editing it, by any path, drops an AI card, its error and a lookup
   // still on its way that belong to the query before (case and spacing aside), and emptying it drops them all, so

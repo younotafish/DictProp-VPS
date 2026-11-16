@@ -132,3 +132,32 @@ test('a tab never scrolled, or whose list left the page, counts as at its top; a
   assert.deepEqual(heard, ['focus-search', 'focus-search', 'scroll-top']);
   stop();
 });
+
+test('a tab listening like the Notebook catches its list up on each reselect, and focuses its search box inside the tap', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 3_000_000 });
+  (globalThis as { window?: unknown }).window = { matchMedia: () => ({ matches: false }) };
+  // views/Notebook.tsx's registration, with a stand-in for its clock bump and its search box.
+  let clockBumps = 0;
+  const focused: string[] = [];
+  const searchInputRef = { current: { focus: () => focused.push(`focus at bump ${clockBumps}`) } };
+  const stop = onTabReselect('notebook', action => {
+    clockBumps += 1;
+    if (action === 'focus-search') searchInputRef.current?.focus();
+  });
+  const { navBar } = renderNavBar('notebook');
+
+  const { event } = fakeScroller(1_200);
+  navBar.handleScroll(event);
+  t.mock.timers.tick(600);
+  navBar.navigate('notebook');
+  assert.equal(clockBumps, 1, 'scrolled up: the list catches up');
+  assert.deepEqual(focused, []);
+
+  t.mock.timers.tick(600);
+  navBar.navigate('notebook');
+  assert.deepEqual(focused, ['focus at bump 2'], 'at the top: the caret goes in the box before navigate returns');
+  stop();
+  t.mock.timers.tick(600);
+  navBar.navigate('notebook');
+  assert.equal(clockBumps, 2, 'a tab that stopped listening hears nothing');
+});
