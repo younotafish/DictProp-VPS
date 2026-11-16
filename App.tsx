@@ -116,9 +116,13 @@ function SignedInApp({ user }: { user: AuthUser }) {
     showKeyboardHelp, setShowKeyboardHelp, openKeyboardHelp, showRefusedReviews, setShowRefusedReviews, openRefusedReviews, dialogOpen, modalOpen,
   } = overlays;
 
-  // The notebook sits under DetailView and the card popup, so it skips the reviews made there as they
-  // happen. It catches up a second after they stop, while hidden, so closing them doesn't have to.
-  const notebookItems = useFrozenWhile(allActiveItems, !!detailContext || !!cardPopup, 1_000);
+  // The tabs sit under DetailView and the card popup, so their lists skip the reviews made there as they happen.
+  // They catch up a second after the reviews stop, while hidden, so closing them doesn't have to.
+  const frozen = !!detailContext || !!cardPopup;
+  const notebookItems = useFrozenWhile(allActiveItems, frozen, 1_000);
+  const shownSentenceItems = useFrozenWhile(sentenceItems, frozen, 1_000);
+  const shownRealLifeProgress = useFrozenWhile(realLifeProgressItems, frozen, 1_000);
+  const shownEssayProgress = useFrozenWhile(essayProgressItems, frozen, 1_000);
   // A card covers the page from the moment it's opened, also while its code loads behind the spinner or
   // when it crashes, not only once DetailView has registered itself. So does the card popup.
   useOverlay(!!detailContext);
@@ -344,7 +348,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
 
         <TabScreen shown={currentView === 'sentences'}>
           <SentencesView
-            items={sentenceItems}
+            items={shownSentenceItems}
             onUpdateSRS={updateSRS}
             onDelete={handleDelete}
             onSearch={handleRecursiveSearch}
@@ -358,7 +362,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
         <TabScreen shown={currentView === 'real-life'}>
           <RealLifeView
             onOpenSentence={handleViewSentence}
-            progressItems={realLifeProgressItems}
+            progressItems={shownRealLifeProgress}
             onUpdateSRS={updateSRS}
             isSentenceSaved={isSentenceSaved}
             onScroll={handleScroll}
@@ -371,7 +375,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
           <EssaysView
             userId={user.id}
             onOpenSentence={handleViewSentence}
-            progressItems={essayProgressItems}
+            progressItems={shownEssayProgress}
             onScroll={handleScroll}
           />
         </TabScreen>
