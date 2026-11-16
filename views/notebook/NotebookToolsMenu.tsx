@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
-import { Download, FileJson, GitMerge, ListPlus, Loader2, MoreHorizontal, RefreshCw, ScanText, UploadCloud, Volume2 } from 'lucide-react';
+import { Download, FileJson, GitMerge, Keyboard, ListPlus, Loader2, MoreHorizontal, RefreshCw, ScanText, UploadCloud, Volume2 } from 'lucide-react';
 import type { SyncStatus } from '../../types';
 import { SpeechStyleToggle } from '../../components/SpeechStyleToggle';
 import { PlaybackSpeedToggle } from '../../components/PlaybackSpeedToggle';
@@ -18,6 +18,8 @@ interface NotebookToolsMenuProps {
   onRestoreImagesToServer: () => void;
   imageRestoreRunning: boolean;
   onFindDuplicates: () => void;
+  /** Opens the gestures and shortcuts sheet: on a phone, the only way to it. */
+  onShowShortcuts?: () => void;
 }
 
 interface MenuItemProps {
@@ -43,10 +45,10 @@ type NotebookToolsPanelProps = Omit<NotebookToolsMenuProps, 'isOnline'> & {
   onChosen: () => void;
 };
 
-/** What the open menu lists: the speech settings, then the tools as plain buttons in tab order. */
+/** What the open menu lists: the speech settings, then the tools as plain buttons in tab order, then the shortcut sheet. */
 export const NotebookToolsPanel: React.FC<NotebookToolsPanelProps> = ({
   onAnalyzeText, onBatchImport, onImportJSON, onDownloadOfflineImages, onForceSync, syncStatus, onGenerateAllSpeech,
-  speechGenerationRunning, onRestoreImagesToServer, imageRestoreRunning, onFindDuplicates, onChosen,
+  speechGenerationRunning, onRestoreImagesToServer, imageRestoreRunning, onFindDuplicates, onShowShortcuts, onChosen,
 }) => {
   // Choosing a tool closes the menu first.
   const choose = (tool: () => void) => () => {
@@ -72,6 +74,12 @@ export const NotebookToolsPanel: React.FC<NotebookToolsPanelProps> = ({
       <MenuItem icon={<Volume2 size={17} />} label="Generate speech cache" onSelect={choose(onGenerateAllSpeech)} busy={speechGenerationRunning} />
       <MenuItem icon={<UploadCloud size={17} />} label="Restore server images" onSelect={choose(onRestoreImagesToServer)} busy={imageRestoreRunning} />
       <MenuItem icon={<GitMerge size={17} />} label="Merge duplicates" onSelect={choose(onFindDuplicates)} />
+      {onShowShortcuts && (
+        <>
+          <div className="h-px bg-slate-100 my-1" />
+          <MenuItem icon={<Keyboard size={17} />} label="Gestures & shortcuts" onSelect={choose(onShowShortcuts)} />
+        </>
+      )}
     </>
   );
 };

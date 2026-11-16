@@ -214,7 +214,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
         <ErrorBoundary
           key={detailContext.openId}
           onReset={closeDetail}
-          fallbackMessage="Something went wrong displaying this card. Your data is safe — returning to notebook."
+          fallbackMessage="Something went wrong displaying this card. Your data is safe."
         >
           <DetailView
               groups={liveDetailGroups}
@@ -310,6 +310,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
             onRestoreImagesToServer={handleRestoreImagesToServer}
             imageRestoreRunning={imageRestoreProgress !== null}
             onDownloadOfflineImages={handleDownloadOfflineImages}
+            onShowShortcuts={openKeyboardHelp}
           />
         </TabScreen>
 
@@ -391,7 +392,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
         />
       </Suspense>
 
-      {/* Keyboard Shortcuts Help Modal */}
+      {/* The gestures and shortcuts sheet */}
       <Suspense fallback={null}>
         {showKeyboardHelp && <KeyboardHelpModal onClose={() => setShowKeyboardHelp(false)} />}
       </Suspense>

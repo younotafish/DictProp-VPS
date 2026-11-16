@@ -6,13 +6,13 @@ import type { DetailViewState } from './useDetailView';
 import type { Overlays } from './useOverlays';
 import type { UndoOfferState } from './useUndoOffer';
 
-/** The tab each number key opens. */
-const TAB_KEYS: ReadonlyMap<string, ViewState> = new Map([['1', 'notebook'], ['2', 'sentences'], ['3', 'study']]);
+/** The tab each number key opens. The shortcut sheet (services/shortcutSheet) lists them from here. */
+export const TAB_KEYS: ReadonlyMap<string, ViewState> = new Map([['1', 'notebook'], ['2', 'sentences'], ['3', 'study']]);
 
 /**
  * The app-wide keys: 1, 2 and 3 are taps on the Notebook, Sentences and Study tabs (`navigate`: one switches tabs, or
  * on the tab showing scrolls it up and then focuses its search box), Escape closes what's on top, ? lists the
- * shortcuts, and ⌘Z (Ctrl+Z off a Mac) takes back what the undo pill offers. The card view's own keys are in
+ * gestures and shortcuts, and ⌘Z (Ctrl+Z off a Mac) takes back what the undo pill offers. The card view's own keys are in
  * useKeyboardNavigation, which only the card view loads.
  */
 export function useAppShortcuts(
@@ -77,7 +77,7 @@ export function useAppShortcuts(
 
       // Cmd+F belongs to GlobalSearch, which opens its search box.
 
-      // ? shows the keyboard shortcuts, except where it is being typed.
+      // ? shows the gestures and shortcuts, except where it is being typed.
       if (e.key === '?' && !e.metaKey && !e.ctrlKey && !isTypingTarget(e.target)) {
         e.preventDefault();
         setShowKeyboardHelp(true);

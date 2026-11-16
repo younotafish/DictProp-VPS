@@ -75,6 +75,8 @@ interface NotebookProps {
   onRestoreImagesToServer: () => void;
   imageRestoreRunning: boolean;
   onDownloadOfflineImages: () => void;
+  /** Opens the gestures and shortcuts sheet, from the tools menu. */
+  onShowShortcuts?: () => void;
 }
 
 export const NotebookView: React.FC<NotebookProps> = ({
@@ -84,7 +86,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
     onSaveSentence, isSentenceSaved, hasOverlay,
     onBatchImport, batchImportProgress, onJSONImported,
     onGenerateAllSpeech, ttsGenProgress,
-    onRestoreImagesToServer, imageRestoreRunning, onDownloadOfflineImages, matchSavedBases, onSyncScroll,
+    onRestoreImagesToServer, imageRestoreRunning, onDownloadOfflineImages, matchSavedBases, onSyncScroll, onShowShortcuts,
 }) => {
   // The sort and filter last chosen on this device (review priority and words only at first), kept across relaunches.
   const [initialView] = useState(readNotebookListView);
@@ -434,6 +436,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
             onRestoreImagesToServer={onRestoreImagesToServer}
             imageRestoreRunning={imageRestoreRunning}
             onFindDuplicates={onFindDuplicates}
+            onShowShortcuts={onShowShortcuts}
           />
         }
         empty={!hasSavedItems}

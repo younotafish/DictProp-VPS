@@ -16,8 +16,8 @@ export const popupIsEmpty = (cardPopup: CardPopup | null, popupItems: readonly S
   cardPopup !== null && popupItems.length === 0;
 
 /**
- * What covers the page. modalOpen: a dialog that asks for a decision or lists something (a confirm, the keyboard
- * shortcuts, the refused reviews or the duplicates), which keeps every key, the undo shortcut included. dialogOpen:
+ * What covers the page. modalOpen: a dialog that asks for a decision or lists something (a confirm, the shortcut
+ * sheet, the refused reviews or the duplicates), which keeps every key, the undo shortcut included. dialogOpen:
  * one of those, or the card popup showing a card.
  */
 export function openDialogs({ cardPopup, popupItems, confirmModal, showKeyboardHelp, showRefusedReviews, duplicateClusters }: {
@@ -37,7 +37,7 @@ export function openDialogs({ cardPopup, popupItems, confirmModal, showKeyboardH
  * reviews, and whether any of them covers it (openDialogs).
  */
 export function useOverlays(allActiveItems: StoredItem[]) {
-  // Footnote card popup — keyed by the word's SPELLING (so deleting one sense doesn't lose the rest)
+  // The card popup — keyed by the word's SPELLING (so deleting one sense doesn't lose the rest)
   // plus the sense to open on. popupItems = every saved sense of that word, for in-popup paging; it's
   // re-resolved live from allActiveItems so Got it / Reset / Delete update the card in place.
   const [cardPopup, setCardPopup] = useState<CardPopup | null>(null);
@@ -63,7 +63,7 @@ export function useOverlays(allActiveItems: StoredItem[]) {
     setConfirmModal({ ...notice, confirmText: 'OK', onConfirm: () => setConfirmModal(null), showCancel: false });
   }, []);
 
-  // Keyboard shortcuts help modal
+  // The gestures and shortcuts sheet
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
   const openKeyboardHelp = useCallback(() => setShowKeyboardHelp(true), []);
   const [showRefusedReviews, setShowRefusedReviews] = useState(false);
