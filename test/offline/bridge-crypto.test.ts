@@ -17,6 +17,7 @@ import {
   decryptFile,
   encryptFile,
   loadKey,
+  verifyFile,
 } from '../../scripts/offline/bridge-crypto.mjs';
 import { selectBridgeTempFiles } from '../../scripts/offline/bridge-leftovers.mjs';
 
@@ -185,6 +186,92 @@ test('gunzip runs only after the blob authenticates', async () => {
     const notGzip = await encryptBytes(dir, Buffer.from('plain text, not gzip'));
     await assert.rejects(decryptBytes(dir, notGzip, { gunzip: true }), /incorrect header check|Z_DATA_ERROR/);
     assert.deepEqual(leftovers(dir, ['blob.dpb', 'input.dpb']), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('verification authenticates a kept blob and counts its plaintext, gunzipped when asked, writing nothing', async () => {
+  const dir = tempDir();
+  try {
+    const json = Buffer.from(JSON.stringify({ rows: Array.from({ length: 2_000 }, (_, index) => ({ index })) }));
+    const compressed = gzipSync(json);
+    const blob = await encryptBytes(dir, compressed);
+    const path = join(dir, 'kept.dpb');
+    writeFileSync(path, blob);
+    const before = readdirSync(dir).sort();
+
+    assert.equal(await verifyFile({ path, passphrase, purpose }), compressed.length);
+    assert.equal(await verifyFile({ path, passphrase, purpose, gunzip: true }), json.length);
+    assert.deepEqual(readdirSync(dir).sort(), before, 'no output and no temp file');
+
+    await assert.rejects(verifyFile({ path, passphrase, purpose: 'db-backup:2' }), /failed authentication/);
+    await assert.rejects(verifyFile({ path, passphrase: `${passphrase}!`, purpose }), /failed authentication/);
+    const plain = join(dir, 'plain.dpb');
+    writeFileSync(plain, await encryptBytes(dir, Buffer.from('not gzip')));
+    await assert.rejects(verifyFile({ path: plain, passphrase, purpose, gunzip: true }), /incorrect header check|Z_DATA_ERROR/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the verify command prints the plaintext size, refuses a damaged or misbound blob, and never writes a file', async () => {
+  const dir = tempDir();
+  try {
+    const keyFile = join(dir, 'key');
+    writeFileSync(keyFile, `${passphrase}\n`);
+    const tar = randomBytes(300_000);
+    const blob = await encryptBytes(dir, gzipSync(tar), { purpose: 'db-backup:41' });
+    const kept = join(dir, 'kept.dpb');
+    writeFileSync(kept, blob);
+    const verify = (file: string, ...args: string[]) => spawnSync(process.execPath, [script, 'verify', '--key-file', keyFile, '--in', file, ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, SENTENCE_BRIDGE_KEY: '' },
+    });
+    const expected = ['blob.dpb', 'kept.dpb', 'key'];
+
+    const passed = verify(kept, '--purpose', 'db-backup:41', '--gunzip');
+    assert.equal(passed.status, 0, passed.stderr);
+    assert.deepEqual(JSON.parse(passed.stdout), { verified: true, bytes: tar.length });
+    assert.equal(passed.stderr, '');
+    assert.equal(JSON.parse(verify(kept, '--purpose', 'db-backup:41').stdout).bytes, blob.length - HEADER_BYTES - TAG_BYTES);
+
+    const damaged = (name: string, bytes: Buffer) => {
+      writeFileSync(join(dir, name), bytes);
+      expected.push(name);
+      return join(dir, name);
+    };
+    const flipped = Buffer.from(blob);
+    flipped[HEADER_BYTES + 100] ^= 0x01;
+    for (const [file, purposeLabel] of [
+      [kept, 'db-backup:42'],
+      [damaged('flipped.dpb', flipped), 'db-backup:41'],
+      [damaged('truncated.dpb', blob.subarray(0, blob.length - 1)), 'db-backup:41'],
+      [damaged('empty.dpb', Buffer.alloc(0)), 'db-backup:41'],
+    ] as const) {
+      const refused = verify(file, '--purpose', purposeLabel, '--gunzip');
+      assert.equal(refused.status, 1, `${file} ${purposeLabel}`);
+      assert.equal(refused.stdout, '');
+      assert.match(refused.stderr, /^bridge-crypto: verify failed: /);
+    }
+    const otherKey = spawnSync(process.execPath, [script, 'verify', '--purpose', 'db-backup:41', '--in', kept], {
+      encoding: 'utf8',
+      env: { ...process.env, SENTENCE_BRIDGE_KEY: `${passphrase}!` },
+    });
+    assert.equal(otherKey.status, 1);
+    assert.match(otherKey.stderr, /failed authentication/);
+
+    // verify reads a file twice and writes nothing, so it takes no --out and no standard input.
+    for (const args of [
+      ['verify', '--purpose', 'db-backup:41'],
+      ['verify', '--purpose', 'db-backup:41', '--in', kept, '--out', join(dir, 'out')],
+      ['verify', '--in', kept],
+      ['verify', '--purpose', 'db-backup:41', '--in', kept, 'extra'],
+      ['encrypt', '--purpose', 'db-backup:41', '--out', join(dir, 'out'), '--gunzip'],
+    ]) {
+      assert.equal(spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', input: '' }).status, 2, args.join(' '));
+    }
+    assert.deepEqual(readdirSync(dir).sort(), expected.sort());
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

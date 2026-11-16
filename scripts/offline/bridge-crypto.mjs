@@ -8,6 +8,7 @@
 // Format: "DPB1" | 16-byte salt | 12-byte IV | ciphertext | 16-byte GCM tag.
 // Decryption writes only to a private temp file beside the output and renames it into place once the
 // tag verifies, so a wrong key, a wrong purpose, a truncated download or a flipped byte leaves nothing.
+// Verification decrypts in memory and writes nothing at all, for a blob that is kept encrypted.
 
 import { createCipheriv, createDecipheriv, pbkdf2, randomBytes } from 'node:crypto';
 import {
@@ -15,6 +16,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
@@ -207,10 +209,47 @@ export async function decryptFile({ input, output, passphrase, purpose, gunzip =
   return outputPath;
 }
 
+// Checks a kept blob, such as an off-site database backup, without writing a byte of plaintext anywhere, and
+// returns how many bytes it decrypts to, decompressed with gunzip. The first pass authenticates every chunk and the
+// final tag. Only then does a second pass decrypt the file again into the decompressor, as decryptFile does, so
+// nothing unauthenticated is decompressed; the second pass authenticates again, so a file that changed in between
+// fails too.
+export async function verifyFile({ path, passphrase, purpose, gunzip = false }) {
+  checkPurpose(purpose);
+  const decrypt = source => decryptChunks(source, { passphrase, purpose });
+  let bytes = 0;
+  const counter = () => new Writable({
+    write(chunk, _encoding, callback) {
+      bytes += chunk.length;
+      callback();
+    },
+  });
+  await pipeline(createReadStream(path), decrypt, counter());
+  if (!gunzip) return bytes;
+  bytes = 0;
+  await pipeline(createReadStream(path), decrypt, createGunzip(), counter());
+  return bytes;
+}
+
 const USAGE = 'Usage: bridge-crypto.mjs <encrypt|decrypt> --purpose <label> --out <file> ' +
   '[--in <file>] [--key-file <file>] [--gunzip (decrypt only)]\n' +
+  '       bridge-crypto.mjs verify --purpose <label> --in <file> [--key-file <file>] [--gunzip]\n' +
+  'verify writes nothing and prints {"verified":true,"bytes":<plaintext bytes>}.\n' +
   'The key comes from --key-file, else $SENTENCE_BRIDGE_KEY, else ' +
   '${XDG_CONFIG_HOME:-~/.config}/dictprop/sentence_bridge_key.';
+
+const failureMessage = error =>
+  error instanceof BridgeCryptoError ? error.message : `${error.code ?? 'error'}: ${error.message}`;
+
+// What each command needs: encrypt and decrypt write --out, from --in or standard input; verify reads --in twice
+// and writes nothing; only decrypt and verify decompress.
+function usable(command, values) {
+  if (!values.purpose) return false;
+  if (command === 'encrypt') return Boolean(values.out) && !values.gunzip;
+  if (command === 'decrypt') return Boolean(values.out);
+  if (command === 'verify') return Boolean(values.in) && values.out === undefined;
+  return false;
+}
 
 export async function main(argv) {
   let parsed;
@@ -232,10 +271,20 @@ export async function main(argv) {
     return 2;
   }
   const { positionals: [command, ...extra], values } = parsed;
-  if (!['encrypt', 'decrypt'].includes(command) || extra.length || !values.purpose || !values.out ||
-      (values.gunzip && command !== 'decrypt')) {
+  if (extra.length || !usable(command, values)) {
     process.stderr.write(`${USAGE}\n`);
     return 2;
+  }
+  if (command === 'verify') {
+    try {
+      const passphrase = loadKey({ keyFile: values['key-file'] });
+      const bytes = await verifyFile({ path: values.in, passphrase, purpose: values.purpose, gunzip: values.gunzip });
+      process.stdout.write(`${JSON.stringify({ verified: true, bytes })}\n`);
+      return 0;
+    } catch (error) {
+      process.stderr.write(`bridge-crypto: verify failed: ${failureMessage(error)}\n`);
+      return 1;
+    }
   }
   try {
     const passphrase = loadKey({ keyFile: values['key-file'] });
@@ -249,8 +298,7 @@ export async function main(argv) {
     process.stderr.write(`bridge-crypto: ${command}ed ${size} bytes for ${values.purpose}\n`);
     return 0;
   } catch (error) {
-    const message = error instanceof BridgeCryptoError ? error.message : `${error.code ?? 'error'}: ${error.message}`;
-    process.stderr.write(`bridge-crypto: ${command} failed: ${message}\n`);
+    process.stderr.write(`bridge-crypto: ${command} failed: ${failureMessage(error)}\n`);
     return 1;
   }
 }
