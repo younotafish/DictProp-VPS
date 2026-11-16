@@ -1,10 +1,10 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { StoredItem, isVocabItem, savedVocabKey } from '../types';
+import { StoredItem } from '../types';
 import { X, ScanText, Loader2, Check, CheckCheck, ClipboardPaste, Trash2, ChevronLeft, CircleDot, Circle, Sparkles } from 'lucide-react';
 import { detectVocabulary, DetectedWord, analyzeInput } from '../services/api/ai';
 import { ensureTTS } from '../services/neuralTts';
-import { makeVocabStoredItem } from '../services/items';
 import { modifierKeyLabel } from '../services/platform';
+import { saveNewSenses, savedSenseKeys } from '../services/senseSaving';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -185,7 +185,7 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
 
     // Word + sense of every saved card, including the ones this run saves: savedItems won't show those
     // until the run ends, and two selected words (or one analysis) can yield the same card.
-    const savedKeys = new Set(savedItems.filter(isVocabItem).map(item => savedVocabKey(item.data)));
+    const savedKeys = savedSenseKeys(savedItems);
 
     for (let i = 0; i < wordsToAnalyze.length; i++) {
       if (abortRef.current) break;
@@ -202,20 +202,9 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
         // so the first play is the instant cached voice instead of a cache-miss fallback.
         ensureTTS((result.vocabs || []).flatMap(v => v.examples || []));
 
-        // Auto-save each vocab card
-        let wordSaved = 0;
-        for (const vocab of result.vocabs || []) {
-          // Check if already saved (by word + sense)
-          const key = savedVocabKey(vocab);
-          if (!savedKeys.has(key)) {
-            savedKeys.add(key);
-            const storedItem = makeVocabStoredItem(vocab);
-            onSave(storedItem);
-            wordSaved++;
-
-            // Advanced metadata and imagery are generated later by the Mac-local enrichment cycle.
-          }
-        }
+        // Auto-save each vocab card not saved yet (by word + sense). Advanced metadata and imagery are generated
+        // later by the Mac-local enrichment cycle.
+        const wordSaved = saveNewSenses(result.vocabs || [], savedKeys, onSave).length;
 
         setAnalyzedResults(prev => [...prev, {
           word: detected.word,
