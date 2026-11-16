@@ -143,10 +143,17 @@ test('a comparison is found by its word set in any order, unless it failed', () 
   const queue = run([
     { type: 'add-compare', id: 'q-1', words: ['Fable', 'parable'], cached: null },
     { type: 'add-compare', id: 'q-2', words: ['rot', 'decay'], cached: null }, { type: 'fail', id: 'q-2' },
-    add('q-3', 'fable vs parable'),
+    add('q-3', 'rot vs decay'),
   ]);
+  assert.equal(isQueued(queue, 'q-3'), true, "a lookup may repeat a failed comparison's text");
   assert.equal(findLiveComparison(queue, comparisonKey(['parable', 'fable']))?.id, 'q-1');
-  assert.equal(findLiveComparison(queue, comparisonKey(['decay', 'rot'])), undefined);
+  assert.equal(findLiveComparison(queue, comparisonKey(['decay', 'rot'])), undefined, 'and is not taken for the comparison');
+});
+
+test('a lookup of the text a live comparison shows is skipped as a duplicate', () => {
+  const queue = run([{ type: 'add-compare', id: 'q-1', words: ['Fable', 'parable'], cached: null }]);
+  assert.equal(hasLiveDuplicate(queue, 'fable vs parable'), true);
+  assert.equal(searchQueueReducer(queue, add('q-2', 'fable vs parable')), queue);
 });
 
 test('a saved word shows its saved cards as the result, without a translation', () => {
