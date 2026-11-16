@@ -1,9 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { checkStoredItem, checkStoredItemBatch } from '../src/validation.js';
-import { srs } from './support/fixtures.js';
+import { advancedVocabContentHash } from '../src/local-enrichment-markers.js';
+import { checkStoredItem, checkStoredItemBatch, validateStoredItem } from '../src/validation.js';
+import { completeVocab, srs } from './support/fixtures.js';
 
 const vocab = (id: string) => ({ type: 'vocab', data: { id, word: 'lucid' }, srs: srs(id, 'vocab'), savedAt: 1 });
+
+const withAdvancedEnrichment = (data: Record<string, unknown>) => ({
+  ...data,
+  advancedEnrichment: {
+    version: 1,
+    provider: 'codex-harness',
+    model: 'gpt-5.6-sol',
+    generatedAt: 1,
+    contentHash: advancedVocabContentHash(data),
+  },
+});
 
 test('an accepted item comes back as itself, and a refused one as the reason', () => {
   const item = vocab('lucid-1');
@@ -24,4 +36,22 @@ test('a batch is accepted whole or refused with the reason for its first bad ite
     checkStoredItemBatch([items[0], { ...items[1], srs: null }, { type: 'card' }], 3),
     { error: 'Invalid item at index 1: item.srs must be an object' },
   );
+});
+
+test('production imports accept Codex and Claude advanced-enrichment markers', () => {
+  const wordSrs = srs('word', 'vocab');
+  const enriched = withAdvancedEnrichment(completeVocab);
+  for (const [provider, model] of [['codex-harness', 'gpt-5.6-sol'], ['claude-code', 'claude-opus-5-5']]) {
+    const data = { ...enriched, advancedEnrichment: { ...enriched.advancedEnrichment, provider, model } };
+    assert.equal(validateStoredItem({ type: 'vocab', data, srs: wordSrs, savedAt: 1 }), null);
+    assert.equal(validateStoredItem({
+      type: 'phrase', data: { id: 'word', query: 'a word', vocabs: [data] }, srs: { ...wordSrs, type: 'phrase' }, savedAt: 1,
+    }), null);
+  }
+  assert.equal(validateStoredItem({
+    type: 'vocab',
+    data: { ...enriched, advancedEnrichment: { ...enriched.advancedEnrichment, provider: 'remote-api' } },
+    srs: wordSrs,
+    savedAt: 1,
+  }), 'vocab advancedEnrichment is invalid');
 });

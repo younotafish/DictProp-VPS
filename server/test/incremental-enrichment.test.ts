@@ -9,10 +9,9 @@ import {
   localImageMarker,
   summarizeIncrementalEnrichmentBacklog,
 } from '../src/incremental-enrichment.js';
-import { validateStoredItem } from '../src/validation.js';
 import { completeVocab } from './support/fixtures.js';
 
-const withAdvancedEnrichment = (data: any) => ({
+const withAdvancedEnrichment = (data: Record<string, unknown>) => ({
   ...data,
   advancedEnrichment: {
     version: 1,
@@ -23,7 +22,7 @@ const withAdvancedEnrichment = (data: any) => ({
   },
 });
 
-const withLocalImageEnrichment = (data: any) => ({
+const withLocalImageEnrichment = (data: Record<string, unknown>) => ({
   ...data,
   localImageEnrichment: {
     version: 1,
@@ -74,28 +73,6 @@ test('a locally drawn image\'s marker is current for the prompt it was drawn for
   assert.equal(hasCurrentLocalImageEnrichment({ ...completeVocab, localImageEnrichment: marker }), true);
   assert.equal(hasCurrentLocalImageEnrichment({ ...completeVocab, imagePrompt: 'Another.', localImageEnrichment: marker }), false);
 });
-
-test('production imports accept Codex and Claude advanced-enrichment markers', () => {
-  const srs = {
-    id: 'word', type: 'vocab', nextReview: 0, interval: 0, memoryStrength: 0,
-    lastReviewDate: 0, totalReviews: 0, correctStreak: 0, stability: 0,
-  };
-  const enriched = withAdvancedEnrichment(completeVocab);
-  for (const [provider, model] of [['codex-harness', 'gpt-5.6-sol'], ['claude-code', 'claude-opus-5-5']]) {
-    const data = { ...enriched, advancedEnrichment: { ...enriched.advancedEnrichment, provider, model } };
-    assert.equal(validateStoredItem({ type: 'vocab', data, srs, savedAt: 1 }), null);
-    assert.equal(validateStoredItem({
-      type: 'phrase', data: { id: 'word', query: 'a word', vocabs: [data] }, srs: { ...srs, type: 'phrase' }, savedAt: 1,
-    }), null);
-  }
-  assert.equal(validateStoredItem({
-    type: 'vocab',
-    data: { ...enriched, advancedEnrichment: { ...enriched.advancedEnrichment, provider: 'remote-api' } },
-    srs,
-    savedAt: 1,
-  }), 'vocab advancedEnrichment is invalid');
-});
-
 
 test('incremental enrichment summarizes actionable gap types', () => {
   const items = [
