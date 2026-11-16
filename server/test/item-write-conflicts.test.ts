@@ -90,28 +90,68 @@ test('a stale copy fills in an image the server lacks, at a revision delta clien
   assert.match(stored?.data.imageUrl, /^server:has_image:/);
 });
 
+const phrase = (id: string, vocabs: unknown[], extra: Record<string, unknown> = {}) => ({
+  type: 'phrase',
+  data: { id, query: 'see it clearly', vocabs, ...extra },
+  srs: { id, type: 'phrase', nextReview: 0, interval: 0, memoryStrength: 0, lastReviewDate: 0, totalReviews: 0, correctStreak: 0, stability: 1 },
+  savedAt: 1,
+  updatedAt: 1_000,
+});
+
 test('a stale phrase copy keeps the stored image of each vocab and fills in the missing ones', () => {
   const id = 'stale-phrase';
-  const phrase = (vocabs: unknown[], extra: Record<string, unknown> = {}) => ({
-    type: 'phrase',
-    data: { id, query: 'see it clearly', vocabs, ...extra },
-    srs: { id, type: 'phrase', nextReview: 0, interval: 0, memoryStrength: 0, lastReviewDate: 0, totalReviews: 0, correctStreak: 0, stability: 1 },
-    savedAt: 1,
-    updatedAt: 1_000,
-  });
-  upsertItem(phrase([{ id: 'stale-phrase-kept', word: 'see', imageUrl: dataUri(pngVariant(4)) }]), USER);
+  upsertItem(phrase(id, [
+    { id: 'stale-phrase-kept', word: 'see', imageUrl: dataUri(pngVariant(4)) },
+    { id: 'stale-phrase-bare', word: 'clearly' },
+  ]), USER);
   const first = revisionOf(id);
-  upsertItem({ ...phrase([{ id: 'stale-phrase-kept', word: 'see', imageUrl: dataUri(pngVariant(5)) }], { note: 'newer' }), serverRevision: first, updatedAt: 2_000 }, USER);
-
   upsertItem({
-    ...phrase([
+    ...phrase(id, [
+      { id: 'stale-phrase-kept', word: 'see', imageUrl: dataUri(pngVariant(5)) },
+      { id: 'stale-phrase-bare', word: 'clearly' },
+    ], { note: 'newer' }),
+    serverRevision: first,
+    updatedAt: 2_000,
+  }, USER);
+  const newer = revisionOf(id);
+
+  const result = upsertItem({
+    ...phrase(id, [
       { id: 'stale-phrase-kept', word: 'see', imageUrl: dataUri(pngVariant(4)) },
-      { id: 'stale-phrase-new', word: 'clearly', imageUrl: dataUri(pngVariant(6)) },
+      { id: 'stale-phrase-bare', word: 'clearly', imageUrl: dataUri(pngVariant(6)) },
     ]),
     serverRevision: first,
   }, USER);
   assert.deepEqual(storedImage('stale-phrase-kept'), pngVariant(5));
-  assert.deepEqual(storedImage('stale-phrase-new'), pngVariant(6));
+  assert.deepEqual(storedImage('stale-phrase-bare'), pngVariant(6));
+  // The filled-in image's marker reaches delta clients with a new revision.
+  assert.equal(result.conflicted, true);
+  assert.ok(result.revision > newer);
+  assert.match(getItemById(id, USER, false)?.data.vocabs[1].imageUrl, /^server:has_image:/);
+});
+
+test('a stale phrase copy stores no image for a vocab the stored phrase lacks, and takes no revision for it', () => {
+  const id = 'stale-phrase-extra';
+  upsertItem(phrase(id, [{ id: 'stale-phrase-extra-kept', word: 'see' }]), USER);
+  const first = revisionOf(id);
+  upsertItem({
+    ...phrase(id, [{ id: 'stale-phrase-extra-kept', word: 'see' }], { note: 'newer' }), serverRevision: first, updatedAt: 2_000,
+  }, USER);
+  const newer = revisionOf(id);
+
+  // A copy made before that edit adds a vocab with a picture; its content loses to the newer row.
+  const result = upsertItem({
+    ...phrase(id, [
+      { id: 'stale-phrase-extra-kept', word: 'see' },
+      { id: 'stale-phrase-extra-new', word: 'clearly', imageUrl: dataUri(pngVariant(7)) },
+    ]),
+    serverRevision: first,
+  }, USER);
+  assert.deepEqual(result, { revision: newer, conflicted: true });
+  assert.equal(revisionOf(id), newer);
+  assert.equal(storedImage('stale-phrase-extra-new'), undefined);
+  const vocabIds = getItemById(id, USER, false)?.data.vocabs.map((vocab: { id: string }) => vocab.id);
+  assert.deepEqual(vocabIds, ['stale-phrase-extra-kept']);
 });
 
 /** An item reviewed once and then undone, and the copy another device pulled between the two. */

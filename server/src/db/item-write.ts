@@ -77,6 +77,12 @@ export interface InlineImage {
   dataUri: string;
 }
 
+/** The ids an item's data shows an image for, its own and each phrase vocab's: a read marks each one that has an image. */
+export function imageIdsShownBy(data: JsonObject): string[] {
+  const vocabIds = Array.isArray(data.vocabs) ? data.vocabs.map(vocab => fieldOf(vocab, 'id')) : [];
+  return [data.id, ...vocabIds].filter((id): id is string => typeof id === 'string');
+}
+
 /**
  * `data` as the row stores it: without imageUrl on the item or on its phrase vocabs, since image bytes and markers
  * never live in item JSON. The inline images those fields carried come back beside it, to be moved into image

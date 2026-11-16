@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  compareReviewProgress, isStaleContent, resolveSrs, sameJson, sortedKeys, splitInlineImages, withPoolAnalysis,
+  compareReviewProgress, imageIdsShownBy, isStaleContent, resolveSrs, sameJson, sortedKeys, splitInlineImages,
+  withPoolAnalysis,
 } from '../src/db/item-write.js';
 
 const schedule = (lastReviewDate: number, totalReviews: number, lastExposureDate?: number) =>
@@ -108,6 +109,13 @@ test('stored item data loses every imageUrl, and only inline images are taken ou
 
   const marked = splitInlineImages({ id: 'v', word: 'lucid', imageUrl: 'idb:stored' });
   assert.deepEqual(marked, { stored: { id: 'v', word: 'lucid' }, itemImage: undefined, vocabImages: [] });
+});
+
+test('an item shows the images of its own id and of each phrase vocab\'s string id', () => {
+  assert.deepEqual(imageIdsShownBy({
+    id: 'p', query: 'see it clearly', vocabs: [{ id: 'a' }, { word: 'no id' }, { id: 7 }, null, 'stray', { id: 'b' }],
+  }), ['p', 'a', 'b']);
+  assert.deepEqual(imageIdsShownBy({ id: 'v', word: 'lucid', vocabs: 'not a list' }), ['v']);
 });
 
 test('sorting keys makes copies that differ only in key order serialize alike', () => {

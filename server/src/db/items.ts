@@ -8,7 +8,8 @@ import {
   type ImageStoreResult,
 } from './images.js';
 import {
-  isJsonObject, isStaleContent, resolveSrs, sameJson, splitInlineImages, withPoolAnalysis, type InlineImage, type JsonObject,
+  imageIdsShownBy, isJsonObject, isStaleContent, resolveSrs, sameJson, splitInlineImages, withPoolAnalysis,
+  type InlineImage, type JsonObject,
 } from './item-write.js';
 import { allocateRevision, headRevision } from './revisions.js';
 import { getSentenceEnrichmentForText } from './sentence-enrichments.js';
@@ -85,10 +86,7 @@ export type ItemRead = ReturnType<typeof rowToItem>;
  */
 function rowsToItems(rows: ItemRow[], userId: string) {
   const parsed = rows.map(row => ({ row, data: JSON.parse(row.data) }));
-  const imageIds = parsed.flatMap(({ data }) => [
-    data.id,
-    ...(Array.isArray(data.vocabs) ? data.vocabs.map((vocab: unknown) => (isJsonObject(vocab) ? vocab.id : undefined)) : []),
-  ]).filter((id): id is string => typeof id === 'string');
+  const imageIds = parsed.flatMap(({ data }) => imageIdsShownBy(data));
   const versions = new Map<string, string>();
   if (imageIds.length > 0) {
     const images = imageStmts.versionsForIds.all(userId, JSON.stringify(imageIds)) as Array<{
@@ -250,10 +248,12 @@ export function writeItem(item: ItemWrite, userId: string, options: UpsertOption
   const data = keepFrom ? keepServerOwnedData(analysed, item.type, storedData, keepFrom.type) : analysed;
   const keptServerFields = data !== analysed;
 
-  // A stale copy's content lost to the stored row, so its images only fill ids that have none: a newer
-  // stored image stays.
+  // A stale copy's content lost to the stored row, so its images only fill those of the row's ids that have none:
+  // a newer stored image stays, and a vocab only the stale copy has, which the row doesn't show, gets none.
+  const shownIds = staleContent && existing ? new Set(imageIdsShownBy(JSON.parse(existing.data))) : undefined;
   const storeInlineImage = (image: InlineImage | undefined): boolean =>
-    !!image && (!staleContent || !hasItemImage(image.id, userId)) && storeImage(image.id, userId, image.dataUri, now);
+    !!image && (!shownIds || (shownIds.has(image.id) && !hasItemImage(image.id, userId))) &&
+    storeImage(image.id, userId, image.dataUri, now);
 
   // The item's own inline image goes first, so the pool's image only fills an item that has none.
   const { stored, itemImage, vocabImages } = splitInlineImages(data);
