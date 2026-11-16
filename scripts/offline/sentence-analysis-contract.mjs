@@ -5,6 +5,7 @@ import {
   hasCompleteSentenceAnalysis,
   isSentenceAnalysis,
   isSentenceGrammarAnalysis,
+  sentenceAnalysisValidationIssues,
 } from '../../server/src/sentence-analysis.ts';
 
 // isSentenceAnalysis also admits the legacy shape that production-covered analyses may keep as transport metadata for
@@ -196,7 +197,12 @@ export function normalizeDetailedSentenceAnalysis(value, preservedGrammar, label
     ...(preservedGrammar ? { grammar: preservedGrammar } : {}),
     naturalSpeechIpa: value?.pronunciation?.fastIpa,
   };
-  if (!hasCompleteSentenceAnalysis(analysis)) throw new Error(`${label}: incomplete detailed sentence analysis`);
+  if (!hasCompleteSentenceAnalysis(analysis)) {
+    // The server's reasons, phrased for the model's retry. They unwrap an answer a provider wrapped in an envelope,
+    // so a complete analysis inside one has none.
+    const issues = sentenceAnalysisValidationIssues(analysis);
+    throw new Error(`${label}: ${issues.join('; ') || 'incomplete detailed sentence analysis'}`);
+  }
   return analysis;
 }
 

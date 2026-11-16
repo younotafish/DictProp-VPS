@@ -118,7 +118,12 @@ test('a complete analysis is accepted, with its natural-speech IPA filled from t
 test('each check names what the model must fix', () => {
   const reject = (candidate: unknown, pattern: RegExp, options = strict) =>
     assert.throws(() => validateAnalysis(candidate, sentence, options), pattern);
-  reject({ ...analysis(), translation: '' }, /^Error: come-clean: incomplete detailed sentence analysis$/);
+  // What the contract finds missing, in the server's words.
+  reject({ ...analysis(), translation: '' }, /^Error: come-clean: translation must be a non-empty string$/);
+  reject({ ...analysis(), translation: '', imagePrompt: ' ' },
+    /^Error: come-clean: translation must be a non-empty string; imagePrompt must be a non-empty string$/);
+  // A complete analysis inside a provider's envelope gives the server no reason, so the message stays general.
+  reject({ result: analysis() }, /^Error: come-clean: incomplete detailed sentence analysis$/);
   reject(analysis({ americanEnglish: { status: 'shared', explanation: 'Natural.', evidence: ['x'] } }),
     /must begin with Yes or No/);
   reject(analysis({ imagePrompt: 'Image prompt' }), /placeholder or schema field leaked into sentence analysis/);
