@@ -3,6 +3,7 @@ import { getItemSpelling, getItemTitle, isPhraseItem, isVocabItem, type SearchRe
 import { IMAGE_IDB_MARKER, attachImage, extractInlineImages, offloadImages, restoreInlineImages, unsavedImages } from '../services/libraryImages';
 import { makeVocabStoredItem, saveOverExisting } from '../services/items';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
+import { unarchiveUndo } from '../services/undoRules';
 import { log, logError, warn } from '../services/logger';
 import type { DetailViewState } from './useDetailView';
 import type { Library } from './useLibrary';
@@ -162,9 +163,13 @@ export function useLibraryActions(
 
   const handleUnarchive = useCallback(async (id: string) => {
     log('📦 App: Unarchiving item', id);
+    const before = latestItemsRef.current.find(item => item.data.id === id);
     const unarchived = replaceItem(id, item => ({ ...item, isArchived: undefined, updatedAt: Date.now() }));
-    if (unarchived) await persistChangedItems([unarchived], 'Unarchive');
-  }, [replaceItem, persistChangedItems]);
+    if (!unarchived || !before) return;
+    // Like an archive, it can be taken back for a few seconds, and stays on this device meanwhile.
+    if (before.isArchived) offerUndo('Unarchived', before, unarchiveUndo(before));
+    await persistChangedItems([unarchived], 'Unarchive');
+  }, [latestItemsRef, replaceItem, persistChangedItems, offerUndo]);
 
   // Save sentence for review
   const handleSaveSentence = useCallback((text: string, sourceWord: string, sourceSense?: string, prepared?: SentenceData) => {
