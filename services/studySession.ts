@@ -270,9 +270,22 @@ export function cappedDuration(start: number, now: number, cap = PROMPT_TIME_CAP
   return Math.min(cap, Math.max(0, now - start));
 }
 
+/** What a grade's review is recorded with (StudyEnhanced's onReview). */
+export interface SessionReview {
+  taskType: ReviewTaskType;
+  durationMs: number;
+  sessionId: string;
+  eventId: string;
+  /** The grade's own time, which its standing grade keeps as `at` and the review stamps as the card's lastReviewDate. */
+  reviewedAt: number;
+}
+
 /**
- * The grade of the card the session shows (`item`, at session.index), and the session's cards with any
- * extra showing that grade queues. `intervalMinutes` is the interval the grade sets (requeueShortStep).
+ * The grade of the card the session shows (`item`, at session.index), given at `now`: what undoing it takes, the review
+ * that records it, and `advance`, which moves the session on with the grade standing (advanceSession).
+ * `intervalMinutes` is the interval the grade sets, which may queue an extra showing (requeueShortStep). The one `now`
+ * stamps both the review and the grade the session keeps, so the session's own review doesn't count as one given
+ * elsewhere (isSessionCardLive).
  */
 export function gradeSessionCard(
   session: StudySession,
@@ -281,33 +294,32 @@ export function gradeSessionCard(
   eventId: string,
   now: number,
   intervalMinutes: number,
-): { grade: SessionGrade; itemIds: string[] } {
+): { grade: SessionGrade; review: SessionReview; advance: (current: StudySession) => StudySession } {
   const itemIds = requeueShortStep(session.itemIds, session.index, intervalMinutes);
+  const grade: SessionGrade = {
+    eventId,
+    sessionId: session.id,
+    itemId: item.data.id,
+    itemIndex: session.index,
+    word: getItemTitle(item),
+    intervalMinutes,
+    rating,
+    taskType: selectReviewTask(item),
+    durationMs: cappedDuration(session.promptStartedAt, now),
+    typedAnswer: session.typedAnswer,
+    requeuedAt: itemIds !== session.itemIds ? session.itemIds.length : undefined,
+  };
+  const standing: StandingGrade = { itemId: grade.itemId, rating, at: now };
   return {
-    grade: {
-      eventId,
-      sessionId: session.id,
-      itemId: item.data.id,
-      itemIndex: session.index,
-      word: getItemTitle(item),
-      intervalMinutes,
-      rating,
-      taskType: selectReviewTask(item),
-      durationMs: cappedDuration(session.promptStartedAt, now),
-      typedAnswer: session.typedAnswer,
-      requeuedAt: itemIds !== session.itemIds ? session.itemIds.length : undefined,
-    },
-    itemIds,
+    grade,
+    review: { taskType: grade.taskType, durationMs: grade.durationMs, sessionId: grade.sessionId, eventId, reviewedAt: standing.at },
+    // Applied to the session as it is when the step is taken, as React applies a state update.
+    advance: current => advanceSession(current, itemIds, standing, now),
   };
 }
 
-/** The session after `grade`, given at `now`: on to the next card, unrevealed, with the grade standing. */
-export function advanceSession(
-  session: StudySession,
-  itemIds: string[],
-  grade: Pick<StandingGrade, 'itemId' | 'rating'>,
-  now: number,
-): StudySession {
+/** The session after `grade`, given at `now`: on to the next card of `itemIds`, unrevealed, with the grade standing. */
+export function advanceSession(session: StudySession, itemIds: string[], grade: StandingGrade, now: number): StudySession {
   return {
     ...session,
     itemIds,
@@ -316,7 +328,7 @@ export function advanceSession(
     revealed: false,
     typedAnswer: '',
     promptStartedAt: now,
-    grades: [...session.grades, { itemId: grade.itemId, rating: grade.rating, at: now }],
+    grades: [...session.grades, grade],
   };
 }
 

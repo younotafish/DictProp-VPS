@@ -8,11 +8,10 @@
  */
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { StoredItem, getItemTitle, type ItemGroup, type ReviewHistory, type ReviewRating, type ReviewTaskType } from '../types';
+import { StoredItem, getItemTitle, type ItemGroup, type ReviewHistory, type ReviewRating } from '../types';
 import { BrainCircuit } from 'lucide-react';
 import {
   acceptFooterTap,
-  advanceSession,
   applyUndoneGrade,
   endSessionEarly,
   findSessionCard,
@@ -30,6 +29,7 @@ import {
   undoFailureText,
   upcomingListeningPrompts,
   type SessionGrade,
+  type SessionReview,
   type StudySession,
   type UndoFailure,
 } from '../services/studySession';
@@ -57,11 +57,7 @@ interface StudyEnhancedProps {
   /** The review history, and whether a load of it has succeeded yet (useReviewHistory). */
   reviewHistory: ReviewHistory & { loaded?: boolean };
   /** Records a review. `reviewedAt` is the grade's own time, which the review stamps as the card's lastReviewDate. */
-  onReview: (
-    itemId: string,
-    rating: ReviewRating,
-    context: { taskType: ReviewTaskType; durationMs: number; sessionId: string; eventId: string; reviewedAt: number },
-  ) => Promise<boolean>;
+  onReview: (itemId: string, rating: ReviewRating, context: SessionReview) => Promise<boolean>;
   /** Takes back a review on the server: false while it's still in the outbox, and a request that fails throws. */
   onUndoReview: (eventId: string) => Promise<boolean>;
   onOpenExampleSentence: (text: string, sourceWord: string, sourceSense?: string) => void;
@@ -217,24 +213,18 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     const intervalMinutes = updateAfterRating(
       SRSAlgorithm.ensure(currentItem.srs, currentItem.data.id, currentItem.type), rating, now,
     ).interval;
-    const { grade: sessionGrade, itemIds } = gradeSessionCard(session, currentItem, rating, eventId, now, intervalMinutes);
+    // The review and the step that moves the session on come from one call with one time, so the review is stamped
+    // with the time the session keeps with the grade (gradeSessionCard).
+    const { grade: sessionGrade, review, advance } = gradeSessionCard(session, currentItem, rating, eventId, now, intervalMinutes);
     const grade: LastGrade = { ...sessionGrade, undoing: false, waiting: false };
     setLastGrade(grade);
     setUndoError('');
-    // The review is stamped with the time the session keeps with the grade (advanceSession), so the card counts as
-    // reviewed elsewhere only once a review comes after it (isSessionCardLive).
-    void onReview(currentItem.data.id, rating, {
-      taskType: grade.taskType,
-      durationMs: grade.durationMs,
-      sessionId: session.id,
-      eventId,
-      reviewedAt: now,
-    }).then(synced => {
+    void onReview(currentItem.data.id, rating, review).then(synced => {
       // Not on the server yet: the receipt says it's saved on this device until the outbox sends it.
       if (synced || !isQueuedReview(userId, eventId)) return;
       setLastGrade(current => current?.eventId === eventId ? { ...current, waiting: true } : current);
     }).catch(error => warn('Review failed:', error));
-    setSession(current => current ? advanceSession(current, itemIds, grade, now) : null);
+    setSession(current => current && advance(current));
   };
 
   // The footer's Show answer and grades ignore a tap that is the second of a double tap; keys act at once.
