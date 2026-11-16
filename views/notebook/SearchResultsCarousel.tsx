@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Wand2 } from 'lucide-react';
 import type { VocabCard } from '../../types';
 import { VocabCardDisplay } from '../../components/VocabCard';
-import { useWheelNavigation } from '../../hooks';
+import { useWheelNavigation } from '../../hooks/useKeyboardNavigation';
 import { speakWord } from '../../services/neuralTts';
 import { isDialogOpenOutside, isTypingTarget } from '../../components/keyboardTarget';
 import { CarouselArrow, CarouselDots } from './Carousel';

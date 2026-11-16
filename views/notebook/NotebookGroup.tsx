@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import type { ItemGroup, StoredItem } from '../../types';
 import type { NotebookSection } from '../../services/notebookList';
-import { useWheelNavigation } from '../../hooks';
+import { useWheelNavigation } from '../../hooks/useKeyboardNavigation';
 import { NotebookItem } from './NotebookItem';
 import { CarouselArrow, CarouselDots } from './Carousel';
 import { useHorizontalSwipe } from './useHorizontalSwipe';
