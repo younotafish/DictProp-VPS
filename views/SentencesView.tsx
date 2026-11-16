@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState, useDeferredValue } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useDeferredValue } from 'react';
 import { isSentenceItem, type ReviewRating, type SentenceData, type StoredItem } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { MessageSquareQuote, Check, Trash2, Search, X } from 'lucide-react';
@@ -14,6 +14,7 @@ import { Virtuoso } from 'react-virtuoso';
 import { useLatest } from '../hooks/useStableValue';
 import { useListClock } from '../hooks/useNow';
 import { useSentenceSearch } from '../hooks/useSentenceSearch';
+import { onTabReselect } from '../services/navReselect';
 import { formatDueLabel } from './reading/dueLabel';
 
 const sentenceKey = (_index: number, item: StoredItem) => item.data.id;
@@ -167,6 +168,13 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   const settledQuery = deferredQuery.trim();
   const search = useSentenceSearch(items, settledQuery);
 
+  // A tap on this tab while it shows, with the list already at its top, puts the caret in the search box. The focus
+  // runs inside the tap, so a phone's keyboard opens. (The tab bar scrolls the list to its top on the tap before.)
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => onTabReselect('sentences', action => {
+    if (action === 'focus-search') searchInputRef.current?.focus();
+  }), []);
+
   // The counts, the order and the rows' state count from this time, taken again when the filter or the settled
   // search changes and when a sentence opens over the list, not when the library changes.
   const listView = useMemo(() => ({ filter, query: settledQuery }), [filter, settledQuery]);
@@ -235,6 +243,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
           <div className="relative mt-2">
             <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             <input
+              ref={searchInputRef}
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
