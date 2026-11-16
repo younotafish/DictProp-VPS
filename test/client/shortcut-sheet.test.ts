@@ -28,6 +28,9 @@ test('on a touch screen the gestures come first: a tap on a word reads from it, 
   assert.ok(hasRow(touch, ['Tap a word'], 'In a sentence: play from that word'));
   assert.ok(hasRow(touch, ['Two-finger tap a word'], 'In a sentence: look it up (a saved word opens its card)'));
   assert.ok(hasRow(touch, ['Tap the current tab'], 'Jump to its top; tap again at the top to search'));
+  // Long vertical swipes change the card or sentence only from the matching edge (UX-18); a card that fits is at both.
+  assert.ok(hasRow(touch, ['Swipe up'], 'From the bottom of a card or sentence: the next one'));
+  assert.ok(hasRow(touch, ['Swipe down'], 'From the top: the previous one; a short pull at a card’s top shows its header'));
 });
 
 test('Mod is ⌘ on a Mac and Ctrl elsewhere', () => {
@@ -48,7 +51,7 @@ test('the number keys are the tab keys, and pressed again they go up, then to th
 test('the sheet drops what the app no longer does', () => {
   for (const row of rows(phone)) {
     const text = `${row.keys.join(' ')} ${row.label}`;
-    assert.doesNotMatch(text, /toggle save|swipe (up|down)|vertical|footnote|ⁿ|back to sentences/i, text);
+    assert.doesNotMatch(text, /toggle save|vertical|footnote|ⁿ|back to sentences/i, text);
   }
   // ⌘-click looks up and a plain click plays (f40102e); no row says ⌘-click plays.
   const sentences = section(mac, 'sentences').rows;

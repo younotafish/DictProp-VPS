@@ -70,6 +70,8 @@ const SECTIONS: readonly ShortcutSection[] = [
       { keys: ['Double-tap'], label: 'On blank space or a sentence’s words: Got it' },
       { keys: ['Swipe left'], label: 'In a sentence: its analysis; on a card: the next meaning' },
       { keys: ['Swipe right'], label: 'Back: to the sentence, to the previous meaning, or out of the view' },
+      { keys: ['Swipe up'], label: 'From the bottom of a card or sentence: the next one' },
+      { keys: ['Swipe down'], label: 'From the top: the previous one; a short pull at a card’s top shows its header' },
       { keys: ['Tap the top of a card'], label: 'The top quarter reads example 1; the next quarter, example 2' },
       { keys: ['Tap the current tab'], label: 'Jump to its top; tap again at the top to search' },
     ],
