@@ -3,8 +3,8 @@ import { getItemContentHash, isItemDirty } from './itemHash';
 
 /** What keeps a changed item on this device for now. */
 export interface PushHold {
-  /** The item an open undo offer holds back, so an undone change never reaches the server. */
-  heldId: string | null;
+  /** The items an open undo offer holds back, so an undone change never reaches the server. */
+  heldIds: ReadonlySet<string>;
   /** Items the server refused, with the content it refused: sending that again would be refused again. */
   refused: ReadonlyMap<string, string>;
 }
@@ -13,8 +13,8 @@ export interface PushHold {
  * Whether `item` has a change the server hasn't acknowledged and that a push should send: it isn't held for
  * an undo, and isn't the content the server refused. An item edited after a refusal is sent again.
  */
-export const isUnsent = (item: StoredItem, { heldId, refused }: PushHold): boolean =>
-  item.data.id !== heldId && isItemDirty(item) && refused.get(item.data.id) !== getItemContentHash(item);
+export const isUnsent = (item: StoredItem, { heldIds, refused }: PushHold): boolean =>
+  !heldIds.has(item.data.id) && isItemDirty(item) && refused.get(item.data.id) !== getItemContentHash(item);
 
 /** The unsent items among `items`, or among those whose id is in `ids` when it's given. */
 export const selectUnsent = (items: readonly StoredItem[], hold: PushHold, ids?: ReadonlySet<string>): StoredItem[] =>
@@ -28,7 +28,7 @@ export const hasUnsentChanges = (
   items: readonly StoredItem[],
   hold: PushHold,
   countPendingReviews: () => number,
-): boolean => hold.heldId !== null || countPendingReviews() > 0 || items.some(item => isUnsent(item, hold));
+): boolean => hold.heldIds.size > 0 || countPendingReviews() > 0 || items.some(item => isUnsent(item, hold));
 
 /** The steps that send what this device hasn't sent yet. */
 export interface LeavingFlush {

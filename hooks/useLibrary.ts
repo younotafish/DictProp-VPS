@@ -10,6 +10,8 @@ import { pullOrSnapshot, syncSnapshot } from '../services/serverSync';
 import { hasUnsentChanges as anyUnsentChanges, selectUnsent } from '../services/unsentChanges';
 import { log, logError, warn } from '../services/logger';
 
+const NOTHING_HELD: ReadonlySet<string> = new Set();
+
 /**
  * The library of account `userId` in memory, and the pulls and pushes that keep it in step with the server.
  * The id holds for the hook's lifetime (App mounts the signed-in app per account), so every write, including
@@ -75,9 +77,11 @@ export function useLibrary(userId: string) {
   const refusedPushesRef = useRef(new Map<string, string>());
   // A change the user can still undo stays on this device until the offer closes, so an undone change never
   // reaches the server or another device.
-  const heldIdRef = useRef<string | null>(null);
-  /** Keeps the item `id` out of pushes while its change can still be undone; null lets it go. */
-  const holdFromPush = useCallback((id: string | null) => { heldIdRef.current = id; }, []);
+  const heldIdsRef = useRef<ReadonlySet<string>>(NOTHING_HELD);
+  /** Keeps the items `ids` out of pushes while their change can still be undone; null lets them go. */
+  const holdFromPush = useCallback((ids: readonly string[] | null) => {
+    heldIdsRef.current = ids?.length ? new Set(ids) : NOTHING_HELD;
+  }, []);
 
   /**
    * Whether a change is still waiting to reach the server: an open undo offer, a queued review, or an unsent
@@ -85,14 +89,14 @@ export function useLibrary(userId: string) {
    */
   const hasUnsentChanges = useCallback(() => anyUnsentChanges(
     latestItemsRef.current,
-    { heldId: heldIdRef.current, refused: refusedPushesRef.current },
+    { heldIds: heldIdsRef.current, refused: refusedPushesRef.current },
     () => readPendingReviewMutations(userId).length,
   ), [userId]);
 
   /** Pushes the dirty items (all, or those in `ids`) and records what the server kept. Returns the count. */
   const pushNow = useCallback(async (ids?: ReadonlySet<string>): Promise<number> => {
     const refused = refusedPushesRef.current;
-    const unsent = selectUnsent(latestItemsRef.current, { heldId: heldIdRef.current, refused }, ids);
+    const unsent = selectUnsent(latestItemsRef.current, { heldIds: heldIdsRef.current, refused }, ids);
     // Items with an unsent review wait for the review outbox, which applies the review atomically.
     const toPush = excludePendingReviewItems(unsent, userId);
     if (toPush.length === 0) return 0;
