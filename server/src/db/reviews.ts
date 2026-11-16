@@ -3,7 +3,7 @@ import type { ReviewRating, ReviewTaskType } from '../shared/review.js';
 import { advanceReviewSrs } from '../srs.js';
 import type { ItemType } from '../validation-helpers.js';
 import { db, writeTransaction } from './connection.js';
-import { getItemById, stmts, writeItem, type ItemRead, type ItemRow, type ItemWrite } from './items.js';
+import { getItemById, stmts, writeItem, type StoredItemRecord, type ItemRow, type ItemWrite } from './items.js';
 import { sortedKeys } from './item-write.js';
 import { allocateRevision } from './revisions.js';
 
@@ -98,7 +98,7 @@ export function getReviewHistory(userId: string, recentSince: number): ReviewHis
 export interface AppliedReviewResult {
   applied: boolean;
   event: ReviewEvent;
-  items: ItemRead[];
+  items: StoredItemRecord[];
   /**
    * Each item's revision before the review, for items the review was the last change to. A client whose
    * copy has that revision knows the server changed nothing else, so its unsynced edits still apply.
@@ -209,8 +209,8 @@ const applyReviewTransaction = writeTransaction((
   return { applied: true, event, itemIds: [target.id], baseRevisions: { [target.id]: baseRevision } };
 });
 
-const itemsById = (ids: string[], userId: string): ItemRead[] =>
-  ids.map(id => getItemById(id, userId, false)).filter((item): item is ItemRead => !!item);
+const itemsById = (ids: string[], userId: string): StoredItemRecord[] =>
+  ids.map(id => getItemById(id, userId, false)).filter((item): item is StoredItemRecord => !!item);
 
 /**
  * Apply a review to `event.itemId`. `_itemIds` is the item list the request carries: clients have only ever sent
@@ -237,7 +237,7 @@ export function applyReviewEvent(
 export interface UndoneReviewResult {
   undone: boolean;
   eventId: string;
-  items: ItemRead[];
+  items: StoredItemRecord[];
   /** Each item's revision before the undo, as AppliedReviewResult reports it for a review. */
   baseRevisions: Record<string, number>;
 }

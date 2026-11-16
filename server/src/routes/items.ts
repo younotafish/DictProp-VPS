@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { stream } from 'hono/streaming';
-import { getItemById, getItemsAfterRevision, upsertMany, type ItemRead } from '../db.js';
+import { getItemById, getItemsAfterRevision, upsertMany, type StoredItemRecord } from '../db.js';
 import type { AppEnv } from '../middleware/auth.js';
 import { readJsonArray } from '../middleware/json-body.js';
 import { checkStoredItemBatch, MAX_ID_LENGTH } from '../validation.js';
@@ -78,7 +78,7 @@ itemsRoutes.put('/items', async (c) => {
   const canonicalIds = new Set([...result.conflicts, ...enriched]);
   const canonical = [...canonicalIds]
     .map(id => getItemById(id, userId, false))
-    .filter((item): item is ItemRead => !!item);
+    .filter((item): item is StoredItemRecord => !!item);
   // When a save left out server-owned fields the server kept from its stored copy, the stored copy's server-owned part
   // goes back by id instead of a canonical copy, which would drop an edit made while the push was in flight. The
   // client fills in what its copy lacks, so it matches the row without waiting for a pull, which a save that changed

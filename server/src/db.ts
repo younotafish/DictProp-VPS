@@ -30,7 +30,6 @@ export {
   touchItemRevisions,
   upsertItem,
   upsertMany,
-  type ItemRead,
   type ItemWrite,
   type RevisionCursor,
   type StoredItemData,

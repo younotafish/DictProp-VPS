@@ -8,11 +8,15 @@ const { applyServerSave, mergeDatasets, reconcileReviewedItem, trackServerConten
 const { isItemDirty } = await import('../../services/itemHash.ts');
 const { SRSAlgorithm } = await import('../../services/srsAlgorithm.ts');
 const { updateAfterRating } = await import('../../services/fsrsScheduler.ts');
+import type { StoredItemRecord } from '../../server/src/db.js';
 import type { StoredItem, VocabCard } from '../../types.ts';
 
 const USER = 'srs-sync-user';
 const DAY = 86_400_000;
 const wire = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+/** Server items as a device receives them: through the JSON the routes send, read as the client's StoredItem. */
+const asClientItems = (items: readonly StoredItemRecord[]): StoredItem[] => JSON.parse(JSON.stringify(items));
+const asClientItem = (item: StoredItemRecord): StoredItem => JSON.parse(JSON.stringify(item));
 
 interface Device {
   items: StoredItem[];
@@ -23,7 +27,7 @@ const newDevice = (): Device => ({ items: [], cursor: { revision: 0, id: '' } })
 
 function pull(device: Device): void {
   const page = getItemsAfterRevision(device.cursor, 500, USER);
-  const remote = wire(page.items) as StoredItem[];
+  const remote = asClientItems(page.items);
   if (remote.length > 0) device.items = trackServerContent(mergeDatasets(device.items, remote), remote);
   device.cursor = page.cursor;
 }
@@ -41,7 +45,7 @@ function push(device: Device): number {
 }
 
 const find = (items: readonly StoredItem[], id: string) => items.find(item => item.data.id === id)!;
-const serverCopy = (id: string) => find(getItemsAfterRevision({ revision: 0, id: '' }, 500, USER).items, id);
+const serverCopy = (id: string) => find(asClientItems(getItemsAfterRevision({ revision: 0, id: '' }, 500, USER).items), id);
 
 function vocabItem(id: string, srs = SRSAlgorithm.createNew(id, 'vocab')): StoredItem {
   return {
@@ -218,7 +222,7 @@ test('a cleared flag or an image URL survives a server round trip without re-dir
     const { revision } = upsertItem(structuredClone(edited), userId);
     const [pushed] = applyServerSave([edited], [edited], { revisions: new Map([[id, revision]]), canonical: new Map() });
     assert.equal(isItemDirty(pushed), false, id);
-    const echo = getItemsAfterRevision({ revision: revision - 1, id: '' }, 500, userId).items.filter(item => item.data.id === id);
+    const echo = asClientItems(getItemsAfterRevision({ revision: revision - 1, id: '' }, 500, userId).items.filter(item => item.data.id === id));
     const [pulled] = trackServerContent(mergeDatasets([pushed], echo), echo);
     assert.equal(isItemDirty(pulled), false, id);
   }
@@ -227,7 +231,7 @@ test('a cleared flag or an image URL survives a server round trip without re-dir
 test('a reviewed item keeps its unsynced edits only while the server changed nothing else', () => {
   const userId = 'reconcile-user';
   const pull = (id: string) => {
-    const items = wire(getItemsAfterRevision({ revision: 0, id: '' }, 500, userId).items.filter(item => item.data.id === id));
+    const items = asClientItems(getItemsAfterRevision({ revision: 0, id: '' }, 500, userId).items.filter(item => item.data.id === id));
     return trackServerContent(mergeDatasets([], items), items)[0];
   };
   const edit = (item: any) => ({ ...item, updatedAt: 2, data: { ...item.data, mnemonic: 'my note' } });
@@ -241,7 +245,7 @@ test('a reviewed item keeps its unsynced edits only while the server changed not
   upsertItem(makeItem('reconcile-quiet', 'plain', 1, 0, 0), userId);
   let local = edit(pull('reconcile-quiet'));
   const applied = review('reconcile-quiet', 'reconcile-quiet-review');
-  let reconciled: any = reconcileReviewedItem(local, wire(applied.items[0]), applied.baseRevisions['reconcile-quiet']);
+  let reconciled: any = reconcileReviewedItem(local, asClientItem(applied.items[0]), applied.baseRevisions['reconcile-quiet']);
   assert.equal(reconciled.data.mnemonic, 'my note');
   assert.equal(reconciled.srs.totalReviews, 1);
   assert.equal(isItemDirty(reconciled), true);
@@ -257,7 +261,7 @@ test('a reviewed item keeps its unsynced edits only while the server changed not
   local = edit(pull('reconcile-enriched'));
   upsertItem({ ...makeItem('reconcile-enriched', 'enriched', 3, 0, 0), serverRevision: local.serverRevision }, userId);
   const raced = review('reconcile-enriched', 'reconcile-enriched-review');
-  reconciled = reconcileReviewedItem(local, wire(raced.items[0]), raced.baseRevisions['reconcile-enriched']);
+  reconciled = reconcileReviewedItem(local, asClientItem(raced.items[0]), raced.baseRevisions['reconcile-enriched']);
   assert.equal(reconciled.data.definition, 'enriched');
   assert.equal(reconciled.srs.totalReviews, 1);
   assert.equal(isItemDirty(reconciled), false);
@@ -267,7 +271,7 @@ test('a reviewed item keeps its unsynced edits only while the server changed not
   review('reconcile-undo', 'reconcile-undo-review');
   local = edit(pull('reconcile-undo'));
   const undone = undoReviewEvent('reconcile-undo-review', userId)!;
-  reconciled = reconcileReviewedItem(local, wire(undone.items[0]), undone.baseRevisions['reconcile-undo']);
+  reconciled = reconcileReviewedItem(local, asClientItem(undone.items[0]), undone.baseRevisions['reconcile-undo']);
   assert.equal(reconciled.data.mnemonic, 'my note');
   assert.equal(reconciled.srs.totalReviews, 0);
   assert.equal(isItemDirty(reconciled), true);

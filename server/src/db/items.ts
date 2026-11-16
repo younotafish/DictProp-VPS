@@ -78,14 +78,7 @@ export interface StoredItemRecord {
   serverRevision: number | undefined;
 }
 
-/**
- * An item as getItemById and getItemsAfterRevision return it, for the routes to send on: a StoredItemRecord whose data
- * and srs are still `any`, because tests read them field by field. The library walks return StoredItemRecord.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
-export type ItemRead = Omit<StoredItemRecord, 'data' | 'srs'> & { data: any; srs: any };
-
-function rowToItem(row: ItemRow, data: unknown = JSON.parse(row.data)): ItemRead {
+function rowToItem(row: ItemRow, data: StoredItemData = JSON.parse(row.data)): StoredItemRecord {
   return {
     type: row.type,
     data,
@@ -207,7 +200,7 @@ export function getItemsAfterRevision(
   cursor: RevisionCursor,
   limit: number,
   userId: string,
-): { items: ItemRead[]; cursor: RevisionCursor; hasMore: boolean; headRevision: number } {
+): { items: StoredItemRecord[]; cursor: RevisionCursor; hasMore: boolean; headRevision: number } {
   const cappedLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
   const rows = stmts.getAfterRevision.all(
     userId,
@@ -406,7 +399,8 @@ export function getItemById(id: string, userId: string, includeImages = true) {
   const item = rowToItem(row);
   // Re-inject base64 from item_images for this single item.
   const d = item.data;
-  const ids = [d.id, ...(Array.isArray(d.vocabs) ? d.vocabs.map((v: { id: unknown }) => v.id) : [])].filter(Boolean);
+  const ids = [d.id, ...(Array.isArray(d.vocabs) ? d.vocabs.map((v: { id: unknown }) => v.id) : [])]
+    .filter((id): id is string => typeof id === 'string' && id !== '');
   const imgs = getItemImagesBatch(ids, userId);
   if (imgs[d.id]) d.imageUrl = imgs[d.id];
   if (Array.isArray(d.vocabs)) for (const v of d.vocabs) if (imgs[v.id]) v.imageUrl = imgs[v.id];

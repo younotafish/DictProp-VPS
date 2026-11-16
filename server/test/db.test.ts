@@ -134,11 +134,11 @@ test('stripped image markers change when image content is replaced', () => {
   upsertItem(makeItem(id, 'versioned image', 1_000, 0, 0), userId);
   assert.equal(upsertItemImageBinary(id, image, 'image/png', userId), true);
   const firstMarker = getItemById(id, userId, false)?.data.imageUrl;
-  assert.match(firstMarker, /^server:has_image:[a-f0-9]{20}$/);
+  assert.match(String(firstMarker), /^server:has_image:[a-f0-9]{20}$/);
 
   assert.equal(upsertItemImageBinary(id, Buffer.concat([image, Buffer.from([0])]), 'image/png', userId), true);
   const secondMarker = getItemById(id, userId, false)?.data.imageUrl;
-  assert.match(secondMarker, /^server:has_image:[a-f0-9]{20}$/);
+  assert.match(String(secondMarker), /^server:has_image:[a-f0-9]{20}$/);
   assert.notEqual(secondMarker, firstMarker);
 });
 
@@ -184,7 +184,7 @@ test('saving a prepared example sentence attaches its analysis and deduplicated 
   const stored = getItemById('prepared-sentence', 'enrichment-user', false);
   assert.deepEqual(stored?.data.analysis, analysis);
   assert.equal(stored?.data.analysisGeneratedAt, generatedAt);
-  assert.match(stored?.data.imageUrl, /^server:has_image:[a-f0-9]{20}$/);
+  assert.match(String(stored?.data.imageUrl), /^server:has_image:[a-f0-9]{20}$/);
 
   // A second saved identity links to the same blob instead of storing the image bytes twice.
   upsertItem({

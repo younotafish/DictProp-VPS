@@ -70,9 +70,9 @@ test('an import wraps plain cards, skips invalid entries, and fetches at most 10
   assert.equal(getItemById('imported-failed', USER, false)?.data.imageUrl, undefined);
   assert.ok(getItemImageBinary('nested-first', USER));
   assert.equal(getItemImageBinary('nested-over-cap', USER), null);
-  const storedPhrase = getItemById('imported-phrase', USER, false);
-  assert.match(storedPhrase?.data.vocabs[0].imageUrl, /^server:has_image:/);
-  assert.equal(storedPhrase?.data.vocabs[1].imageUrl, undefined);
+  const storedVocabs = getItemById('imported-phrase', USER, false)?.data.vocabs as Array<{ imageUrl?: string }> | undefined;
+  assert.match(String(storedVocabs?.[0].imageUrl), /^server:has_image:/);
+  assert.equal(storedVocabs?.[1].imageUrl, undefined);
 });
 
 test('an import with no valid entry, or with too many, is refused', async () => {

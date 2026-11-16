@@ -87,7 +87,7 @@ test('a stale copy fills in an image the server lacks, at a revision delta clien
   assert.deepEqual(storedImage(id), pngVariant(3));
   const stored = getItemById(id, USER, false);
   assert.equal(stored?.data.definition, 'newer');
-  assert.match(stored?.data.imageUrl, /^server:has_image:/);
+  assert.match(String(stored?.data.imageUrl), /^server:has_image:/);
 });
 
 const phrase = (id: string, vocabs: unknown[], extra: Record<string, unknown> = {}) => ({
@@ -127,7 +127,8 @@ test('a stale phrase copy keeps the stored image of each vocab and fills in the 
   // The filled-in image's marker reaches delta clients with a new revision.
   assert.equal(result.conflicted, true);
   assert.ok(result.revision > newer);
-  assert.match(getItemById(id, USER, false)?.data.vocabs[1].imageUrl, /^server:has_image:/);
+  const vocabs = getItemById(id, USER, false)?.data.vocabs as Array<{ imageUrl?: string }> | undefined;
+  assert.match(String(vocabs?.[1].imageUrl), /^server:has_image:/);
 });
 
 test('a stale phrase copy stores no image for a vocab the stored phrase lacks, and takes no revision for it', () => {
@@ -150,7 +151,7 @@ test('a stale phrase copy stores no image for a vocab the stored phrase lacks, a
   assert.deepEqual(result, { revision: newer, conflicted: true });
   assert.equal(revisionOf(id), newer);
   assert.equal(storedImage('stale-phrase-extra-new'), undefined);
-  const vocabIds = getItemById(id, USER, false)?.data.vocabs.map((vocab: { id: string }) => vocab.id);
+  const vocabIds = (getItemById(id, USER, false)?.data.vocabs as Array<{ id: string }> | undefined)?.map(vocab => vocab.id);
   assert.deepEqual(vocabIds, ['stale-phrase-extra-kept']);
 });
 

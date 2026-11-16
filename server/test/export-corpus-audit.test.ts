@@ -99,7 +99,8 @@ test('entries built from the export import cleanly: the export\'s source hash is
   assert.equal(report.stale, 0);
   assert.deepEqual(report.errors, []);
   for (const id of ['ce-vocab', 'ce-sentence']) {
-    assert.equal(getItemById(id, owner.id, false)?.data.usageAudit.reason, `Audited ${id}.`);
+    const audit = getItemById(id, owner.id, false)?.data.usageAudit as { reason?: string } | undefined;
+    assert.equal(audit?.reason, `Audited ${id}.`);
   }
   // The sentence keeps the analysis its export carried.
   assert.deepEqual(getItemById('ce-sentence', owner.id, false)?.data.analysis, completeAnalysis);
