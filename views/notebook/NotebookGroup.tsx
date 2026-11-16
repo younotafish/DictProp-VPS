@@ -26,6 +26,13 @@ const sameRow = (a: NotebookGroupProps, b: NotebookGroupProps): boolean =>
   a.onArchive === b.onArchive && a.onUnarchive === b.onUnarchive &&
   (a.now === b.now || a.group.items.every(item => isNotebookDue(item, a.now) === isNotebookDue(item, b.now)));
 
+/**
+ * The meaning one step on (`delta` 1) or back (-1) from `prev` among `total`, looping past either end. Deleting the
+ * last meaning while it shows leaves `prev` past the end, so a step counts from the meaning shown, the last.
+ */
+export const nextMeaning = (prev: number, delta: 1 | -1, total: number): number =>
+  (Math.min(prev, total - 1) + delta + total) % total;
+
 export const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
   group, section, now, onViewDetail, onDelete, onArchive, onUnarchive
 }) => {
@@ -37,9 +44,8 @@ export const NotebookGroup: React.FC<NotebookGroupProps> = React.memo(({
     [onViewDetail, group, section],
   );
 
-  // One meaning on or back, looping, from the meaning shown: deleting the last one leaves currentIndex past the end.
-  const step = (delta: 1 | -1) =>
-    setCurrentIndex((prev) => (Math.min(prev, totalItems - 1) + delta + totalItems) % totalItems);
+  // One meaning on or back, looping: the arrows, swipes and the trackpad all step by nextMeaning's rule.
+  const step = (delta: 1 | -1) => setCurrentIndex((prev) => nextMeaning(prev, delta, totalItems));
 
   // Left swipe -> next meaning, right swipe -> previous
   const swipe = useHorizontalSwipe({
