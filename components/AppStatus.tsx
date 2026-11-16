@@ -95,11 +95,13 @@ export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
     ) : (
       <NoticePill tone={imagePrefetchProgress.failed ? 'rose' : 'emerald'} wrap>{describeImagePrefetch(imagePrefetchProgress)}</NoticePill>
     ))}
-    {imageRestoreProgress && (
+    {imageRestoreProgress && (imageRestoreProgress.phase === 'checking' || imageRestoreProgress.phase === 'uploading' ? (
+      <NoticePill tone="indigo" spinner>{describeImageRestore(imageRestoreProgress)}</NoticePill>
+    ) : (
       <NoticePill tone={imageRestoreProgress.phase === 'failed' || imageRestoreProgress.failed ? 'rose' : 'emerald'}>
         {describeImageRestore(imageRestoreProgress)}
       </NoticePill>
-    )}
+    ))}
     {jobPills}
 
     {writeFailed && (

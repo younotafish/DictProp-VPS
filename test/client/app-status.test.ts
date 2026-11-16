@@ -259,6 +259,20 @@ test('a batch of the offline download counts what it stored and what failed, and
   assert.deepEqual(await fetchImageBatch(['a', 'b', 'c', 'd'], versions, offline, store(true)), { saved: 0, failed: 4 }, 'the batch threw');
 });
 
+test('the image restore spins on indigo while it checks and uploads, a failed batch included, as the download does', () => {
+  const running = (html: string, text: string) => assert.match(html, new RegExp(
+    `<div role="status" class="[^"]*bg-indigo-600[^"]*"><svg[^>]*animate-spin[^>]*>.*?</svg><span class="min-w-0 truncate">${text}</span></div>`,
+  ));
+  running(renderStack({ imageRestoreProgress: { phase: 'checking', done: 0, total: 0, failed: 0 } }), 'Checking which images the server is missing…');
+  running(renderStack({ imageRestoreProgress: { phase: 'uploading', done: 12, total: 40, failed: 0 } }), 'Restoring images to server: 12/40');
+  // A batch that failed doesn't end the run: it stays work in progress until the result.
+  running(renderStack({ imageRestoreProgress: { phase: 'uploading', done: 30, total: 40, failed: 10 } }), 'Restoring images to server: 30/40');
+  for (const phase of ['done', 'failed'] as const) {
+    const ended = renderStack({ imageRestoreProgress: { phase, done: 4, total: 4, failed: 0 } });
+    assert.doesNotMatch(ended, /animate-spin|bg-indigo-600/, `${phase}: a result, no longer work in progress`);
+  }
+});
+
 test('the image restore says how it went, with no check marks, as no other pill has', () => {
   assert.match(renderStack({ imageRestoreProgress: { phase: 'failed', done: 0, total: 0, failed: 0 } }), /bg-rose-600/);
   const restored = renderStack({ imageRestoreProgress: { phase: 'done', done: 4, total: 4, failed: 0 } });
