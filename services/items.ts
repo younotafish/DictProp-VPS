@@ -1,4 +1,4 @@
-import type { StoredItem, VocabCard } from '../types';
+import type { SentenceData, StoredItem, VocabCard } from '../types';
 import { SRSAlgorithm } from './srsAlgorithm';
 
 /**
@@ -11,6 +11,40 @@ export const makeVocabStoredItem = (vocab: VocabCard): StoredItem => ({
   savedAt: Date.now(),
   srs: SRSAlgorithm.createNew(vocab.id, 'vocab'),
 });
+
+/**
+ * The StoredItem wrapper for a newly saved sentence: a fresh id, the sentence and the word (and sense) it came from,
+ * a new schedule and a save timestamp. From `prepared`, the sentence as the screen holds it (a catalog line, or one
+ * with an analysis or a picture), it takes the speech style, the catalog fields, the analysis and its time, and the
+ * picture, each only when truthy, and never its id, text or schedule.
+ */
+export const makeSentenceStoredItem = (
+  text: string,
+  sourceWord: string,
+  sourceSense?: string,
+  prepared?: SentenceData,
+): StoredItem => {
+  const sentenceData: SentenceData = {
+    id: crypto.randomUUID(),
+    text,
+    sourceWord,
+    sourceSense,
+    ...(prepared?.preferredSpeechStyle ? { preferredSpeechStyle: prepared.preferredSpeechStyle } : {}),
+    ...(prepared?.catalogSentenceId ? { catalogSentenceId: prepared.catalogSentenceId } : {}),
+    ...(prepared?.catalogCollectionId ? { catalogCollectionId: prepared.catalogCollectionId } : {}),
+    ...(prepared?.catalogKind ? { catalogKind: prepared.catalogKind } : {}),
+    ...(prepared?.catalogTitle ? { catalogTitle: prepared.catalogTitle } : {}),
+    ...(prepared?.analysis ? { analysis: prepared.analysis } : {}),
+    ...(prepared?.analysisGeneratedAt ? { analysisGeneratedAt: prepared.analysisGeneratedAt } : {}),
+    ...(prepared?.imageUrl ? { imageUrl: prepared.imageUrl } : {}),
+  };
+  return {
+    data: sentenceData,
+    type: 'sentence',
+    savedAt: Date.now(),
+    srs: SRSAlgorithm.createNew(sentenceData.id, 'sentence'),
+  };
+};
 
 /**
  * True when two copies share their content object. Reviews and archiving replace only the wrapper,
