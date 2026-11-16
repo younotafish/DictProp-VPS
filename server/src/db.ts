@@ -33,6 +33,8 @@ export {
   type ItemRead,
   type ItemWrite,
   type RevisionCursor,
+  type StoredItemData,
+  type StoredItemRecord,
   type UpsertOptions,
   type UpsertResult,
 } from './db/items.js';

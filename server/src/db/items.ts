@@ -63,9 +63,29 @@ export interface ItemRow {
   revision: number;
 }
 
-// Item data is open JSON, which the routes send on and the scripts read field by field: `any` at this one boundary.
+/** A stored item's data: open JSON, whose fields a reader narrows one by one, and the item's id. */
+export type StoredItemData = Record<string, unknown> & { id: string };
+
+/** An item as its row reads back. A key whose value is undefined is left out of the JSON the routes send. */
+export interface StoredItemRecord {
+  type: ItemType;
+  data: StoredItemData;
+  srs: Record<string, unknown>;
+  savedAt: number;
+  updatedAt: number | undefined;
+  isDeleted: true | undefined;
+  isArchived: true | undefined;
+  serverRevision: number | undefined;
+}
+
+/**
+ * An item as getItemById and getItemsAfterRevision return it, for the routes to send on: a StoredItemRecord whose data
+ * and srs are still `any`, because tests read them field by field. The library walks return StoredItemRecord.
+ */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
-function rowToItem(row: ItemRow, data: any = JSON.parse(row.data)) {
+export type ItemRead = Omit<StoredItemRecord, 'data' | 'srs'> & { data: any; srs: any };
+
+function rowToItem(row: ItemRow, data: unknown = JSON.parse(row.data)): ItemRead {
   return {
     type: row.type,
     data,
@@ -77,9 +97,6 @@ function rowToItem(row: ItemRow, data: any = JSON.parse(row.data)) {
     serverRevision: row.revision || undefined,
   };
 }
-
-/** An item as the API sends it. */
-export type ItemRead = ReturnType<typeof rowToItem>;
 
 /**
  * Rows → StoredItem JSON without image bytes. An image in item_images becomes a marker with a content
@@ -127,7 +144,7 @@ const ITEM_CHUNK = 500;
  * The user's items, or those of one type, in rowid order, 500 rows at a time. Each chunk is its own statement,
  * so none stays open while the caller works on a chunk.
  */
-function* itemChunks(userId: string, type?: ItemType): Generator<ItemRead[]> {
+function* itemChunks(userId: string, type?: ItemType): Generator<StoredItemRecord[]> {
   let lastRowId = 0;
   for (;;) {
     const rows = (type === undefined
@@ -139,8 +156,8 @@ function* itemChunks(userId: string, type?: ItemType): Generator<ItemRead[]> {
   }
 }
 
-export function getAllItems(userId: string): ItemRead[] {
-  const items: ItemRead[] = [];
+export function getAllItems(userId: string): StoredItemRecord[] {
+  const items: StoredItemRecord[] = [];
   for (const chunk of itemChunks(userId)) for (const item of chunk) items.push(item);
   return items;
 }
@@ -152,7 +169,7 @@ export function getAllItems(userId: string): ItemRead[] {
  */
 export async function forEachItemChunk(
   userId: string,
-  fn: (items: ItemRead[]) => void | Promise<void>,
+  fn: (items: StoredItemRecord[]) => void | Promise<void>,
   { type }: { type?: ItemType } = {},
 ): Promise<void> {
   for (const chunk of itemChunks(userId, type)) await fn(chunk);
