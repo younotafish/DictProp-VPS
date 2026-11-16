@@ -8,6 +8,7 @@ import { lazyScreen } from './components/lazyScreen';
 import { TabScreen } from './components/TabScreen';
 import { useOverlay, useOverlayFocusReturn } from './components/overlayStack';
 import { AppStatusPills } from './components/AppStatus';
+import { sheetSlotRef } from './components/noticeSlots';
 import { connectivityNotice } from './services/connectivityNotice';
 import { requestLookup } from './services/searchRequests';
 import type { JobNotice } from './services/jobNotices';
@@ -448,6 +449,11 @@ function SignedInApp({ user }: { user: AuthUser }) {
           onFocus={revealNav}
         />
       </Suspense>
+
+      {/* The Notebook tools' sheets (components/Sheet) render here, outside the page, which goes inert while one is open.
+          The slot takes no room and starts no stacking context, so a sheet's z-[45] places it among this root's layers:
+          over the tab bar, beneath the card views, the search, the notices and the dialogs. */}
+      <div ref={sheetSlotRef} className="contents" />
 
       {/* The gestures and shortcuts sheet */}
       <Suspense fallback={null}>

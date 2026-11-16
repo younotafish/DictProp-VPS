@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { noticeSlotRef, readNoticeSlot, subscribeNoticeSlots, useNoticeSlot } from '../../components/noticeSlots.ts';
+import {
+  noticeSlotRef, readNoticeSlot, sheetSlotRef, subscribeNoticeSlots, useNoticeSlot, useSheetSlot,
+} from '../../components/noticeSlots.ts';
 
-// components/noticeSlots.ts: the notice stack's slots, published for the portals that fill them. Node has no DOM,
-// so plain objects stand in for the slot elements.
+// components/noticeSlots.ts: the notice stack's slots, and the sheets slot after the page, published for the portals
+// that fill them. Node has no DOM, so plain objects stand in for the slot elements.
 const element = (name: string) => ({ name }) as unknown as HTMLElement;
 
 test('each slot has one ref callback, whatever renders it', () => {
@@ -46,4 +48,25 @@ test('a server render sees no slot, even with one mounted', () => {
   renderToStaticMarkup(createElement(Probe));
   assert.equal(seen, null);
   noticeSlotRef('progress')(null);
+});
+
+test('the sheets slot is published the same way, apart from the notice stack\'s', () => {
+  assert.equal(sheetSlotRef, noticeSlotRef('sheets'), 'one ref callback');
+  let heard = 0;
+  const stop = subscribeNoticeSlots(() => { heard++; });
+  const sheets = element('sheets');
+  sheetSlotRef(sheets);
+  assert.equal(readNoticeSlot('sheets'), sheets);
+  assert.equal(readNoticeSlot('search'), null, 'the notice slots are untouched');
+  assert.equal(heard, 1);
+
+  let seen: HTMLElement | null | undefined;
+  const Probe = () => { seen = useSheetSlot(); return null; };
+  renderToStaticMarkup(createElement(Probe));
+  assert.equal(seen, null, 'a server render sees no slot');
+
+  sheetSlotRef(null);
+  assert.equal(readNoticeSlot('sheets'), null);
+  assert.equal(heard, 2);
+  stop();
 });

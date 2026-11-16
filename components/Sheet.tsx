@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { ChevronLeft, X } from 'lucide-react';
 import { useEscapeLayer } from './escapeStack';
 import { useModalFocus } from './Modal';
+import { useSheetSlot } from './noticeSlots';
 import { useOverlay } from './overlayStack';
 
 /** The button at the start of a sheet's header. Escape presses it too. */
@@ -82,25 +83,30 @@ interface SheetProps {
 /**
  * A Notebook tool's full-screen sheet (Batch import, Import JSON, the Text Analyzer) as a dialog, like every other
  * one in the app: Escape presses the header's button, Tab stays inside, the page behind is inert, and closing gives
- * focus back. It renders in a portal, outside the app's <main>, which goes inert while it's open.
+ * focus back. It renders in a portal into the app root's sheets slot (components/noticeSlots), which App renders after
+ * the app's <main>, outside the page that goes inert while it's open.
  *
- * At z-[45], not the z-50 the sheets had: a portal at the end of <body> would paint over every z-50 layer in the app
- * root, and those (a card opened from the search above the sheet, the search's error screen) can only open after it,
- * so it stays beneath them, and above the tab bar (z-30). Its Escape layer sits at the same z.
+ * In the app root, z-[45] puts it above the tab bar (z-30) and beneath the root's z-50 and higher layers, which can
+ * open over it: a card view opened from the search, the search, the notices and the dialogs. Its Escape layer sits at
+ * the same z, so any of those open over it takes Escape first. In a portal to <body> it would paint over all of them,
+ * since the app root is a stacking context of its own.
  */
 export const Sheet: React.FC<SheetProps> = ({ isOpen, onClose, title, icon, children, subtitle, button }) => {
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const headerButton = sheetButton(button, onClose);
+  // The slot mounts with the app, long before a tap opens a sheet; a sheet with no slot to show in stays shut.
+  const slot = useSheetSlot();
+  const shown = isOpen && slot !== null;
   // Before the early return, in Modal's order: the overlay records the opener before focus moves into the panel.
-  useEscapeLayer(() => headerButton?.onClick(), 45, isOpen);
-  useOverlay(isOpen);
-  useModalFocus(panelRef, isOpen);
-  if (!isOpen) return null;
+  useEscapeLayer(() => headerButton?.onClick(), 45, shown);
+  useOverlay(shown);
+  useModalFocus(panelRef, shown);
+  if (!shown) return null;
   return createPortal(
     <SheetPanel titleId={titleId} title={title} icon={icon} subtitle={subtitle} button={headerButton} panelRef={panelRef}>
       {children}
     </SheetPanel>,
-    document.body,
+    slot,
   );
 };
