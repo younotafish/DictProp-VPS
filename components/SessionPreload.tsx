@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { preloadAudio } from '../services/lazyTts';
+import { preloadAudio } from '../services/neuralTts';
 import { getStoredImageIds } from '../services/storage';
 import { useLatest } from '../hooks/useStableValue';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';

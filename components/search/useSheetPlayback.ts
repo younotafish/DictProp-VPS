@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useZoneFlash } from '../EyesFreeZones';
 import {
   acquireKeepAlive, getPlaybackProgress, getPlaybackState, pauseCurrent, releaseKeepAlive, resumeCurrent, speakNatural,
-} from '../../services/lazyTts';
+} from '../../services/neuralTts';
 import { toggleActionFor } from '../../services/audio/playbackToggle';
 import type { SearchMode } from './searchViewing';
 

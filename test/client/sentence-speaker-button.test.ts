@@ -8,7 +8,7 @@ const media = installFakeMedia({ userAgent: IPHONE_USER_AGENT });
 const server = new FakeTtsServer();
 server.install();
 
-const tts = await import('../../services/lazyTts.ts');
+const tts = await import('../../services/neuralTts.ts');
 const { ttsKey } = await import('../../services/api.ts');
 const { SentenceSpeakerButton } = await import('../../components/SentenceSpeakerButton.tsx');
 

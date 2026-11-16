@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Volume2 } from 'lucide-react';
 import { speak, cancelSpeech } from '../services/speech';
-import { stopCurrent } from '../services/lazyTts';
+import { stopCurrent } from '../services/neuralTts';
 import { error as logError } from '../services/logger';
 
 interface PronunciationBlockProps {

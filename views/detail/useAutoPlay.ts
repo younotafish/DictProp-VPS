@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { primeKeepAlive } from '../../services/lazyTts';
+import { primeKeepAlive } from '../../services/neuralTts';
 import { useLatest } from '../../hooks/useStableValue';
 
 // The settings each auto-play control cycles through.

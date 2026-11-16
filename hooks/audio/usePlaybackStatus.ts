@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { getPlaybackState, subscribePlayback, type PlaybackStatus } from '../../services/lazyTts';
+import { getPlaybackState, subscribePlayback, type PlaybackStatus } from '../../services/neuralTts';
 import { playbackStatusFor } from '../../services/audio/playbackToggle';
 
 const subscribe = (onChange: () => void) => subscribePlayback(() => onChange());

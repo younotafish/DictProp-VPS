@@ -13,8 +13,9 @@
  *
  * audio/player.ts holds the one shared <audio> element, the system voice's controls and the playback state
  * every speaker button shows; audio/keepAlive.ts the silent keep-alive and the background-safe gap timer
- * that auto-play uses; audio/mediaSession.ts the lock-screen controls. Screens load this module through
- * services/lazyTts.ts.
+ * that auto-play uses; audio/mediaSession.ts the lock-screen controls. Screens import this module directly, so a
+ * tap reaches it synchronously; only screens that load on demand import it, which keeps it out of the app's first
+ * chunk.
  */
 import { speak as systemSpeak, cancelSpeech } from './speech';
 import { stripSentenceMarkers } from './sentenceMarkers';

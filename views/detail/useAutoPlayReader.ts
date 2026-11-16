@@ -3,7 +3,7 @@ import { getItemImageUrl, type ItemGroup, type StoredItem } from '../../types';
 import {
   acquireKeepAlive, afterGap, getPlaybackState, pauseCurrent, releaseKeepAlive, resumeCurrent, setMediaMetadata,
   setMediaSessionHandlers, speakNatural, type SpeakHandle,
-} from '../../services/lazyTts';
+} from '../../services/neuralTts';
 
 interface AutoPlayReaderOptions {
   /** Sentence auto-play is on (word cards: their examples; sentence review: the sentence). */

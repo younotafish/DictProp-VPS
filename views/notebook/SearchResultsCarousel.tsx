@@ -3,7 +3,7 @@ import { Wand2 } from 'lucide-react';
 import type { VocabCard } from '../../types';
 import { VocabCardDisplay } from '../../components/VocabCard';
 import { useWheelNavigation } from '../../hooks';
-import { speakWord } from '../../services/lazyTts';
+import { speakWord } from '../../services/neuralTts';
 import { isDialogOpenOutside, isTypingTarget } from '../../components/keyboardTarget';
 import { CarouselArrow, CarouselDots } from './Carousel';
 import { useHorizontalSwipe } from './useHorizontalSwipe';

@@ -9,7 +9,7 @@ import { PlaybackSpeedToggle } from './PlaybackSpeedToggle';
 import { MasteryBadge, getMasteryColors } from './mastery';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { formatTimeUntil } from '../services/studySession';
-import { getPlaybackState, pauseCurrent, resumeCurrent } from '../services/lazyTts';
+import { getPlaybackState, pauseCurrent, resumeCurrent } from '../services/neuralTts';
 import { useLatest } from '../hooks/useStableValue';
 import { useWarmImages } from '../hooks/useWarmImages';
 import { useEscapeLayer } from './escapeStack';

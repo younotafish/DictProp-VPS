@@ -1,6 +1,6 @@
 import { useEffect, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { ItemGroup } from '../../types';
-import { speakWord } from '../../services/lazyTts';
+import { speakWord } from '../../services/neuralTts';
 
 interface WordSlideshowOptions {
   isAutoPlaying: boolean;

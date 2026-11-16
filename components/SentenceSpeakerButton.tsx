@@ -8,7 +8,7 @@ import {
   resumeCurrent,
   stopCurrent,
   type SpeakHandle,
-} from '../services/lazyTts';
+} from '../services/neuralTts';
 import { toggleActionFor } from '../services/audio/playbackToggle';
 import { usePlaybackStatus } from '../hooks/audio/usePlaybackStatus';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
@@ -26,7 +26,7 @@ interface Props {
  * Small icon button that reads an example sentence aloud in the natural voice: the server's cached MiMo
  * clip, or on a miss the in-browser Kokoro voice (the system voice on iOS/iPadOS).
  *
- * It is a PURE SUBSCRIBER to the shared playback state (services/lazyTts), keyed by the sentence
+ * It is a PURE SUBSCRIBER to the shared playback state (services/neuralTts), keyed by the sentence
  * text. So the icon always reflects what's actually playing — whether playback was started by THIS
  * button, another speaker, the E / Cmd+1–4 keyboard readers, or swipe-to-speak. Because it holds no
  * private "isPlaying" state, it can't get stuck out of sync (the old "frozen on pause" bug), and a

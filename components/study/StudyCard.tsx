@@ -1,7 +1,7 @@
 import { Eye, Maximize2, Undo2, Volume2, X } from 'lucide-react';
 import { getItemSense, type ReviewRating, type StoredItem } from '../../types';
 import { previewRatings } from '../../services/fsrsScheduler';
-import { speakNatural } from '../../services/lazyTts';
+import { speakNatural } from '../../services/neuralTts';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { RATINGS, createClozePrompt, formatReviewInterval, getStudyContent, selectReviewTask, type StudySession } from '../../services/studySession';
 import { isImeKey } from '../keyboardTarget';

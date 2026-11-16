@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState, type RefObject } from 'react';
 import { getItemSense, getItemSpelling, getItemTitle, type ItemGroup, type SentenceData, type StoredItem } from '../../types';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
-import { stopCurrent } from '../../services/lazyTts';
+import { stopCurrent } from '../../services/neuralTts';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
 import { isCatalogProgressItem } from '../../services/catalogProgressIdentity';
 import { syntheticSourceItem } from '../../hooks/useDetailView';

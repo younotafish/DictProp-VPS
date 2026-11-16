@@ -9,7 +9,7 @@ import { useOverlay } from '../../components/overlayStack';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { useKeyboardNavigation, useWarmImages } from '../../hooks';
 import { useLatest } from '../../hooks/useStableValue';
-import { ensureTimings, prefetchTTS, preloadAudio, stopCurrent } from '../../services/lazyTts';
+import { ensureTimings, prefetchTTS, preloadAudio, stopCurrent } from '../../services/neuralTts';
 import { setTtsStyle, type TtsStyle } from '../../services/ttsSettings';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';

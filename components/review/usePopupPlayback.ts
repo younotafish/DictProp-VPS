@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
-import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../../services/lazyTts';
+import { speakWord, speakNatural, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, acquireKeepAlive, releaseKeepAlive } from '../../services/neuralTts';
 import { toggleActionFor } from '../../services/audio/playbackToggle';
 
 /**

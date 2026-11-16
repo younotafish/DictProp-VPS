@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, useDeferredValue, useId } from 'react';
 import { SearchResult, VocabCard, StoredItem, ComparisonResult } from '../types';
 import { makeVocabStoredItem } from '../services/items';
-import { speakWord, prefetchTTS } from '../services/lazyTts';
+import { speakWord, prefetchTTS } from '../services/neuralTts';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { useSentenceSearch } from '../services/sentenceSearch';
 import { useEscapeLayer } from './escapeStack';

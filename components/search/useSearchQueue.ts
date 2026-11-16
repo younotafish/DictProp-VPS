@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { comparisonKey, type ComparisonResult, type VocabCard } from '../../types';
 import { analyzeInput, compareWords, detectVocabulary } from '../../services/api';
-import { ensureTTS } from '../../services/lazyTts';
+import { ensureTTS } from '../../services/neuralTts';
 import { log, warn } from '../../services/logger';
 import { consumeSearchRetry, describeSearchError, isAuthenticationError, isRetryableSearchError, rememberSearchRetry } from '../../services/searchRecovery';
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.

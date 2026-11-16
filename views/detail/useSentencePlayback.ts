@@ -1,7 +1,7 @@
 import { useCallback, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type { SentenceData, StoredItem } from '../../types';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
-import { getPlaybackState, getTimingsFor, pauseCurrent, resumeCurrent, seekCurrent, speakNatural } from '../../services/lazyTts';
+import { getPlaybackState, getTimingsFor, pauseCurrent, resumeCurrent, seekCurrent, speakNatural } from '../../services/neuralTts';
 import { alignWordsToStripped, seekTimeForOffset } from '../../services/ttsAlignment';
 import { getTtsStyle, setTtsStyle } from '../../services/ttsSettings';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';

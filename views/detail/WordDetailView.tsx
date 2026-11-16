@@ -11,7 +11,7 @@ import { useOverlay } from '../../components/overlayStack';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation, useWarmImages } from '../../hooks';
 import { useLatest } from '../../hooks/useStableValue';
-import { prefetchTTS, speakWord, stopCurrent } from '../../services/lazyTts';
+import { prefetchTTS, speakWord, stopCurrent } from '../../services/neuralTts';
 import { autoPlayTexts, preloadSession, wordZoneBands as countWordZoneBands } from './cardReading';
 import { findSavedCard } from './savedCard';
 import { PLATFORM } from './platform';

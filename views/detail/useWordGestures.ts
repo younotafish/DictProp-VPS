@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction, type TouchEvent as ReactTouchEvent, type UIEvent as ReactUIEvent } from 'react';
 import type { ItemGroup, SearchResult, StoredItem, VocabCard } from '../../types';
 import type { ZoneFlash } from '../../components/EyesFreeZones';
-import { speakWord } from '../../services/lazyTts';
+import { speakWord } from '../../services/neuralTts';
 import { log } from '../../services/logger';
 import { zoneText } from './cardReading';
 import { touchFacts, wordTouchAction } from './touchGestures';

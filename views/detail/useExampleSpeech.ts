@@ -1,6 +1,6 @@
 import { useCallback, type RefObject } from 'react';
 import type { StoredItem } from '../../types';
-import { getPlaybackProgress, getPlaybackState, pauseCurrent, resumeCurrent, speakNatural, type SpeakHandle } from '../../services/lazyTts';
+import { getPlaybackProgress, getPlaybackState, pauseCurrent, resumeCurrent, speakNatural, type SpeakHandle } from '../../services/neuralTts';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { exampleAt, readableExamples } from './cardReading';
 
