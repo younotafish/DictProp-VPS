@@ -17,7 +17,10 @@ interface NotebookSearchOptions {
   query: string;
   sortMode: NotebookSort;
   filterMode: NotebookFilter;
-  /** Moves the list's clock on when the notebook says the view changed (a card opened over the list). */
+  /**
+   * Moves the list's clock on when the notebook says the view changed: a card opened over the list, or the tab was
+   * reselected.
+   */
   clockBump: number;
   /** The saved base words a query inflects (ran -> run), listed with the literal matches. */
   matchSavedBases: (query: string) => Set<string>;
@@ -61,9 +64,10 @@ export function useNotebookSearch({ items, query, sortMode, filterMode, clockBum
   }, [matches, searchQuery, bases, literalMatches, fuzzyMatches]);
   // The time the list counts what's due from (list.now), which its order, its due block, the rows' Due badges and
   // the header's counts share. It's read again only when the view changes: the search or its fuzzy results, the
-  // sort or the filter change, a card opens over the list (clockBump), the tab is shown again or the page comes back
-  // into view. A sync, an enrichment or an acknowledgement rebuilds the list at the same clock, so rows refresh in
-  // place and only a card whose own schedule changed moves; nothing slides into the due block while it's read.
+  // sort or the filter change, a card opens over the list or the Notebook tab is reselected (clockBump), the tab is
+  // shown again after another or the page comes back into view. A sync, an enrichment or an acknowledgement rebuilds
+  // the list at the same clock, so rows refresh in place and only a card whose own schedule changed moves; nothing
+  // slides into the due block while it's read.
   const listClockKey = useMemo(
     () => ({ searchQuery, fuzzyReady, sortMode, filterMode, clockBump }),
     [searchQuery, fuzzyReady, sortMode, filterMode, clockBump],

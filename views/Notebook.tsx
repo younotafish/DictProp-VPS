@@ -105,7 +105,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
   useEffect(() => { writeNotebookListView({ sort: sortMode, filter: filterMode }); }, [sortMode, filterMode]);
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const [showArchived, setShowArchived] = useState(false);
-  // Moves the list's clock on (see useNotebookSearch) when a card opens over the list.
+  // Moves the list's clock on (see useNotebookSearch) when a card opens over the list or the tab is reselected.
   const [clockBump, setClockBump] = useState(0);
   const { headerRef, handleScroll, showHeader, syncScrollPosition } = useAutoHidingHeader(onScroll);
   // Which card's actions (Refresh, Archive, Delete) are open: one at most, and a scroll of the list closes them.

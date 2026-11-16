@@ -32,7 +32,7 @@ interface NotebookHeaderProps {
   /** Resolves false when the server couldn't be reached and the session was kept. */
   onSignOut: () => Promise<boolean>;
   onViewRefusedReviews: () => void;
-  /** Under the title row: the search bar and a running batch import's progress. */
+  /** Under the title row: the search bar, which an empty notebook leaves out (its box is in the invitation). */
   children: React.ReactNode;
 }
 
