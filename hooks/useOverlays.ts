@@ -8,13 +8,39 @@ import type { ConfirmModalProps } from '../components/ConfirmModal';
 export type ConfirmDialog = Omit<ConfirmModalProps, 'onCancel'>;
 /** An acknowledgement: a titled message with one OK button. */
 export type Notice = Pick<ConfirmModalProps, 'title' | 'message'> & { variant: NonNullable<ConfirmModalProps['variant']> };
+/** The card popup: the word it shows, by spelling, and the sense it opened on. */
+export interface CardPopup { spelling: string; initialId: string }
 
-/** What can open over the page: the card popup, the confirm and duplicates dialogs, the shortcuts and the refused reviews. */
+/** Whether the card popup is open with nothing to show: every sense it showed is gone, deleted here or on another device. */
+export const popupIsEmpty = (cardPopup: CardPopup | null, popupItems: readonly StoredItem[]): boolean =>
+  cardPopup !== null && popupItems.length === 0;
+
+/**
+ * What covers the page. modalOpen: a dialog that asks for a decision or lists something (a confirm, the keyboard
+ * shortcuts, the refused reviews or the duplicates), which keeps every key, the undo shortcut included. dialogOpen:
+ * one of those, or the card popup showing a card.
+ */
+export function openDialogs({ cardPopup, popupItems, confirmModal, showKeyboardHelp, showRefusedReviews, duplicateClusters }: {
+  cardPopup: CardPopup | null;
+  popupItems: readonly StoredItem[];
+  confirmModal: ConfirmDialog | null;
+  showKeyboardHelp: boolean;
+  showRefusedReviews: boolean;
+  duplicateClusters: readonly DuplicateClusterView[] | null;
+}): { modalOpen: boolean; dialogOpen: boolean } {
+  const modalOpen = confirmModal !== null || showKeyboardHelp || showRefusedReviews || duplicateClusters !== null;
+  return { modalOpen, dialogOpen: modalOpen || (cardPopup !== null && popupItems.length > 0) };
+}
+
+/**
+ * What can open over the page: the card popup, the confirm and duplicates dialogs, the shortcuts and the refused
+ * reviews, and whether any of them covers it (openDialogs).
+ */
 export function useOverlays(allActiveItems: StoredItem[]) {
   // Footnote card popup — keyed by the word's SPELLING (so deleting one sense doesn't lose the rest)
   // plus the sense to open on. popupItems = every saved sense of that word, for in-popup paging; it's
   // re-resolved live from allActiveItems so Got it / Reset / Delete update the card in place.
-  const [cardPopup, setCardPopup] = useState<{ spelling: string; initialId: string } | null>(null);
+  const [cardPopup, setCardPopup] = useState<CardPopup | null>(null);
   const openCardPopup = useCallback((it: StoredItem) => setCardPopup({ spelling: getItemSpelling(it), initialId: it.data.id }), []);
   const popupItems = useMemo(
     () => (cardPopup
@@ -39,10 +65,12 @@ export function useOverlays(allActiveItems: StoredItem[]) {
   const [showRefusedReviews, setShowRefusedReviews] = useState(false);
   const openRefusedReviews = useCallback(() => setShowRefusedReviews(true), []);
 
+  const { modalOpen, dialogOpen } = openDialogs({ cardPopup, popupItems, confirmModal, showKeyboardHelp, showRefusedReviews, duplicateClusters });
+
   return {
     cardPopup, setCardPopup, openCardPopup, closeCardPopup, popupItems, duplicateClusters, setDuplicateClusters,
     confirmModal, setConfirmModal, showNotice, showKeyboardHelp, setShowKeyboardHelp, openKeyboardHelp,
-    showRefusedReviews, setShowRefusedReviews, openRefusedReviews,
+    showRefusedReviews, setShowRefusedReviews, openRefusedReviews, modalOpen, dialogOpen,
   };
 }
 
