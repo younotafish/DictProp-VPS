@@ -1,21 +1,9 @@
 import type { SRSData } from '../types';
-import type { SentenceReviewFilter } from './sentenceOrdering';
+import { sentenceReviewState } from './sentenceOrdering';
 
-/** Where a sentence stands in review; every sentence is exactly one of these. */
-export type SentenceReviewState = 'unreviewed' | 'due' | 'memorized';
-
-/**
- * Never reviewed (totalReviews 0), reviewed and due again (nextReview has passed), or reviewed and resting
- * until nextReview. totalReviews is a validated non-negative count.
- */
-export function sentenceReviewState(srs: SRSData | undefined, now: number): SentenceReviewState {
-  if ((srs?.totalReviews ?? 0) === 0) return 'unreviewed';
-  return (srs?.nextReview ?? 0) <= now ? 'due' : 'memorized';
-}
-
-/** Whether a sentence belongs under a review filter chip. */
-export const matchesReviewFilter = (srs: SRSData | undefined, filter: SentenceReviewFilter, now: number): boolean =>
-  filter === 'all' || sentenceReviewState(srs, now) === filter;
+// The rule itself, a sentence's review state and the filter chips over it, is written once, in sentenceOrdering.ts;
+// this module passes it on beside what is built from it, the study run's test and the summaries.
+export { matchesReviewFilter, sentenceReviewState, type SentenceReviewState } from './sentenceOrdering';
 
 /** Whether a study run takes the sentence: it was never reviewed, or it is due again. */
 export const needsReview = (srs: SRSData | undefined, now: number): boolean =>
