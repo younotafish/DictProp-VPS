@@ -1,8 +1,9 @@
-import { useCallback, type RefObject } from 'react';
+import { useCallback, useRef, type RefObject } from 'react';
 import type { ReviewRating, SRSData, StoredItem } from '../../types';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { updateAfterRating } from '../../services/fsrsScheduler';
 import { log } from '../../services/logger';
+import { acceptDestructive } from '../../services/actionGuards';
 import type { DetailViewProps } from './types';
 
 interface SentenceActionsOptions {
@@ -27,9 +28,13 @@ export function useSentenceActions({
   currentSentence, currentSentenceRef, isSentencePreview, catalogSentencePreview, onSave, onDelete, onResetSRS,
   onUpdateSRS, tryRemember, showRemembered,
 }: SentenceActionsOptions) {
+  // One delete or reset per press (acceptDestructive): a doubled Delete or D deletes the sentence on screen, not then
+  // the one that slides into its place, and a doubled Shift+R can't make the undo restore a blank schedule.
+  const lastDestructiveAtRef = useRef(-Infinity);
+
   // Delete the SENTENCE (App removes its group + advances/closes the flow).
   const handleDeleteItem = () => {
-    if (!currentSentence || isSentencePreview) return;
+    if (!currentSentence || isSentencePreview || !acceptDestructive(lastDestructiveAtRef, performance.now())) return;
     log('🗑️ DetailView: Deleting sentence:', currentSentence.data.id);
     onDelete(currentSentence.data.id);
   };
@@ -37,7 +42,7 @@ export function useSentenceActions({
   // Reset just this sentence's SRS.
   const handleResetSRS = useCallback(() => {
     const s = currentSentenceRef.current;
-    if (!s || isSentencePreview) return;
+    if (!s || isSentencePreview || !acceptDestructive(lastDestructiveAtRef, performance.now())) return;
     log('🔄 DetailView: Resetting SRS for sentence:', s.data.id);
     // A catalog sentence isn't in the library yet; saving it with fresh progress adds it.
     if (!onResetSRS?.(s.data.id)) onSave({ ...s, srs: SRSAlgorithm.reset(s.data.id, 'sentence') });

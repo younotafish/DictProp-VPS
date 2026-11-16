@@ -1,9 +1,10 @@
-import { useCallback, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { useCallback, useRef, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { getItemSense, getItemTitle, isVocabItem, savedVocabKey, type ReviewRating, type SRSData, type StoredItem, type VocabCard } from '../../types';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { makeVocabStoredItem } from '../../services/items';
 import { updateAfterRating } from '../../services/fsrsScheduler';
 import { log, warn } from '../../services/logger';
+import { acceptDestructive } from '../../services/actionGuards';
 import { isTypingTarget } from '../../components/keyboardTarget';
 import type { DetailViewProps } from './types';
 
@@ -70,6 +71,10 @@ export function useWordActions({
     handleToggleSave();
   }, [isSaved, handleToggleSave]);
 
+  // One delete, archive or reset per press (acceptDestructive): a double tap on the trash deletes the card on screen,
+  // not then the one that slides into its place, and the header, the menu and D, A and Shift+R share the one guard.
+  const lastDestructiveAtRef = useRef(-Infinity);
+
   const handleDeleteItem = () => {
     // Use savedItemMatch ID if available, otherwise use currentItem's ID
     const idToDelete = savedItemMatch?.data.id || data.id;
@@ -77,6 +82,7 @@ export function useWordActions({
       warn('Delete failed: No valid ID found');
       return;
     }
+    if (!acceptDestructive(lastDestructiveAtRef, performance.now())) return;
 
     log('🗑️ DetailView: Deleting item:', idToDelete, title);
     setShowActionMenu(false);
@@ -94,6 +100,7 @@ export function useWordActions({
       warn('Archive failed: No valid ID found');
       return;
     }
+    if (!acceptDestructive(lastDestructiveAtRef, performance.now())) return;
     
     log('📦 DetailView: Archiving item:', idToArchive, title);
     setShowActionMenu(false);
@@ -110,7 +117,7 @@ export function useWordActions({
 
   const handleResetSRS = useCallback(() => {
     // Reset only the current sense. Cards with the same spelling learn independently.
-    if (!data.id) return;
+    if (!data.id || !acceptDestructive(lastDestructiveAtRef, performance.now())) return;
 
     log('🔄 DetailView: Resetting SRS for item:', data.id, title);
 
