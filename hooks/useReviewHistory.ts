@@ -1,32 +1,43 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ReviewEvent, ReviewHistory } from '../types';
+import type { ReviewEvent } from '../types';
 import { loadReviewHistory } from '../services/api/library';
 import { warn } from '../services/logger';
-import { mergeLoadedHistory, recentSinceFor } from '../services/reviewHistory';
 import { readPendingReviewMutations } from '../services/reviewQueue';
+import type { LoadedReviewHistory } from '../services/reviewHistory';
 
-const EMPTY_HISTORY: ReviewHistory = { recent: [], olderTimes: [], olderCount: 0 };
+const EMPTY_HISTORY: LoadedReviewHistory = { recent: [], olderTimes: [], olderCount: 0, loaded: false };
 
 const byTime = (a: ReviewEvent, b: ReviewEvent) => a.reviewedAt - b.reviewedAt;
 
-/** The signed-in user's review history: the server's, plus the reviews still in this device's outbox. */
+/**
+ * The signed-in user's review history: the server's, plus the reviews still in this device's outbox. It loads when
+ * the user signs in, and again on coming back online or into view once the last load failed or is a quarter of an
+ * hour old (services/reviewHistory.ts startHistoryLoads); `loaded` says whether a load has succeeded yet.
+ */
 export function useReviewHistory(userId?: string) {
-  const [history, setHistory] = useState<ReviewHistory>(EMPTY_HISTORY);
+  const [history, setHistory] = useState<LoadedReviewHistory>(EMPTY_HISTORY);
 
   useEffect(() => {
     if (!userId) { setHistory(EMPTY_HISTORY); return; }
-    const unsynced = new Map(readPendingReviewMutations(userId).map(mutation => [mutation.event.id, mutation.event]));
-    setHistory({ ...EMPTY_HISTORY, recent: [...unsynced.values()].sort(byTime) });
+    const pending = () =>
+      [...new Map(readPendingReviewMutations(userId).map(mutation => [mutation.event.id, mutation.event])).values()];
+    setHistory({ ...EMPTY_HISTORY, recent: pending().sort(byTime) });
 
+    // The loads' rules stay out of the app's first chunk: they arrive with the first load, which waits on the
+    // network anyway, and they're precached for an offline start.
+    let stop: (() => void) | undefined;
     let cancelled = false;
-    loadReviewHistory(recentSinceFor([...unsynced.values()], Date.now()))
-      .then(remote => {
+    const onError = (error: unknown) => warn('Failed to load review history:', error);
+    import('../services/reviewHistory')
+      .then(({ startHistoryLoads }) => {
         if (cancelled) return;
-        // Reviews recorded while the history loaded stay.
-        setHistory(current => mergeLoadedHistory(current, remote));
+        stop = startHistoryLoads({ pending, fetch: loadReviewHistory, update: setHistory, onError, online: window, page: document });
       })
-      .catch(error => warn('Failed to load review history:', error));
-    return () => { cancelled = true; };
+      .catch(onError);
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
   }, [userId]);
 
   /** Adds a review this device just made; the review outbox, not this history, delivers it. */
