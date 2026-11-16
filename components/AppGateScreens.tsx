@@ -1,13 +1,8 @@
 import React from 'react';
 
-// The screens App shows in place of the library: while sign-in is checked or the library is read, to someone
-// signed out, and when this device's copy of the library can't be read.
-
-export const LoadingScreen: React.FC = () => (
-  <div className="fixed inset-0 bg-white flex items-center justify-center">
-    <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
-  </div>
-);
+// The screens App shows in place of the library: to someone signed out, and when this device's copy of the library
+// can't be read. Few launches need either, so App loads this module on demand, and fetches it once the first screen is
+// up; the spinner it shows meanwhile is App's own.
 
 export const SignInScreen: React.FC<{ onSignIn: () => void }> = ({ onSignIn }) => (
   <div className="fixed inset-0 bg-gradient-to-br from-indigo-50 to-white flex items-center justify-center">

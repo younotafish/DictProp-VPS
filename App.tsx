@@ -6,7 +6,6 @@ import { loginRedirect, type AuthUser } from './services/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { lazyScreen } from './components/lazyScreen';
 import { TabScreen } from './components/TabScreen';
-import { LibraryReadFailedScreen, LoadingScreen, SignInScreen } from './components/AppGateScreens';
 import { useOverlay, useOverlayFocusReturn } from './components/overlayStack';
 import { AppBanners, AppStatusPills } from './components/AppStatus';
 import { useFrozenWhile } from './hooks/useStableValue';
@@ -35,7 +34,8 @@ import { useSenseLookup } from './hooks/useSenseLookup';
 // The signed-in app re-renders on every library change and progress tick, so the screens, the search sheet,
 // the card popup and the navigation are memoized and re-render only when their own props change (NotebookView
 // memoizes itself); the dialogs render only while open. Their code loads on first use, and the ones a tap can
-// open are fetched once the first screen is up (see the preload effect in App).
+// open are fetched once the first screen is up (see the preload effect in App). So do the screens that stand in
+// for the app when it can't open: the sign-in screen and the one for a library this device can't read.
 const NotebookView = lazyScreen('notebook', () => import('./views/Notebook').then(module => ({ default: module.NotebookView })));
 const GlobalSearch = lazyScreen('global-search', () => import('./components/GlobalSearch').then(module => ({ default: React.memo(module.GlobalSearch) })));
 const ConfirmModal = lazyScreen('confirm-modal', () => import('./components/ConfirmModal').then(module => ({ default: module.ConfirmModal })));
@@ -49,6 +49,8 @@ const SentencesView = lazyScreen('sentences', () => import('./views/SentencesVie
 const RealLifeView = lazyScreen('real-life', () => import('./views/RealLifeView').then(module => ({ default: React.memo(module.RealLifeView) })));
 const EssaysView = lazyScreen('essays', () => import('./views/EssaysView').then(module => ({ default: React.memo(module.EssaysView) })));
 const DetailView = lazyScreen('detail', () => import('./views/DetailView').then(module => ({ default: React.memo(module.DetailView) })));
+const SignInScreen = lazyScreen('sign-in', () => import('./components/AppGateScreens').then(module => ({ default: module.SignInScreen })));
+const LibraryReadFailedScreen = lazyScreen('library-read-failed', () => import('./components/AppGateScreens').then(module => ({ default: module.LibraryReadFailedScreen })));
 const TAB_SCREENS = {
   notebook: NotebookView,
   study: StudyEnhanced,
@@ -58,6 +60,13 @@ const TAB_SCREENS = {
 } satisfies Record<ViewState, { preload: () => void }>;
 
 const isTabView = (value: string): value is ViewState => Object.prototype.hasOwnProperty.call(TAB_SCREENS, value);
+
+/** While sign-in is checked or the library is read, and while a screen standing in for the app loads. */
+const LoadingScreen: React.FC = () => (
+  <div className="fixed inset-0 bg-white flex items-center justify-center">
+    <div className="animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full" />
+  </div>
+);
 
 /** The tab showing when the app last closed, or the notebook if there's none or it's gone (the old 'search' tab). */
 const readSavedView = (): ViewState => {
@@ -153,11 +162,13 @@ function SignedInApp({ user }: { user: AuthUser }) {
 
   if (libraryReadFailed) {
     return (
-      <LibraryReadFailedScreen
-        onRetry={retryLibraryLoad}
-        onReload={() => window.location.reload()}
-        onUseServerCopy={openWithServerCopy}
-      />
+      <Suspense fallback={<LoadingScreen />}>
+        <LibraryReadFailedScreen
+          onRetry={retryLibraryLoad}
+          onReload={() => window.location.reload()}
+          onUseServerCopy={openWithServerCopy}
+        />
+      </Suspense>
     );
   }
 
@@ -406,7 +417,10 @@ const App: React.FC = () => {
   useEffect(() => {
     for (const screen of [TAB_SCREENS[readSavedView()], AppNavigation, GlobalSearch]) screen.preload();
     const preloadRest = () => {
-      for (const screen of [DetailView, ...Object.values(TAB_SCREENS), CardReviewPopup, ConfirmModal, DuplicatesModal, KeyboardHelpModal]) {
+      for (const screen of [
+        DetailView, ...Object.values(TAB_SCREENS), CardReviewPopup, ConfirmModal, DuplicatesModal, KeyboardHelpModal,
+        SignInScreen, LibraryReadFailedScreen,
+      ]) {
         screen.preload();
       }
       loadFsrsScheduler().catch(error => warn('The review scheduler will load with the first review:', error));
@@ -427,7 +441,11 @@ const App: React.FC = () => {
   }
 
   if (!authState.user) {
-    return <SignInScreen onSignIn={loginRedirect} />;
+    return (
+      <Suspense fallback={<LoadingScreen />}>
+        <SignInScreen onSignIn={loginRedirect} />
+      </Suspense>
+    );
   }
 
   return <SignedInApp key={authState.user.id} user={authState.user} />;
