@@ -34,8 +34,17 @@ test('Space and Enter show the answer, unless the keyboard focused a control the
     assert.deepEqual(resolveStudyKey(press(key), card()), { type: 'reveal' }, key);
     assert.equal(resolveStudyKey(press(key), card({ onControl: true })), null, `${key} on a focused control`);
     assert.equal(resolveStudyKey(press(key), card({ revealed: true })), null, `${key} once the answer shows`);
-    assert.equal(resolveStudyKey(press(key), card({ phase: 'summary' })), null, `${key} on the summary`);
   }
+});
+
+test('on the summary Enter is Done, unless the keyboard focused a control; Space does nothing there', () => {
+  const summary = card({ phase: 'summary', canUndo: true });
+  assert.deepEqual(resolveStudyKey(press('Enter'), summary), { type: 'done' });
+  assert.deepEqual(resolveStudyKey(press('Enter'), { ...summary, undoing: true }), { type: 'done' }, 'an undo under way doesn\'t hold Done');
+  assert.equal(resolveStudyKey(press('Enter'), { ...summary, onControl: true }), null, 'a missed word or button the keyboard focused');
+  assert.equal(resolveStudyKey(held('Enter'), summary), null, 'a held Enter was Done once');
+  assert.equal(resolveStudyKey(press(' '), summary), null);
+  assert.equal(resolveStudyKey(press('Enter', { metaKey: true }), summary), null);
 });
 
 test('U undoes the last grade while one can be undone and no undo is under way, on a card or the summary', () => {

@@ -7,7 +7,7 @@
  */
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { StoredItem, type ReviewHistory, type ReviewRating, type ReviewTaskType } from '../types';
+import { StoredItem, getItemTitle, type ItemGroup, type ReviewHistory, type ReviewRating, type ReviewTaskType } from '../types';
 import { BrainCircuit } from 'lucide-react';
 import {
   acceptFooterTap,
@@ -18,9 +18,9 @@ import {
   isSessionCardLive,
   moveSessionTo,
   receiptText,
-  sessionRatings,
   sessionSiblingCounts,
   startStudySession,
+  summarizeSession,
   type SessionGrade,
   type StudySession,
 } from '../services/studySession';
@@ -49,6 +49,9 @@ interface StudyEnhancedProps {
   ) => Promise<boolean>;
   onUndoReview: (eventId: string) => Promise<void>;
   onOpenExampleSentence: (text: string, sourceWord: string, sourceSense?: string) => void;
+  /** Opens the card view on `groups` (App's handleViewStoredItem): the summary's missed words open their cards
+   *  through it. Optional until App passes it; without it they're only listed. */
+  onViewCards?: (groups: ItemGroup[], groupIndex: number, itemIndex: number) => void;
   interactionLocked?: boolean;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
 }
@@ -78,6 +81,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   onReview,
   onUndoReview,
   onOpenExampleSentence,
+  onViewCards,
   interactionLocked = false,
   onScroll,
 }) => {
@@ -210,14 +214,14 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 
   // The session's keys (services/studyKeys.ts). One listener while the session has the keys, reading the
   // session and the handlers as they are now, so typing an answer doesn't register it again.
-  const keyContext = useLatest({ session, currentItem, lastGrade, reveal, gradeCurrent, undoLastGrade });
+  const keyContext = useLatest({ session, currentItem, lastGrade, reveal, gradeCurrent, undoLastGrade, closeSession });
   const keysActive = !!session && !interactionLocked;
   useEffect(() => {
     if (!keysActive) return;
     // In the capture phase the session gets its keys before the window-level shortcuts (1-3 also switch
     // tabs), and stops the ones it uses so no other shortcut reacts to them.
     const handleSessionKey = (event: KeyboardEvent) => {
-      const { session, currentItem, lastGrade, reveal, gradeCurrent, undoLastGrade } = keyContext.current;
+      const { session, currentItem, lastGrade, reveal, gradeCurrent, undoLastGrade, closeSession } = keyContext.current;
       if (!session) return;
       const action = resolveStudyKey(event, {
         phase: currentItem ? 'card' : 'summary',
@@ -234,6 +238,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       if (action.type === 'grade') gradeCurrent(action.rating);
       else if (action.type === 'undo') void undoLastGrade();
       else if (action.type === 'reveal') reveal();
+      else if (action.type === 'done') closeSession();
     };
     window.addEventListener('keydown', handleSessionKey, true);
     return () => window.removeEventListener('keydown', handleSessionKey, true);
@@ -254,15 +259,23 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   if (session) {
     const undo = () => void undoLastGrade();
     if (!currentItem) {
+      const summary = summarizeSession(session);
+      // The missed words still in the library; each opens the card view with them all as its list.
+      const missedItems = summary.missedIds.flatMap(id => itemsById.get(id) ?? []);
+      const openMissed = onViewCards && ((index: number) => onViewCards(
+        missedItems.map(item => ({ title: getItemTitle(item), items: [item] })), index, 0,
+      ));
       return (
         <div ref={rootRef} className="h-full overflow-y-auto bg-slate-50 p-5 pb-[calc(var(--nav-h,95px)+1rem)]">
           <StudySummary
-            ratings={sessionRatings(session)}
+            summary={summary}
+            missed={missedItems.map(item => ({ id: item.data.id, title: getItemTitle(item) }))}
+            onOpenMissed={openMissed}
             canUndo={!!lastGrade}
             undoing={undoing}
             undoError={undoError}
             onUndo={undo}
-            onClose={closeSession}
+            onDone={closeSession}
           />
         </div>
       );

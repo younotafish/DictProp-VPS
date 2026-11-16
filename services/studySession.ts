@@ -199,6 +199,30 @@ export function sessionRatings(session: Pick<StudySession, 'grades'>): Record<Re
   return ratings;
 }
 
+/** What the summary at the end of a session says. */
+export interface SessionSummary {
+  /** The cards the session holds, each once, however often it brought one back. */
+  total: number;
+  /** The cards with a grade that stands, each once. */
+  graded: number;
+  /** How many times each grade stands (sessionRatings). */
+  counts: Record<ReviewRating, number>;
+  /** The cards with a standing Again or Hard, each once, in the order they were first missed. Undoing the grade
+   *  takes a card off again, unless another Again or Hard of it still stands. */
+  missedIds: string[];
+}
+
+export function summarizeSession(session: Pick<StudySession, 'itemIds' | 'grades'>): SessionSummary {
+  const missed = new Set<string>();
+  for (const { itemId, rating } of session.grades) if (rating === 'again' || rating === 'hard') missed.add(itemId);
+  return {
+    total: new Set(session.itemIds).size,
+    graded: new Set(session.grades.map(grade => grade.itemId)).size,
+    counts: sessionRatings(session),
+    missedIds: [...missed],
+  };
+}
+
 /**
  * The session moved to the card at `index` (see findSessionCard), unrevealed and unanswered. Moving forward
  * marks where the cards passed over begin, unless an earlier run of them is still open.

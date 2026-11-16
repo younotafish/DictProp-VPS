@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import type { StoredItem, VocabCard } from '../../types.ts';
+import { StudySummary } from '../../components/study/StudySummary.tsx';
 import { previewRatings, updateAfterRating } from '../../services/fsrsScheduler.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import {
@@ -23,6 +26,7 @@ import {
   sessionRatings,
   sessionSiblingCounts,
   startStudySession,
+  summarizeSession,
   undoSessionGrade,
   type StudySession,
 } from '../../services/studySession.ts';
@@ -348,4 +352,68 @@ test('time until a review reads in whole days, else hours, else minutes, and now
     [HOUR, '1h'], [23 * HOUR + 59 * MINUTE, '23h'], [DAY, '1d'], [10 * DAY + 23 * HOUR, '10d'],
   ];
   for (const [offset, label] of cases) assert.equal(formatTimeUntil(now + offset, now), label, String(offset));
+});
+
+test('the summary counts each card once, and lists the cards missed (Again or Hard) once each, in the order first missed', () => {
+  const graded = session({
+    itemIds: ['a', 'b', 'c', 'd', 'b', 'c'],
+    grades: [
+      { itemId: 'a', rating: 'good' }, { itemId: 'b', rating: 'again' }, { itemId: 'c', rating: 'hard' },
+      { itemId: 'd', rating: 'easy' }, { itemId: 'b', rating: 'again' },
+    ],
+  });
+  assert.deepEqual(summarizeSession(graded), {
+    total: 4, graded: 4, counts: { again: 2, hard: 1, good: 1, easy: 1 }, missedIds: ['b', 'c'],
+  });
+  // Good and Easy miss nothing; a card missed once stays missed after a later Good.
+  assert.deepEqual(summarizeSession(session({ grades: [{ itemId: 'a', rating: 'good' }, { itemId: 'a', rating: 'easy' }] })).missedIds, []);
+  assert.deepEqual(summarizeSession(session({ grades: [{ itemId: 'a', rating: 'again' }, { itemId: 'a', rating: 'good' }] })).missedIds, ['a']);
+  assert.deepEqual(summarizeSession(session({ itemIds: ['a', 'b'], grades: [] })), {
+    total: 2, graded: 0, counts: { again: 0, hard: 0, good: 0, easy: 0 }, missedIds: [],
+  });
+});
+
+test('undoing a miss takes the card off the missed list, unless another Again or Hard of it still stands', () => {
+  const before = session({ itemIds: ['a', 'b', 'c'], index: 1, grades: [{ itemId: 'a', rating: 'again' }] });
+  const { grade, itemIds } = gradeSessionCard(before, vocab('b', 'walk'), 'hard', 'event', 2_000, 15);
+  const after = advanceSession(before, itemIds, grade, 2_000);
+  assert.deepEqual(summarizeSession(after).missedIds, ['a', 'b']);
+  assert.deepEqual(summarizeSession(undoSessionGrade(after, grade, 3_000)).missedIds, ['a']);
+
+  // The card's extra showing is graded Again too; undoing that grade leaves the first one standing.
+  const requeued = session({ itemIds: ['a', 'b', 'a'], index: 2, grades: [{ itemId: 'a', rating: 'again' }, { itemId: 'b', rating: 'good' }] });
+  const again = gradeSessionCard(requeued, vocab('a', 'run'), 'again', 'event-2', 4_000, 10);
+  const regraded = advanceSession(requeued, again.itemIds, again.grade, 4_000);
+  assert.deepEqual(summarizeSession(undoSessionGrade(regraded, again.grade, 5_000)).missedIds, ['a']);
+});
+
+const summaryMarkup = (props: Partial<Parameters<typeof StudySummary>[0]> = {}) => renderToStaticMarkup(createElement(StudySummary, {
+  summary: { total: 50, graded: 50, counts: { again: 3, hard: 2, good: 40, easy: 5 }, missedIds: ['a', 'b'] },
+  missed: [{ id: 'a', title: 'crestfallen' }, { id: 'b', title: 'give up' }],
+  canUndo: false, undoing: false, undoError: '', onUndo: () => {}, onDone: () => {},
+  ...props,
+}));
+const summaryText = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+test('the summary names the session\'s cards, the missed words in order, and ends with Done', () => {
+  const markup = summaryMarkup({ onOpenMissed: () => {} });
+  assert.match(markup, /<h2 class="text-2xl font-bold text-slate-800">Session complete · 50 cards<\/h2>/);
+  assert.match(summaryText(markup), /Recalled 47 of 50 prompts\. Missed \(2\) Review missed words crestfallen give up Done$/);
+  assert.match(markup, /<button class="px-2\.5 py-1 rounded-full bg-rose-50 text-rose-700 text-sm hover:bg-rose-100">crestfallen<\/button><button [^>]*>give up<\/button>/);
+  assert.match(markup, /<button class="w-full h-12 bg-slate-900 text-white font-semibold rounded-lg hover:bg-slate-800" aria-keyshortcuts="Enter">Done<\/button><\/div>$/);
+  assert.doesNotMatch(markup, /Return to study/);
+  assert.match(summaryMarkup({ summary: { total: 1, graded: 1, counts: { again: 0, hard: 0, good: 1, easy: 0 }, missedIds: [] }, missed: [] }), />Session complete · 1 card</);
+});
+
+test('without a way to open cards the missed words are only listed, and with none missed there is no list', () => {
+  const listed = summaryMarkup();
+  assert.match(listed, /<span class="px-2\.5 py-1 rounded-full bg-rose-50 text-rose-700 text-sm">crestfallen<\/span>/);
+  assert.doesNotMatch(listed, /Review missed words/);
+  assert.doesNotMatch(summaryMarkup({ missed: [] }), /Missed/);
+});
+
+test('the summary keeps its undo for the last rating, and says when an undo failed', () => {
+  const markup = summaryMarkup({ canUndo: true, undoError: 'Reconnect to undo this review.' });
+  assert.match(summaryText(markup), /Undo last rating Reconnect to undo this review\. Done$/);
+  assert.match(summaryMarkup({ canUndo: true, undoing: true }), /disabled="" [^>]*aria-keyshortcuts="U">.*Undoing\.\.\.<\/button>/);
 });
