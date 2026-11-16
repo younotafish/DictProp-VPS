@@ -24,8 +24,6 @@ interface Props {
   /** Takes the click instead of the button's own play, pause, resume or restart (sentence auto-play's pause, say). The icon
    *  still follows the engine's state for the sentence. */
   onToggle?: () => void;
-  /** Whether a read this button starts may begin the one-time Kokoro download on a cache miss (see SpeakOptions). */
-  allowDownload?: boolean;
   /** Whether unmounting stops the read this button started, if it still plays. Off for a row that scrolls out of a
    *  list while its sentence goes on. */
   stopOnUnmount?: boolean;
@@ -47,7 +45,7 @@ interface Props {
  * click itself (onToggle).
  */
 export const SentenceSpeakerButton: React.FC<Props> = ({
-  text, className = '', iconSize = 14, onComplete, onToggle, allowDownload = true, stopOnUnmount = true, onPlaybackStart,
+  text, className = '', iconSize = 14, onComplete, onToggle, stopOnUnmount = true, onPlaybackStart,
   tone = 'light',
 }) => {
   const plain = useMemo(() => stripSentenceMarkers(text || '').trim(), [text]);
@@ -65,10 +63,10 @@ export const SentenceSpeakerButton: React.FC<Props> = ({
   const label = isLoading ? 'Loading natural voice' : !isPlaying ? 'Listen to this sentence' : isPaused ? 'Resume' : 'Pause';
 
   const start = useCallback(() => {
-    const handle = speakNatural(plain, { allowDownload, onEnd: onComplete });
+    const handle = speakNatural(plain, { allowDownload: true, onEnd: onComplete });
     playbackHandleRef.current = handle;
     onPlaybackStart?.(handle);
-  }, [plain, onComplete, allowDownload, onPlaybackStart]);
+  }, [plain, onComplete, onPlaybackStart]);
 
   const handleClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();

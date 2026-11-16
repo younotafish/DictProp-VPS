@@ -58,9 +58,9 @@ test('the button follows its sentence through loading, playing and paused, and i
   assert.equal(labelOf(render(SENTENCE)), 'Listen to this sentence');
 });
 
-test('the props for other owners (onToggle, allowDownload, stopOnUnmount, onPlaybackStart) leave the markup as it was', () => {
+test('the props for other owners (onToggle, stopOnUnmount, onPlaybackStart) leave the markup as it was', () => {
   const plain = render(SENTENCE);
-  assert.equal(render(SENTENCE, { onToggle: () => {}, allowDownload: false, stopOnUnmount: false, onPlaybackStart: () => {} }), plain);
+  assert.equal(render(SENTENCE, { onToggle: () => {}, stopOnUnmount: false, onPlaybackStart: () => {} }), plain);
   assert.equal(render(SENTENCE, { tone: 'light' }), plain, 'light is the default tone');
 });
 
