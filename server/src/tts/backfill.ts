@@ -209,9 +209,9 @@ export function createBackfill({
     }
   }
 
-  const persist = () => writeFileAtomic(
+  const persist = (status: BackfillStatus = backfill) => writeFileAtomic(
     BACKFILL_STATUS_PATH,
-    `${JSON.stringify({ ...backfill, owner, pid: process.pid, heartbeatAt: Date.now() }, null, 2)}\n`,
+    `${JSON.stringify({ ...status, owner, pid: process.pid, heartbeatAt: Date.now() }, null, 2)}\n`,
     { mode: 0o600 },
   );
   const warn = (what: string) => (e: unknown) => console.warn(`[tts] backfill ${what}:`, (e as Error | undefined)?.message);
@@ -249,11 +249,13 @@ export function createBackfill({
         warn('error')(e);
       } finally {
         clearInterval(heartbeat);
-        backfill.running = false;
         backfill.finishedAt = Date.now();
         console.log(`[tts] backfill done: generated=${backfill.generated} skipped=${backfill.total - backfill.generated - backfill.failed} failed=${backfill.failed}`);
-        await persist().catch(warn('status write failed'));
+        // The run counts as over only once its final status is published and its lock released, so whoever sees it
+        // end (the app's progress poll, the next start) finds both settled.
+        await persist({ ...backfill, running: false }).catch(warn('status write failed'));
         await lock.release();
+        backfill.running = false;
       }
     })();
     return { finished };

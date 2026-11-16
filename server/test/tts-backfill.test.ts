@@ -192,6 +192,30 @@ test('a run holds the lock while it works, publishes its progress, and lets go a
   assert.equal(JSON.parse(readFileSync(BACKFILL_STATUS_PATH, 'utf8')).running, false);
 });
 
+test('a run reports itself over only once its final status is published and its lock is gone', async () => {
+  const { backfill } = harness({ catalog: ['Settled before it is over.'], library: [] });
+  const run = await backfill.start();
+  assert.ok(run);
+  while (backfill.status().running) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(existsSync(LOCK_PATH), false);
+  assert.equal(JSON.parse(readFileSync(BACKFILL_STATUS_PATH, 'utf8')).running, false);
+  await run.finished;
+});
+
+test('a second backfill in the same process never takes over the lock the first one holds', async () => {
+  const gate = deferred();
+  const first = harness({ catalog: ['Held by the first backfill.'], library: [] }, {
+    deps: { align: async () => { await gate.promise; return TIMING; } },
+  });
+  const run = await first.backfill.start();
+  assert.ok(run);
+  const second = harness({ catalog: ['Held by the first backfill.'], library: [] });
+  assert.equal(await second.backfill.start(), null);
+  gate.release();
+  await run.finished;
+  assert.deepEqual(second.events, []);
+});
+
 test('a lock another live process holds keeps a run from starting', async () => {
   writeLock({ owner: 'worker', pid: process.ppid });
   try {
@@ -218,6 +242,17 @@ test('the web server takes over a lock that a server gone since left; the worker
     const worker = harness({ catalog: ['After a restart.'], library: [] }, { owner: 'worker' });
     assert.equal(await worker.backfill.start(), null);
     const server = harness({ catalog: ['After a restart.'], library: [] });
+    await runToEnd(server.backfill);
+    assert.equal(server.events.length, 2);
+  } finally {
+    rmSync(LOCK_PATH, { force: true });
+  }
+});
+
+test('the web server takes over at once a lock that a server with its own pid left, as one restarted in the container finds', async () => {
+  writeLock({ owner: 'server', pid: process.pid });
+  try {
+    const server = harness({ catalog: ['After a restart under the same pid.'], library: [] });
     await runToEnd(server.backfill);
     assert.equal(server.events.length, 2);
   } finally {

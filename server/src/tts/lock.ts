@@ -23,6 +23,10 @@ export function isProcessRunning(pid: number): boolean {
   }
 }
 
+// The locks this process holds. A process never takes over its own lock: from outside, a lock it holds looks like one
+// a server with its pid left before a restart.
+const heldPaths = new Set<string>();
+
 async function readHolder(path: string): Promise<{ owner?: unknown; pid?: unknown } | null> {
   try {
     return JSON.parse(await readFile(path, 'utf8'));
@@ -32,9 +36,10 @@ async function readHolder(path: string): Promise<{ owner?: unknown; pid?: unknow
 }
 
 // Whether a lock this process doesn't hold may be taken over: its holder stopped touching it, or a server finds a
-// server's lock. Only one web server runs, so that lock was left by one a restart or deploy ended, unless its process
-// is still alive (two development servers sharing a data folder).
+// server's lock. Only one web server runs, so that lock was left by one a restart or deploy ended (in the container,
+// often under the same pid), unless its process is still alive (two development servers sharing a data folder).
 async function isAbandoned(path: string, owner: LockOwner, staleAfterMs: number): Promise<boolean> {
+  if (heldPaths.has(path)) return false;
   let modifiedAt: number;
   try {
     modifiedAt = (await stat(path)).mtimeMs;
@@ -53,6 +58,7 @@ async function hold(path: string, handle: FileHandle, owner: LockOwner): Promise
   // Who holds it, for a server deciding whether a lock it finds was left by a server that is gone.
   await handle.writeFile(`${JSON.stringify({ owner, pid: process.pid, startedAt: Date.now() })}\n`).catch(() => {});
   const { ino } = await handle.stat();
+  heldPaths.add(path);
   return {
     touch: async () => {
       const now = new Date();
@@ -63,6 +69,7 @@ async function hold(path: string, handle: FileHandle, owner: LockOwner): Promise
       // Unlink only this process's lock: one that judged it abandoned may have replaced it.
       const current = await stat(path).catch(() => null);
       if (current?.ino === ino) await unlink(path).catch(() => {});
+      heldPaths.delete(path);
     },
   };
 }
