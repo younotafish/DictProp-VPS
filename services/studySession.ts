@@ -480,7 +480,7 @@ export type UndoFailure = 'waiting' | { error: unknown };
  */
 export function undoFailureText(failure: UndoFailure, online: boolean): string {
   if (failure !== 'waiting' && failure.error instanceof HttpError && failure.error.status === 409) {
-    return 'This card changed since, so the review can’t be undone.';
+    return 'This card has changed since, so the review can’t be undone.';
   }
   if (!online) return 'Reconnect to undo this review.';
   return failure === 'waiting' ? 'This review is still syncing. Try undo again.' : 'The review could not be undone.';

@@ -423,9 +423,9 @@ test('the receipt names the word, the grade and when the card comes back, and sa
   assert.deepEqual(['again', 'hard', 'good', 'easy'].map(rating => receiptText({ ...good, rating: rating as 'good' }).ratingLabel), ['Again', 'Hard', 'Good', 'Easy']);
 });
 
-test('a failed undo is said in words: a card changed since, a review still syncing, or offline, to reconnect first', () => {
+test('a failed undo is said in words: a card that has changed since, a review still syncing, or offline, to reconnect first', () => {
   const failed = (status: number, body: string) => ({ error: new HttpError(`Undo review failed (${status}): ${body}`, status, body) });
-  assert.equal(undoFailureText(failed(409, 'Review is no longer the latest change for this item'), true), 'This card changed since, so the review can’t be undone.');
+  assert.equal(undoFailureText(failed(409, 'Review is no longer the latest change for this item'), true), 'This card has changed since, so the review can’t be undone.');
   assert.equal(undoFailureText(failed(404, 'Review event not found'), true), 'The review could not be undone.');
   assert.equal(undoFailureText({ error: new TypeError('Failed to fetch') }, true), 'The review could not be undone.', 'the server out of reach');
   assert.equal(undoFailureText({ error: new TypeError('Failed to fetch') }, false), 'Reconnect to undo this review.');
