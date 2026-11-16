@@ -84,7 +84,8 @@ test('--nav-h is the tab bar\'s height: 95 px on a laptop, 105 px on a Face ID i
 type StackProps = ComponentProps<typeof AppStatusPills>;
 const stack = (props: Partial<StackProps>) => classOf(renderToStaticMarkup(createElement(AppStatusPills, {
   userId: 'u1', onViewRefusedReviews: () => {}, imagePrefetchProgress: null, onStopImageDownload: () => {}, imageRestoreProgress: null,
-  ttsGenProgress: null, onStopSpeechGeneration: () => {}, undoMessage: null, onUndo: () => {}, aboveTabBar: true, holdUpdate: false, liftAbovePopup: false, ...props,
+  ttsGenProgress: null, onStopSpeechGeneration: () => {}, undoMessage: null, onUndo: () => {}, writeFailed: false, offline: false,
+  offlineChip: false, aboveTabBar: true, holdUpdate: false, liftAbovePopup: false, ...props,
 })), 'div');
 
 test('on the tabs the notice stack floats 8 px above the bar, and above a tab\'s footer', () => {

@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ConfirmModal } from './ConfirmModal';
 import { AlertTriangle, Loader2, LogOut, User as UserIcon } from 'lucide-react';
 import type { AuthUser } from '../services/auth';
+import { NEEDS_CONNECTION, networkRowDisabled } from '../services/connectivityNotice';
 import { useRefusedReviews } from './RefusedReviews';
 
 interface Props {
@@ -12,6 +13,8 @@ interface Props {
   onSignOut: () => Promise<boolean>;
   /** Opens the list of reviews the server refused, App's dialog. */
   onViewRefusedReviews: () => void;
+  /** An outage has settled, so Sign out, which needs the server, is disabled with the reason. */
+  offline: boolean;
 }
 
 // Avatar with offline fallback
@@ -37,14 +40,27 @@ const UserAvatar: React.FC<{ photoUrl: string | null; displayName: string | null
   );
 };
 
-export const UserMenu: React.FC<Props> = ({ user, onSignOut, onViewRefusedReviews }) => {
+export const UserMenu: React.FC<Props> = ({ user, onSignOut, onViewRefusedReviews, offline }) => {
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
   const refusedCount = useRefusedReviews(user.id).entries.length;
+  const signOutUnavailable = networkRowDisabled('signout', !offline);
+  const reasonId = useId();
+
+  // Signing out needs the server, so offline it goes no further than the tap: nothing is sent, the session stays, and
+  // the notice says why. Once an outage settles the button is disabled instead; this covers the seconds before.
+  const requestSignOut = () => {
+    if (navigator.onLine) setConfirmingSignOut(true);
+    else setSignOutFailed(true);
+  };
 
   const signOut = async () => {
     setConfirmingSignOut(false);
+    if (!navigator.onLine) {
+      setSignOutFailed(true);
+      return;
+    }
     setSigningOut(true);
     const signedOut = await onSignOut().catch(() => false);
     // Signing out reloads the page; if it didn't, the session was kept, so say why.
@@ -79,14 +95,16 @@ export const UserMenu: React.FC<Props> = ({ user, onSignOut, onViewRefusedReview
         </button>
       )}
       <button
-        onClick={() => setConfirmingSignOut(true)}
-        disabled={signingOut}
+        onClick={requestSignOut}
+        disabled={signingOut || signOutUnavailable}
         className="w-11 h-11 shrink-0 flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors disabled:opacity-50"
-        title="Sign Out"
+        title={signOutUnavailable ? NEEDS_CONNECTION : 'Sign Out'}
         aria-label="Sign out"
+        aria-describedby={signOutUnavailable ? reasonId : undefined}
       >
         {signingOut ? <Loader2 size={14} className="animate-spin" /> : <LogOut size={14} />}
       </button>
+      {signOutUnavailable && <span id={reasonId} className="sr-only">{NEEDS_CONNECTION}</span>}
       {/* In a portal: the header this sits in slides away on scroll, and would carry a fixed dialog with it. */}
       {confirmingSignOut && createPortal(
         <ConfirmModal

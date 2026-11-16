@@ -52,7 +52,13 @@ interface NotebookProps {
   syncStatus: SyncStatus;
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
   onForceSync: () => void;
+  /** The connection now, for what the user asks for (a lookup, voice search, the AI search's banner). */
   isOnline: boolean;
+  /**
+   * An outage has settled (useOnlineStatus's offlineSettled), for the header's chrome: the tools and the controls that
+   * need the server stay in place, disabled, so a brief drop changes nothing on screen.
+   */
+  offline: boolean;
   /** The saved base words a query inflects (ran -> run), which a search lists first after the word typed. */
   matchSavedBases?: (query: string) => Set<string>;
   /** Tells the nav bar that the notebook moved its list itself, so the jump doesn't hide the bar. */
@@ -81,7 +87,7 @@ interface NotebookProps {
 
 export const NotebookView: React.FC<NotebookProps> = ({
     items, onDelete, onSearch, onViewDetail,
-    user, onSignOut, onViewRefusedReviews, syncStatus, onScroll, onForceSync, isOnline,
+    user, onSignOut, onViewRefusedReviews, syncStatus, onScroll, onForceSync, isOnline, offline,
     isVocabSaved, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
     onBatchImport, batchImportProgress, onJSONImported,
@@ -421,10 +427,10 @@ export const NotebookView: React.FC<NotebookProps> = ({
         savedCount={savedCount}
         reviewedToday={reviewedToday}
         toReviewCount={toReview}
-        isOnline={isOnline}
+        offline={offline}
         toolsMenu={
           <NotebookToolsMenu
-            isOnline={isOnline}
+            offline={offline}
             onAnalyzeText={() => setShowTextAnalyzer(true)}
             onBatchImport={() => setShowBatchImport(true)}
             onImportJSON={() => setShowJSONImport(true)}

@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
+import { OFFLINE_SETTLE_MS } from '../services/connectivityNotice';
 
+/**
+ * The connection, two ways. isOnline follows the browser at once, for the actions that need the server. offlineSettled
+ * turns true once an outage has lasted OFFLINE_SETTLE_MS, and false the moment it ends, for the chrome (the Offline
+ * chip, the controls disabled while offline), so a phone losing its signal for a moment changes nothing on screen.
+ * An app opened offline has settled already.
+ */
 export function useOnlineStatus() {
   // Network status detection for offline support
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -7,27 +14,25 @@ export function useOnlineStatus() {
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
-    
+
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    
+
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
 
-  // The banner waits out a brief drop, so a phone losing its signal for a moment doesn't push the page
-  // down and back up.
-  const [showOfflineBanner, setShowOfflineBanner] = useState(!navigator.onLine);
+  const [offlineSettled, setOfflineSettled] = useState(!navigator.onLine);
   useEffect(() => {
     if (isOnline) {
-      setShowOfflineBanner(false);
+      setOfflineSettled(false);
       return;
     }
-    const timer = window.setTimeout(() => setShowOfflineBanner(true), 3_000);
+    const timer = window.setTimeout(() => setOfflineSettled(true), OFFLINE_SETTLE_MS);
     return () => window.clearTimeout(timer);
   }, [isOnline]);
 
-  return { isOnline, showOfflineBanner };
+  return { isOnline, offlineSettled };
 }

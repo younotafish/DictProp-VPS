@@ -7,7 +7,8 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { lazyScreen } from './components/lazyScreen';
 import { TabScreen } from './components/TabScreen';
 import { useOverlay, useOverlayFocusReturn } from './components/overlayStack';
-import { AppBanners, AppStatusPills } from './components/AppStatus';
+import { AppStatusPills } from './components/AppStatus';
+import { connectivityNotice } from './services/connectivityNotice';
 import { useFrozenWhile } from './hooks/useStableValue';
 import { warn } from './services/logger';
 import { installDebugItems } from './services/debugItems';
@@ -126,7 +127,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
   useEffect(() => installDebugItems(() => latestItemsRef.current), [latestItemsRef]);
 
   useAppShortcuts(navigate, detail, overlays, { undoMessage, undoLastChange, modalOpen });
-  const { isOnline, showOfflineBanner } = useOnlineStatus();
+  const { isOnline, offlineSettled } = useOnlineStatus();
   const offlineImages = useOfflineImages(library);
   const { imagePrefetchProgress, imageRestoreProgress, stopImageDownload, handleDownloadOfflineImages, handleRestoreImagesToServer } = offlineImages;
   const {
@@ -174,8 +175,6 @@ function SignedInApp({ user }: { user: AuthUser }) {
 
   return (
     <div className="fixed inset-0 bg-white flex flex-col">
-      <AppBanners showOffline={showOfflineBanner} writeFailed={libraryWriteFailed} isOnline={isOnline} />
-
       {/* Each lazy overlay has a boundary of its own, so one whose code is still arriving doesn't hide the
           card or the progress pills already on screen. */}
       {confirmModal && (
@@ -204,6 +203,9 @@ function SignedInApp({ user }: { user: AuthUser }) {
         onStopSpeechGeneration={() => { ttsGenAbortRef.current = true; }}
         undoMessage={undoMessage}
         onUndo={undoLastChange}
+        writeFailed={libraryWriteFailed}
+        offline={offlineSettled}
+        offlineChip={connectivityNotice({ offline: offlineSettled, onTab: !detailContext && !cardPopup }) === 'chip'}
         aboveTabBar={!detailContext}
         holdUpdate={!!detailContext || !!cardPopup}
         liftAbovePopup={!!cardPopup && (!!undoMessage || libraryWriteFailed)}
@@ -293,6 +295,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
             onScroll={handleScroll}
             onForceSync={handleForceSync}
             isOnline={isOnline}
+            offline={offlineSettled}
             isVocabSaved={isVocabSaved}
             onFindDuplicates={handleFindDuplicates}
             onArchive={handleArchive}

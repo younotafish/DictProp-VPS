@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createElement, type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import * as AppStatus from '../../components/AppStatus.tsx';
 import { AppStatusPills } from '../../components/AppStatus.tsx';
 import { NoticePill, type NoticeTone } from '../../components/NoticePill.tsx';
 import { announceUpdate, dismissUpdate } from '../../services/appUpdate.ts';
@@ -23,6 +24,9 @@ const quiet: StackProps = {
   onStopSpeechGeneration: () => {},
   undoMessage: null,
   onUndo: () => {},
+  writeFailed: false,
+  offline: false,
+  offlineChip: false,
   aboveTabBar: true,
   holdUpdate: false,
   liftAbovePopup: false,
@@ -73,6 +77,33 @@ test('the stack keeps its notices in order of how long they stay: undo, search, 
     'Generating sentence audio · 10/100', '1 review wasn’t accepted', 'Update ready'].map(text => html.indexOf(text));
   assert.ok(order.every(index => index >= 0), `every notice renders: ${order}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order);
+});
+
+test('a failed save on this device is an alert in the long-lived group, whose advice follows the connection', t => {
+  refuseOneReview();
+  t.after(() => clearRefusedReviews('u1'));
+  const online = renderStack({ writeFailed: true, imagePrefetchProgress: { done: 3, total: 40 } });
+  const alert = online.match(/<div role="alert" class="([^"]*)"><span class="min-w-0 line-clamp-2">Couldn’t save on this device\. Your changes still sync\.<\/span><\/div>/);
+  assert.ok(alert, 'a rose alert of up to two lines');
+  for (const name of ['bg-rose-600', 'rounded-2xl']) assert.ok(alert[1].split(/\s+/).includes(name), name);
+  const order = ['Offline images · 3/40', 'role="alert"', '1 review wasn’t accepted'].map(text => online.indexOf(text));
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'below the progress pills, above refused reviews');
+  assert.match(renderStack({ writeFailed: true, offline: true }), />Couldn’t save on this device\. Keep this tab open until you’re back online\.</);
+  assert.doesNotMatch(renderStack({ offline: true }), /role="alert"/);
+});
+
+test('the Offline chip shows only when told, below the couldn\'t-save alert and above refused reviews', t => {
+  refuseOneReview();
+  t.after(() => clearRefusedReviews('u1'));
+  assert.doesNotMatch(renderStack({ offline: true }), />Offline</, 'App decides where the chip shows (connectivityNotice)');
+  const html = renderStack({ offlineChip: true, offline: true, writeFailed: true });
+  assert.match(html, /<div role="status" class="[^"]*bg-amber-600[^"]*"><svg[^>]*lucide-wifi-off[^>]*>.*?<\/svg><span class="min-w-0 truncate">Offline<\/span><\/div>/);
+  const order = ['role="alert"', '>Offline<', '1 review wasn’t accepted'].map(text => html.indexOf(text));
+  assert.deepEqual([...order].sort((a, b) => a - b), order);
+});
+
+test('the offline and couldn\'t-save banners above the page are gone, so nothing moves the page', () => {
+  assert.deepEqual(Object.keys(AppStatus), ['AppStatusPills']);
 });
 
 test('every pill is capped short of the search button\'s column and truncates its text', t => {

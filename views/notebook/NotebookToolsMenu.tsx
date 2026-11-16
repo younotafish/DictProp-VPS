@@ -1,12 +1,13 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { Download, FileJson, GitMerge, Keyboard, ListPlus, Loader2, MoreHorizontal, RefreshCw, ScanText, UploadCloud, Volume2 } from 'lucide-react';
 import type { SyncStatus } from '../../types';
+import { NEEDS_CONNECTION, networkRowDisabled, type HeaderControl } from '../../services/connectivityNotice';
 import { SpeechStyleToggle } from '../../components/SpeechStyleToggle';
 import { PlaybackSpeedToggle } from '../../components/PlaybackSpeedToggle';
 
 interface NotebookToolsMenuProps {
-  /** Offline the menu isn't shown; it stays mounted, so it keeps its state. */
-  isOnline: boolean;
+  /** An outage has settled: the tools that need the server are disabled, with the reason. */
+  offline: boolean;
   onAnalyzeText: () => void;
   onBatchImport: () => void;
   onImportJSON: () => void;
@@ -28,33 +29,46 @@ interface MenuItemProps {
   onSelect: () => void;
   /** Given for a tool that runs a job: true while it runs, which disables the item and spins its icon. */
   busy?: boolean;
+  /** Why the tool can't run now (offline, NEEDS_CONNECTION): the item is disabled and says so under its label. */
+  disabledReason?: string;
 }
 
-const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onSelect, busy }) => (
+const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onSelect, busy, disabledReason }) => (
   <button
     onClick={onSelect}
-    disabled={busy}
-    className={`w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50${busy === undefined ? '' : ' disabled:opacity-50'}`}
+    disabled={busy || disabledReason !== undefined}
+    className={`w-full min-h-11 px-3 py-2 flex items-center gap-3 text-sm text-slate-700 hover:bg-slate-50${busy === undefined && disabledReason === undefined ? '' : ' disabled:opacity-50'}`}
   >
-    {busy ? <Loader2 size={17} className="animate-spin" /> : icon}{` ${label}`}
+    {busy ? <Loader2 size={17} className="animate-spin" /> : icon}
+    {disabledReason === undefined ? ` ${label}` : (
+      <span className="flex flex-col items-start text-left">
+        {label}
+        <span className="text-xs text-slate-500">{disabledReason}</span>
+      </span>
+    )}
   </button>
 );
 
-type NotebookToolsPanelProps = Omit<NotebookToolsMenuProps, 'isOnline'> & {
+type NotebookToolsPanelProps = NotebookToolsMenuProps & {
   /** Runs before the chosen tool, to close the menu. */
   onChosen: () => void;
 };
 
-/** What the open menu lists: the speech settings, then the tools as plain buttons in tab order, then the shortcut sheet. */
+/**
+ * What the open menu lists: the speech settings, then the tools as plain buttons in tab order, then the shortcut sheet.
+ * Offline, the tools that need the server stay in place, disabled with the reason (services/connectivityNotice).
+ */
 export const NotebookToolsPanel: React.FC<NotebookToolsPanelProps> = ({
-  onAnalyzeText, onBatchImport, onImportJSON, onDownloadOfflineImages, onForceSync, syncStatus, onGenerateAllSpeech,
-  speechGenerationRunning, onRestoreImagesToServer, imageRestoreRunning, onFindDuplicates, onShowShortcuts, onChosen,
+  offline, onAnalyzeText, onBatchImport, onImportJSON, onDownloadOfflineImages, onForceSync, syncStatus,
+  onGenerateAllSpeech, speechGenerationRunning, onRestoreImagesToServer, imageRestoreRunning, onFindDuplicates,
+  onShowShortcuts, onChosen,
 }) => {
   // Choosing a tool closes the menu first.
   const choose = (tool: () => void) => () => {
     onChosen();
     tool();
   };
+  const reason = (control: HeaderControl) => (networkRowDisabled(control, !offline) ? NEEDS_CONNECTION : undefined);
 
   return (
     <>
@@ -65,19 +79,19 @@ export const NotebookToolsPanel: React.FC<NotebookToolsPanelProps> = ({
           <PlaybackSpeedToggle className="shrink-0 bg-slate-100 hover:bg-slate-200" />
         </div>
       </div>
-      <MenuItem icon={<ScanText size={17} />} label="Analyze text" onSelect={choose(onAnalyzeText)} />
-      <MenuItem icon={<ListPlus size={17} />} label="Batch import" onSelect={choose(onBatchImport)} />
-      <MenuItem icon={<FileJson size={17} />} label="Import JSON" onSelect={choose(onImportJSON)} />
-      <MenuItem icon={<Download size={17} />} label="Download image pack" onSelect={choose(onDownloadOfflineImages)} />
-      <MenuItem icon={<RefreshCw size={17} />} label="Sync now" onSelect={choose(onForceSync)} busy={syncStatus === 'syncing'} />
+      <MenuItem icon={<ScanText size={17} />} label="Analyze text" onSelect={choose(onAnalyzeText)} disabledReason={reason('analyze')} />
+      <MenuItem icon={<ListPlus size={17} />} label="Batch import" onSelect={choose(onBatchImport)} disabledReason={reason('batch')} />
+      <MenuItem icon={<FileJson size={17} />} label="Import JSON" onSelect={choose(onImportJSON)} disabledReason={reason('json')} />
+      <MenuItem icon={<Download size={17} />} label="Download image pack" onSelect={choose(onDownloadOfflineImages)} disabledReason={reason('images')} />
+      <MenuItem icon={<RefreshCw size={17} />} label="Sync now" onSelect={choose(onForceSync)} busy={syncStatus === 'syncing'} disabledReason={reason('sync')} />
       <div className="h-px bg-slate-100 my-1" />
-      <MenuItem icon={<Volume2 size={17} />} label="Generate speech cache" onSelect={choose(onGenerateAllSpeech)} busy={speechGenerationRunning} />
-      <MenuItem icon={<UploadCloud size={17} />} label="Restore server images" onSelect={choose(onRestoreImagesToServer)} busy={imageRestoreRunning} />
-      <MenuItem icon={<GitMerge size={17} />} label="Merge duplicates" onSelect={choose(onFindDuplicates)} />
+      <MenuItem icon={<Volume2 size={17} />} label="Generate speech cache" onSelect={choose(onGenerateAllSpeech)} busy={speechGenerationRunning} disabledReason={reason('speech')} />
+      <MenuItem icon={<UploadCloud size={17} />} label="Restore server images" onSelect={choose(onRestoreImagesToServer)} busy={imageRestoreRunning} disabledReason={reason('restore')} />
+      <MenuItem icon={<GitMerge size={17} />} label="Merge duplicates" onSelect={choose(onFindDuplicates)} disabledReason={reason('merge')} />
       {onShowShortcuts && (
         <>
           <div className="h-px bg-slate-100 my-1" />
-          <MenuItem icon={<Keyboard size={17} />} label="Gestures & shortcuts" onSelect={choose(onShowShortcuts)} />
+          <MenuItem icon={<Keyboard size={17} />} label="Gestures & shortcuts" onSelect={choose(onShowShortcuts)} disabledReason={reason('shortcuts')} />
         </>
       )}
     </>
@@ -85,10 +99,10 @@ export const NotebookToolsPanel: React.FC<NotebookToolsPanelProps> = ({
 };
 
 /**
- * The ⋯ button at the head of the notebook's toolbar and the panel of tools it discloses (NotebookToolsPanel). A
- * click outside or Escape closes it.
+ * The ⋯ button at the head of the notebook's toolbar and the panel of tools it discloses (NotebookToolsPanel), there
+ * offline too, so the header keeps its shape. A click outside or Escape closes it.
  */
-export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = ({ isOnline, ...tools }) => {
+export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = props => {
   const [showMaintenanceMenu, setShowMaintenanceMenu] = useState(false);
   const maintenanceMenuRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
@@ -114,8 +128,6 @@ export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = ({ isOnline, 
     };
   }, [showMaintenanceMenu]);
 
-  if (!isOnline) return null;
-
   return (
     <div className="relative shrink-0" ref={maintenanceMenuRef}>
       <button
@@ -130,7 +142,7 @@ export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = ({ isOnline, 
       </button>
       {showMaintenanceMenu && (
         <div id={panelId} className="absolute right-0 top-full mt-1 w-64 max-h-[70vh] overflow-y-auto bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
-          <NotebookToolsPanel {...tools} onChosen={() => setShowMaintenanceMenu(false)} />
+          <NotebookToolsPanel {...props} onChosen={() => setShowMaintenanceMenu(false)} />
         </div>
       )}
     </div>

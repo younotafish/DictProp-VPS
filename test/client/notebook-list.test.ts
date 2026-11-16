@@ -417,7 +417,7 @@ test('a card saved or reset after the list’s clock lists with the due cards at
 test('the header line names what the filter lists, then reviewed today and to review; the due block names it too', () => {
   const noop = () => {};
   const header = (savedCount: number, filterMode: NotebookFilter) => renderToStaticMarkup(createElement(NotebookHeader, {
-    headerRef: null, savedCount, reviewedToday: 12, toReviewCount: 340, isOnline: true, toolsMenu: null, empty: false,
+    headerRef: null, savedCount, reviewedToday: 12, toReviewCount: 340, offline: false, toolsMenu: null, empty: false,
     compareMode: false, onToggleCompare: noop, filterMode, onCycleFilter: noop, sortMode: 'familiarity',
     onCycleSort: noop, user: { id: 'u1', email: 'me@example.com', displayName: null, photoUrl: null, isAdmin: false },
     onSignOut: async () => false, onViewRefusedReviews: noop, children: null,

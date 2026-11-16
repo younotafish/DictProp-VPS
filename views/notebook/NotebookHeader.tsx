@@ -1,6 +1,7 @@
 import React from 'react';
-import { ArrowDownAZ, Filter, Layers, Scale, Sparkles, Type, WifiOff } from 'lucide-react';
+import { ArrowDownAZ, Filter, Layers, Scale, Sparkles, Type } from 'lucide-react';
 import type { AuthUser } from '../../services/auth';
+import { NEEDS_CONNECTION, networkRowDisabled } from '../../services/connectivityNotice';
 import { filterNoun, type NotebookFilter, type NotebookSort } from '../../services/notebookList';
 import { UserMenu } from '../../components/UserMenu';
 
@@ -12,7 +13,11 @@ interface NotebookHeaderProps {
   reviewedToday: number;
   /** Spellings due by the notebook's rule, never-reviewed ones included: what the list marks Due. */
   toReviewCount: number;
-  isOnline: boolean;
+  /**
+   * An outage has settled: the controls that need the server stay in place, disabled (services/connectivityNotice), so
+   * the header keeps its shape offline.
+   */
+  offline: boolean;
   /** The tools menu, first in the toolbar. */
   toolsMenu: React.ReactNode;
   /** Nothing is saved, so the compare, filter and sort buttons, which act on the list, are left out. */
@@ -31,9 +36,30 @@ interface NotebookHeaderProps {
   children: React.ReactNode;
 }
 
+/** The compare toggle. Offline, compare mode can't start, since comparing needs the server; one already on can be left. */
+const CompareToggle: React.FC<{ offline: boolean; compareMode: boolean; onToggle: () => void }> = ({ offline, compareMode, onToggle }) => {
+  const disabled = networkRowDisabled('compare', !offline) && !compareMode;
+  return (
+    <button
+      onClick={onToggle}
+      disabled={disabled}
+      aria-label="Compare words"
+      aria-pressed={compareMode}
+      className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-full transition-colors disabled:opacity-50 ${
+        compareMode
+          ? 'text-indigo-600 bg-indigo-100'
+          : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
+      }`}
+      title={disabled ? NEEDS_CONNECTION : compareMode ? 'Exit compare mode' : 'Compare words — select 2-3 to compare'}
+    >
+      <Scale size={16} />
+    </button>
+  );
+};
+
 /** The notebook's sticky header: its title and counts, the toolbar, and the search bar below them. */
 export const NotebookHeader: React.FC<NotebookHeaderProps> = ({
-  headerRef, savedCount, reviewedToday, toReviewCount, isOnline, toolsMenu, empty, compareMode, onToggleCompare,
+  headerRef, savedCount, reviewedToday, toReviewCount, offline, toolsMenu, empty, compareMode, onToggleCompare,
   filterMode, onCycleFilter, sortMode, onCycleSort, user, onSignOut, onViewRefusedReviews, children,
 }) => (
   <div ref={headerRef} className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200/50 transition-transform duration-300">
@@ -46,22 +72,7 @@ export const NotebookHeader: React.FC<NotebookHeaderProps> = ({
         {toolsMenu}
         {!empty && (
           <>
-            {/* Compare mode toggle */}
-            {isOnline && (
-              <button
-                onClick={onToggleCompare}
-                aria-label="Compare words"
-                aria-pressed={compareMode}
-                className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-full transition-colors ${
-                  compareMode
-                    ? 'text-indigo-600 bg-indigo-100'
-                    : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
-                }`}
-                title={compareMode ? 'Exit compare mode' : 'Compare words — select 2-3 to compare'}
-              >
-                <Scale size={16} />
-              </button>
-            )}
+            <CompareToggle offline={offline} compareMode={compareMode} onToggle={onToggleCompare} />
             <button
               onClick={onCycleFilter}
               className={`w-11 h-11 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors ${filterMode !== 'all' ? 'text-indigo-600 bg-indigo-50' : 'text-slate-500'}`}
@@ -81,17 +92,13 @@ export const NotebookHeader: React.FC<NotebookHeaderProps> = ({
             <div className="hidden md:block h-4 w-px bg-slate-200 mx-1 shrink-0"></div>
           </>
         )}
-        {!isOnline && (
-          <div className="w-11 h-11 flex items-center justify-center text-amber-500 shrink-0" title="Offline">
-            <WifiOff size={14} />
-          </div>
-        )}
         <div className="hidden md:block h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
         <div className="shrink-0">
           <UserMenu
             user={user}
             onSignOut={onSignOut}
             onViewRefusedReviews={onViewRefusedReviews}
+            offline={offline}
           />
         </div>
       </div>
