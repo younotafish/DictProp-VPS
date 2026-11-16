@@ -14,10 +14,22 @@ interface Props {
   error: SearchErrorToast | null;
   onRetry: (failed: SearchErrorToast) => void;
   onDismissError: () => void;
+  /** On a tab (true), or over a card or sentence view (false); see errorBottom. */
+  aboveTabBar?: boolean;
 }
 
+/**
+ * The error toast's offset from the bottom of the screen, above the search button. On a tab it clears the tab bar
+ * and, on Study, the grade footer; over a card it sits 8 px above the lesson's attach-image button. Until the caller
+ * says which, it keeps bottom-44.
+ */
+const errorBottom = (aboveTabBar: boolean | undefined): string =>
+  aboveTabBar === undefined ? 'bottom-44'
+  : aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+4rem)]'
+  : 'bottom-[calc(var(--card-float-bottom,6rem)+7.5rem)]';
+
 /** The search's notices: the save confirmation, the neutral status pill and the failure toast. */
-export const SearchToasts: React.FC<Props> = ({ saveToast, statusToast, error, onRetry, onDismissError }) => (
+export const SearchToasts: React.FC<Props> = ({ saveToast, statusToast, error, onRetry, onDismissError, aboveTabBar }) => (
   <>
     {/* Save toast */}
     {saveToast && (
@@ -36,7 +48,7 @@ export const SearchToasts: React.FC<Props> = ({ saveToast, statusToast, error, o
     {error && (
       <div
         role="alert"
-        className="fixed bottom-44 right-4 z-[56] max-w-[18rem] flex bg-red-50 text-red-600 text-xs font-medium rounded-lg shadow-lg fade-in duration-200"
+        className={`fixed ${errorBottom(aboveTabBar)} right-4 z-[56] max-w-[18rem] flex bg-red-50 text-red-600 text-xs font-medium rounded-lg shadow-lg fade-in duration-200`}
       >
         <button
           onClick={() => onRetry(error)}

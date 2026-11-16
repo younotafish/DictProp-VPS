@@ -41,6 +41,11 @@ interface Props {
   sentenceItems?: StoredItem[];
   /** Open a matched saved sentence for review (reuses the Sentences-tab open path). */
   onOpenSentence?: (ordered: StoredItem[], index: number) => void;
+  /**
+   * Where the search button and its error toast float: true on a tab, above the tab bar; false over a card or
+   * sentence view, above the lesson row. Left out, they keep their old offsets (bottom-24 and bottom-44).
+   */
+  aboveTabBar?: boolean;
 }
 
 /**
@@ -48,7 +53,7 @@ interface Props {
  * queue of lookups and comparisons lives in search/useSearchQueue; this component holds what's on screen (the
  * mode, the open result and meaning, the query) and the actions on it, and composes the pieces in search/.
  */
-export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence }) => {
+export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence, aboveTabBar }) => {
   const [mode, setMode] = useState<SearchMode>('idle');
   const [query, setQuery] = useState('');
   // Viewing state: which queue item and which vocab within it
@@ -364,6 +369,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         error={error}
         onRetry={retryFailedSearch}
         onDismissError={clearError}
+        aboveTabBar={aboveTabBar}
       />
 
       {/* Input overlay */}
@@ -427,7 +433,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
 
       {/* Floating button — hidden when input or viewing is open */}
       {mode !== 'input' && mode !== 'viewing' && (
-        <SearchFab readyCount={readyCount} busyCount={busyCount} isBusy={isBusy} onClick={handleFloatingClick} />
+        <SearchFab readyCount={readyCount} busyCount={busyCount} isBusy={isBusy} aboveTabBar={aboveTabBar} onClick={handleFloatingClick} />
       )}
     </>
   );
