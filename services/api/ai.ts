@@ -1,9 +1,9 @@
 import { ANALYSIS_BUDGET_MS, COMPARE_BUDGET_MS, EXTRACT_BUDGET_MS, TRANSCRIBE_BUDGET_MS } from '../../server/src/shared/ai-limits';
+import { MAX_COMPARE_WORDS } from '../../server/src/shared/query-mode';
 import type { ComparisonResult, SearchResult, VocabCard } from '../../types';
 import { bytesToBase64 } from '../dataUri';
 import { HttpError, jsonRequest, requestJson } from '../http';
 import { log, logError } from '../logger';
-import { MAX_COMPARE_WORDS } from '../queryMode';
 import { sortVocabCardsByUsage } from '../usageAudit';
 import { sanitizeComparisonResult } from './comparisons';
 import { textOrEmpty } from './json';
