@@ -396,3 +396,28 @@ test('the lock screen follows the engine unless an override says playing or paus
   engine.setPlaybackStateOverride(null);
   assert.equal(lockScreen.playbackState, 'none', 'back to the engine\'s idle');
 });
+
+test('a pause the OS makes shows the read paused, and the clip playing again shows it playing', async () => {
+  const { el, callbacks } = await playing();
+  el.externalPause();
+  assert.equal(engine.getPlaybackState().status, 'paused');
+  assert.equal(lockScreen.playbackState, 'paused');
+  el.startPlaying();
+  assert.equal(engine.getPlaybackState().status, 'playing');
+  assert.deepEqual(callbacks.heard, [], 'neither an end nor an interruption');
+});
+
+test('the pause events the engine causes itself change nothing: its own pause, a stop, and the pause at the end', async () => {
+  const own = await playing();
+  engine.pauseCurrent();
+  own.el.onpause?.();
+  assert.equal(engine.getPlaybackState().status, 'paused');
+  engine.resumeCurrent();
+  own.el.ended = true;
+  own.el.onpause?.();
+  assert.equal(engine.getPlaybackState().status, 'playing', 'the pause that comes with the end');
+  own.el.ended = false;
+  engine.stopCurrent();
+  own.el.onpause?.();
+  assert.deepEqual(engine.getPlaybackState(), { text: null, status: 'idle' }, 'a stopped read stays stopped');
+});

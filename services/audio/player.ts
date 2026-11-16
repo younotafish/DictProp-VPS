@@ -301,6 +301,10 @@ export const playUrl = async (
   // rejects play() below and the caller falls back to another voice; failing here as well would let the
   // caller move on while that fallback still speaks.
   el.onerror = () => { if (started && isCurrent()) onError?.(el.error ?? new Error('The clip failed while playing')); };
+  // A pause the browser or the OS makes (a call, AirPods out, Control Center) shows as paused, so the speakers and the
+  // lock screen offer to resume; el.onplaying above shows it playing again when it resumes. The engine's own pause has
+  // set 'paused' already, a stop or a newer request has made this one stale, and the pause at the end comes with ended.
+  el.onpause = () => { if (isCurrent() && !el.ended && player.state.status === 'playing') setPlaybackState({ status: 'paused' }); };
   el.onloadedmetadata = null;
   const begin = startAt && startAt > 0 ? startAt : 0;
   el.src = url;
