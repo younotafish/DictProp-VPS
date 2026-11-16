@@ -109,8 +109,7 @@ export const SearchResultsCarousel: React.FC<SearchResultsCarouselProps> = React
             onSave={handleSave}
             showSave={true}
             onSearch={onSearch}
-            scrollable={false}
-            className="!h-auto !overflow-visible border-violet-200 shadow-sm hover:shadow-md transition-shadow bg-white"
+            className="border-violet-200 shadow-sm hover:shadow-md transition-shadow bg-white"
             onSaveSentence={onSaveSentence}
             isSentenceSaved={isSentenceSaved}
           />
