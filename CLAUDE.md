@@ -185,7 +185,8 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   ├── useLibrarySync.ts      # Device load/save, first sync, background pulls, debounced pushes, flush before sign-out/reload
 │   ├── useLibraryActions.ts   # Save, delete, archive and reset handlers
 │   ├── useReviewOutbox.ts     # Review outbox drain and refused reviews
-│   ├── useUndoOffer.ts        # The undo pill for deletes, archives, unarchives, resets, refreshes and the search tray's Clear all
+│   ├── useUndoOffer.ts        # The undo pill for deletes, archives, unarchives, resets, refreshes, removing a word from
+│   │                          #   a phrase and the search tray's Clear all
 │   └── ...                    # Detail view, overlays, offline images, batch import, shortcuts, keyboard/gestures
 ├── scripts/offline/           # The Mac's enrichment cycle and the encrypted bridge to production (see Offline Data Bridge);
 │                              #   scripts/offline/README.md indexes every script
@@ -225,7 +226,7 @@ The full dataset with images is ~150MB. NEVER return all items with images in a 
 - On save (5s debounce): bounded `PUT /api/items` batches push dirty items
 - Visible clients pull paginated server-revision deltas every 8 seconds and on focus/reconnect/tab signals
 - Reviews use a local outbox plus atomic `POST /api/reviews/apply`; retries are idempotent
-- Deletions, archives, unarchives, SRS resets and Refresh with AI stay on the device while their 6-second undo pill is open (useLibrary's holdFromPush), then push at once
+- Deletions, archives, unarchives, SRS resets, Refresh with AI and removing a word from a phrase stay on the device while their 6-second undo pill is open (useLibrary's holdFromPush), then push at once
 - A push that fails is retried on its own: after 8 seconds, then after longer waits up to 5 minutes, and at once when the connection returns (`services/syncRetry.ts`)
 - Per-item dirty tracking via `lastSyncedHash` content hashing
 

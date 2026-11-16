@@ -16,7 +16,7 @@ This document describes what the code on branch `w3/docs` does (16 November 2026
 | To review | Never reviewed, or due. The Notebook header, the sentence lesson's pill, the card's position line and the Sentences tab count these. |
 | Memorized | Reviewed and not due yet: a filter on the sentence lists. |
 | Memory strength | A 0-100 display score computed from FSRS stability: 18 × ln(1 + stability in days), rounded, at most 100. A stability of one day reads 12, a week 37, 47 days 70, 180 days 94. Scheduling never uses it. |
-| New | A card never reviewed. Its badge reads "New", with no percentage. |
+| New | A card or sentence never reviewed. A card's badge reads "New", with no percentage; the review chips on the Sentences tab and in a Real Life collection, and a Real Life row's pill, say "New" too. |
 | Struggling, Learning, Proficient, Mastered, Grandmaster | A reviewed card under 30% memory strength, then from 30%, 50%, 70% and 85%. A badge reads, for example, "Learning 45%". |
 | Archived | Kept in the library but left out of Study and out of the Notebook's main list. You archive a card yourself, or the offline usage audit archives a sense it rates British only, rare or dated, or specialized (section 14). |
 
@@ -40,7 +40,7 @@ The search button opens a box from anywhere in the app. ⌘F (Ctrl+F elsewhere) 
 - When the text reads as a sentence, a bookmark, "Save this sentence", saves it to the Sentences list ("Sentence saved", or "Sentence already saved"). The text stays in the box and the bookmark becomes a disabled check, so Send can still scan it.
 - Up to six matching saved sentences appear under the box, headed "Saved sentences": exact matches with every keystroke, typo-tolerant ones 200 ms after typing pauses. ↑ and ↓ choose one, and Enter or a click opens it as a sentence lesson.
 - Esc clears and closes the box; × closes it and keeps the text. Enter in an empty box opens the results.
-- The same search runs lookups started elsewhere: the empty Notebook's box, Enter in the Sentences search box, a tap on any term chip or green word, the look-up gesture in a sentence lesson, Refresh with AI and Compare. The Notebook's own box, once the notebook has cards, runs its lookup inside the Notebook instead (4.4).
+- The same search runs lookups started elsewhere: the empty Notebook's box, Enter in the Sentences search box, a tap on any term chip or green word, the look-up gesture in a sentence lesson, Refresh with AI and Compare. The Notebook's own box, once the notebook has cards, runs a word's or phrase's lookup inside the Notebook instead (4.4); a sentence typed there comes to this search and is scanned.
 
 ### 3.2 Word or sentence
 
@@ -66,7 +66,7 @@ One rule, shared by the client and the server (`server/src/shared/query-mode.ts`
 - A result opens by itself only when the library answered it or it is a refresh. A fresh AI result waits behind the search button and the status line.
 - **The search button** spins while anything runs. It shows a red count of unseen results, an indigo count of running lookups while busy, and a faded grey count of ready results when idle. It drops the red count while the status line shows a new result.
 - **The status line** is a dark pill in the notice stack, hidden while the box or the results sheet is open and while a decision dialog is open. It says "Looking up “gamut”…" (2 s), "Still looking up “gamut”…" (2 s), "Scanning…" while a scan runs, then for 3.5 s "Found 4 expressions — analyzing…" or "No advanced expressions in this sentence". A ready result then shows as its word ("gamut", or "gamut +2") with a View button until you've seen it.
-- **Reloads.** Lookups still running and results not yet seen survive a reload: up to 20, asked within the last hour, run again afterwards and never open by themselves. A lookup refused because the session expired resumes after you sign in again, as what it was; only the latest such lookup is kept.
+- **Reloads.** Lookups still running and results not yet seen survive a reload: up to 20, asked within the last hour, run again afterwards and never open by themselves. A refresh comes back as a refresh only if it was still running; once its result is in, it comes back as a plain lookup, which the refreshed cards answer. Every lookup, comparison and scan refused because the session expired, up to 20 and each once, resumes after you sign in again, as what it was. An unexpected error in the search forgets everything it kept, so closing its error screen, or reloading, starts the search afresh.
 
 ### 3.4 The results sheet
 
@@ -78,11 +78,11 @@ One rule, shared by the client and the server (`server/src/shared/query-mode.ts`
 - A tap or click in the top quarter of the card area reads example 1, in the second quarter example 2; a second one pauses or resumes.
 - A comparison opens in the same sheet. A lookup that returns no card says "No vocabulary card was returned."
 
-**Keys (laptop):** ← → meanings; ↑ ↓ results; S saves the meaning (or says it's already saved); Shift+S saves every meaning of the open result; P says the word; E reads the first two examples (again: pause or resume); Space plays or pauses (the first example when nothing plays); ⌘1-4 read example 1-4; Esc closes. Held keys other than the arrows act once, and a dialog above the sheet keeps the keys.
+**Keys (laptop):** ← → meanings; ↑ ↓ results; S saves the meaning (or says it's already saved); Shift+S saves every meaning of the open result; P says the word; E reads the first two examples (again: pause or resume, or past 85% start again; one still loading is left alone); Space plays or pauses (the first example when nothing plays); ⌘1-4 read example 1-4; Esc closes. Held keys other than the arrows act once, and a dialog above the sheet keeps the keys.
 
 ### 3.5 Errors and offline
 
-- Failures collect in a red toast above the search button: the newest failure, "+N more", one action and ×. The action is **Retry** (or **Retry all**, which reruns every failure a retry could fix), or **Edit** for a word with no dictionary entry, which puts the text back in the box, selected. × clears them all. A failure that neither could fix leaves after 6 seconds.
+- Failures collect in a red toast above the search button: the newest failure, "+N more", one action and ×. The action is **Retry** (or **Retry all**, which reruns every failure a retry could fix), or **Edit** for a word with no dictionary entry, which puts the text back in the box, selected. × clears them all; while a passing notice holds the toast (a request refused offline, a refresh that failed), × clears only that notice, and the failures it hid come back. A failure that neither could fix leaves after 6 seconds.
 - Messages quote at most 40 characters of the query: "Couldn’t reach DictProp for “gamut”.", "The model did not finish “gamut” before the timeout.", "No dictionary entry found for “gamut”. Check the spelling and try again.", "Your session expired. Sign in again to retry “gamut”.", "The AI provider is temporarily unavailable for “gamut”.", "The AI provider rate-limited this request. Try again shortly."
 - Offline, saved words and saved comparisons still open. Any other lookup, and any scan, says "You're offline, so only saved words can be looked up."; an unsaved comparison says "You're offline, so only saved comparisons can be opened."
 - The server gives a lookup 300 s, a scan 240 s and a comparison 600 s, and takes at most 5,000 characters.
@@ -93,7 +93,7 @@ Refresh, from a card, the review popup, a Notebook row or the results sheet, run
 
 ### 3.7 Comparisons
 
-- A card's Synonyms or Confusables have a Compare button: pick up to 7 more words (8 in all) and press Go. The Notebook's compare mode picks 2 or 3 words.
+- A card's Synonyms or Confusables have a Compare button: pick up to 7 more words (8 in all) and press Go. The Notebook's compare mode picks 2 to 8 words.
 - A saved comparison opens at once in the results sheet; a new one is generated in the background and lands there. It has a Key Difference summary, three dimensions (core meaning, register, collocation), two contextual examples, two or three common mistakes and a verdict.
 - Comparisons are saved for the account on the server and cached on the device, and each word's card lists the ones that include it.
 
@@ -113,7 +113,7 @@ The Notebook lists your saved words and phrases; sentences live on the Sentences
 
 ### 4.1 The list
 
-- Cards are grouped by spelling. Within a group, meanings are ordered by usage label: Modern American, Current general English (and cards with no label), Specialized, British only, Rare or dated. A group with several meanings is a carousel: a sideways swipe or a two-finger trackpad swipe steps through them and loops; the dots jump; on wider screens ‹ › buttons step and stop at the ends.
+- Cards are grouped by spelling. Within a group, meanings are ordered by usage label: Modern American, Current general English (and cards with no label), Specialized, British only, Rare or dated. A group with several meanings is a carousel: a sideways swipe or a two-finger trackpad swipe steps through them and loops; the dots jump; on wider screens ‹ › buttons step and loop too.
 - A row shows the spelling, the IPA (a tap says the word in the system voice and doesn't open the card), the sense label when the group has several meanings, the Chinese, the first example and the etymology ("Origin").
 - **Badges.** An orange "Due" badge marks a card to review; this badge keeps the word "Due" and includes cards never reviewed. A grey "Archived" badge marks archived cards. The left strip is orange for a card to review, emerald for one resting more than 21 days, grey otherwise. Rows show no memory label.
 - Tapping a row opens the card view on the cards of the section it's in: the main list, the due block or the archived section (section 5).
@@ -137,15 +137,15 @@ The Notebook lists your saved words and phrases; sentences live on the Sentences
 ### 4.4 The AI lookup in the Notebook box
 
 - **Enter in the box runs the AI lookup**, by the owner's choice. So do the wand ("Search with AI (Enter)"), "Look it up with AI" under an empty result, and a voice transcript.
-- It always asks the AI, even for a saved word, and sends the text as typed: a sentence gets one whole-sentence analysis whose expressions show as cards, not a scan as in the search box (3.2).
+- For a word or phrase it always asks the AI, even for a saved word, and sends the text as typed. A sentence goes to the search instead and is scanned for its expressions, as in the search box (3.2).
 - **Results** show above the list as "Search Results", a carousel of full word cards with Save. → and a swipe left loop; ← stops at the first card; each step says the word. Editing the text removes the result, its error and any lookup in flight (a change of case or spacing keeps them).
-- **Offline**, Enter says "You’re offline — showing saved matches only.", with Retry once you're back online. Other failures use the search's wording (3.5), with Retry only when it can help.
+- **Offline**, Enter on a word or phrase says "You’re offline — showing saved matches only.", with Retry once you're back online; a sentence gets the search's offline notice (3.5). Other failures use the search's wording (3.5), with Retry only when it can help.
 - **Voice search.** The mic shows while the box is empty (disabled offline) and records until tapped again; the speech is transcribed (Whisper large-v3-turbo) and looked up. Errors: "Voice search isn't available in this browser.", "Microphone access denied. Please enable microphone permissions.", "Couldn't start the microphone. Check that one is connected and not in use by another app.", "Voice transcription failed. Please try again."
 
 ### 4.5 Row actions and compare mode
 
 - **Row actions.** A long press (half a second), a right-click or the row's ⋯ opens Refresh with AI, Archive (or Unarchive) and Delete. Only one row's actions are open at a time; scrolling, Esc or a tap elsewhere closes them, and that tap doesn't also open the card under it. Delete, Archive and Unarchive act at once on the meaning shown and offer Undo for 6 seconds.
-- **Compare mode** (the scales button, disabled offline): tick 2 or 3 words in the main list, then press "Compare N Words" (3.7). Esc, × or the button leaves it.
+- **Compare mode** (the scales button, disabled offline): tick 2 to 8 words anywhere in the list, the due and archived ones included, then press "Compare N Words" (3.7). Esc, × or the button leaves it.
 
 ### 4.6 The tools menu
 
@@ -168,7 +168,7 @@ Rows that need a connection grey out with "Needs a connection" once the connecti
 
 - **The scan** finds groups of cards saved under different forms of one word (run, ran, running), archived cards included. With none, a pill says "No duplicates found" for 3 seconds.
 - **The dialog** suggests a headword for each group, the base the other forms belong to ("run" for "ran"). A group starts ticked only when the evidence says it is one word; pairs that may be different words (find/found, lie/lay, saw/see, left/leave) start unticked under "Possibly different words", with each word's short definition. The button says what it will do, for example "Merge 5" over "relabels 7 cards, removes 2".
-- **Merging** relabels the cards to the headword and joins their forms. For each sense label it keeps the more reviewed card (then the richer one) and removes the others; a card with no sense label is never merged away. It pushes at once, with no undo. The dialog says review progress is merged, but the merge keeps one card's schedule and drops the others'.
+- **Merging** relabels the cards to the headword and joins their forms. For each sense label it keeps the more reviewed card (then the richer one) and removes the others; a card with no sense label is never merged away. It pushes at once, with no undo. Review progress isn't merged: each card keeps its own, as the dialog says. While the ticked merges remove cards, the dialog warns: "Merging removes 2 duplicate cards of the same sense. Close other open tabs and devices first, so sync doesn’t bring them back."
 
 ### 4.8 Batch import and Import JSON
 
@@ -184,7 +184,7 @@ Rows that need a connection grey out with "Needs a connection" once the connecti
 
 - A picture loads from the device, then from the server, and is kept on the device once loaded; one that can't be found shows "No Image".
 - After a sync, the app quietly stores the pictures of up to 60 cards due within 24 hours and of the 20 most recently saved, except with Save-Data on, on a 2G connection, or when storage is more than 85% full.
-- **Download image pack** fetches every missing picture of unarchived cards, 20 at a time, soonest due first: "Offline images · 120/340" with ×, then "Saved 340 images for offline use", "Saved 300 of 340 images · 40 couldn’t download", "All images are already offline" or "No images to download".
+- **Download image pack** fetches every missing picture in the library, archived cards included, 20 at a time, soonest due first: "Offline images · 120/340" with ×, then "Saved 340 images for offline use", "Saved 300 of 340 images · 40 couldn’t download", "All images are already offline" or "No images to download".
 - **Restore server images** uploads the pictures this device has that the server lacks: "Restored 12 images to the server", "Restored 10 of 12 images; 2 failed", "All images already on the server" or "Couldn’t restore images. Try again later." Pictures that failed to upload are also sent again by themselves after the next sync that gets through.
 
 ### 4.10 An empty notebook
@@ -195,9 +195,9 @@ It shows its header (the counts, the ⋯ menu and the user menu, without Compare
 
 ### 5.1 Opening and moving
 
-- The card view covers the screen. It opens from a Notebook row (paging through that section's cards), from Study's "Open card" (the card among the other meanings of its spelling) and from the study summary's missed words. The review popup doesn't open it.
+- The card view covers the screen. It opens from a Notebook row (paging through that section's cards), from Study's "Open card" (the card among the other meanings of its spelling) and from the words the study summary lists to look at again. The review popup doesn't open it.
 - Moving to another word opens it at its top, on its first meaning; moving between meanings keeps the scroll position. A card that a delete or archive slides into the same place opens at its top. Each card says its word (system voice) as it shows, except during example auto-play.
-- The card follows the library live: an edit from a sync or another device shows at once, and a card deleted elsewhere leaves the view (the next one takes its place; the view closes after the last).
+- The card follows the library live: an edit from a sync or another device shows at once, and a card deleted elsewhere leaves the view: the card on screen stays where it is, and when it is the one deleted, the next one takes its place (the view closes after the last).
 
 ### 5.2 What a word card shows
 
@@ -217,24 +217,24 @@ From top to bottom:
 
 - **The header** starts hidden. A short pull down at the top of the card, or H, shows it; scrolling down hides it. While it's hidden, a round × stays at the top right, with dots for the meanings when there are several.
 - **Top row:** Close, "i/N" meanings and Refresh with AI. A saved card adds Delete (the trash), a green Got it (Unarchive instead on an archived card) and ⋮ (Archive or Unarchive, Reset Memory Strength, Delete); an unsaved card shows Save.
-- **Second row:** an "Archived" chip on archived cards; the memory badge ("New", or "Learning 45%"), a bar, the review count and the streak; the next review ("3d", "5h", or "due" once the time has passed; unlike the term in section 1, a never-reviewed card shows "due" too); and two library counts: the cards at 70% strength or more, and a clock with the number of due spellings, titled "{n} due (reviewed cards)".
+- **Second row:** an "Archived" chip on archived cards; the memory badge ("New", or "Learning 45%"), a bar, the review count and the streak; the next review ("3d", "5h", or "due" once the time has passed; unlike the term in section 1, a never-reviewed card shows "due" too); and two library counts: a check with the meanings at 70% memory or more, titled "{n} meanings at 70% memory or more", and a clock with the number of due spellings, titled "{n} due (reviewed cards)".
 - **The position line** ends the card when the view holds two or more words: "Word 12 of 230 · 5 to review after this", or "Word 12 of 230 · archived" on an archived card.
 
 ### 5.4 Actions
 
-- **Got it** (the header button, R, or a double-click or double tap on blank space) records Good. A "Remembered!" card shows "Next review tomorrow", "in 4 days" or "in ~2 months" for 1.5 seconds while that card is on screen. The same card counts once in 1.5 seconds; another card's Got it always counts.
+- **Got it** (the header button, R, or a double-click or double tap on blank space) records Good; on an archived card, whose header offers Unarchive instead, R and the double-click or double tap do nothing. A "Remembered!" card shows "Next review tomorrow", "in 4 days" or "in ~2 months" for 1.5 seconds while that card is on screen. The same card counts once in 1.5 seconds; another card's Got it always counts.
 - **Save** (the header's Save, S, ⌘S) only saves; pressing S on a saved card changes nothing.
 - **Delete** (the trash, D, the menu) and **Archive** (A, the menu) take the card out of the view at once, and the next card takes its place; **Unarchive** keeps it in view. Each offers Undo for 6 seconds ("Deleted “word”", "Archived “word”", "Unarchived “word”"), which puts the card back where it was.
-- **Reset** (Shift+R, the menu) makes a reviewed card new again, with Undo ("Reset “word”"); on a card never reviewed it does nothing. A second press of Delete, Archive or Reset within 0.7 seconds is ignored.
+- **Reset** (Shift+R, the menu) makes a reviewed card new again, with Undo ("Reset “word”"); on a card never reviewed it does nothing. A second press of Delete, Archive or Reset within 0.7 seconds is ignored, and so are Got it, Delete, Archive and Reset within 0.7 seconds of Unarchive, whose place in the header Got it takes.
 - **Refresh with AI** works as in 3.6.
 
 ### 5.5 Reading by touch, the slideshow and example auto-play
 
 - **Reading by touch.** On a touch screen, a tap in the top quarter of the screen reads example 1, in the second quarter example 2; marks on both edges show the bands. A second tap pauses or resumes, and past 85% starts again. A double tap leaves playback as it was before the first tap, and a tap that stops a scroll only stops it.
-- **The playback cluster** at the bottom right holds Clear | Casual, voice speed, Duration (5 to 25 minutes, default 20), the slideshow and example auto-play.
+- **The playback cluster** at the bottom right holds Clear | Casual, voice speed, Duration (5 to 25 minutes, default 20), the slideshow and example auto-play. It steps aside while an example is open over the card.
 - **The slideshow** shows each card for 1, 1.5, 2 (default), 3 or 5 seconds (+ or = changes it), meaning by meaning, then word by word, saying each word. Any manual move stops it.
-- **Example auto-play** reads each card's first two examples (on a phrase card, the phrase) ×1 to ×5 (default ×3), with a gap of 2, 3, 5 or 10 seconds (default 2) between reads and 600 ms between cards. It ends after the last card or when Duration runs out, letting the read under way finish. Anything else that speaks stops it; E pauses or resumes it, and Space stops it.
-- While either runs, the screen stays awake (a pause keeps it awake for 2 minutes only) and the lock screen shows the word. Duration, repeats, gap and slide time reset each time the card view opens; Clear/Casual and speed are kept.
+- **Example auto-play** reads each card's first two examples (on a phrase card, the phrase) ×1 to ×5 (default ×3), with a gap of 2, 3, 5 or 10 seconds (default 2) between reads and 600 ms between cards. It ends after the last card, when Duration runs out (letting the read under way finish), or once it has stayed paused for 15 minutes. Anything else that speaks stops it; E pauses or resumes it, and Space stops it.
+- While either runs, the screen stays awake (a pause keeps it awake for 2 minutes only) and the lock screen shows the word. Duration, repeats, gap and slide time are kept on the device, as Clear/Casual and speed are: each card view opens with the ones last chosen, and a word card shares them with a sentence opened from it.
 
 ### 5.6 Gestures and keys
 
@@ -261,7 +261,7 @@ Held letters act once and held arrows repeat. With ⌘, Ctrl or Alt held, letter
 
 ### 5.7 Phrase cards
 
-Older versions of the app saved some lookups as phrase items; today every lookup saves each meaning as a word card, multi-word expressions included. A phrase card shows its picture, its translation as the title, the phrase and its pronunciation, PlayPhrase and ChatGPT links, grammar notes, and "Key Vocabulary": a full word card for each word. A Key Vocabulary card's save button toggles (on a saved word it deletes that word's card, with Undo), and its × removes the word from the phrase, with no undo.
+Older versions of the app saved some lookups as phrase items; today every lookup saves each meaning as a word card, multi-word expressions included. A phrase card shows its picture, its translation as the title, the phrase and its pronunciation, PlayPhrase and ChatGPT links, grammar notes, and "Key Vocabulary": a full word card for each word. A Key Vocabulary card's save button toggles (on a saved word it deletes that word's card, with Undo), and its × removes the word from the phrase, with Undo ("Removed “word”"), which puts it back where it was.
 
 ## 6. Sentence lessons
 
@@ -271,7 +271,7 @@ A sentence lesson is the card view for sentences: saved sentences, Real Life lin
 
 - **Where it opens:** a row on the Sentences tab, a line in a Real Life collection or a sentence in an essay (the lesson walks that list in its on-screen order, from the tapped sentence); a collection's or essay's Study button; the search box's saved-sentence suggestions; and "Open sentence review" on a word card (over the card) or under a study answer.
 - Each sentence is paired with its source card, the word it came from; P and ⌘1-4 act on that card.
-- An unsaved example opened from a word card is a preview: it has no review pill, Reset, Delete or picture button, and its right-hand button is "Save sentence".
+- An unsaved example opened from a word card or under a study answer is a preview: it has no review pill, Reset, Delete or picture button, and its right-hand button is "Save sentence". One opened under a study answer shows no pill after it is saved either.
 
 ### 6.2 The sentence page
 
@@ -305,7 +305,7 @@ The owner's design:
 - **Pages:** a swipe left, →, or a two-finger trackpad swipe opens the analysis page; a swipe right or ← returns to the sentence, and a swipe right on the sentence page closes the lesson.
 - **Esc** closes, in turn, the picture panel, the auto-play panel and the analysis page, then the lesson.
 - Closing a lesson opened by tapping an essay sentence returns the essay to the last sentence the lesson showed, tinted for 1.5 seconds and, on a laptop, focused, so Enter reopens it.
-- A saved sentence deleted on another device leaves the run, and the lesson closes if it was the last.
+- A saved sentence deleted on another device leaves the run; the sentence on screen stays unless it is the one deleted, and the lesson closes if it was the last.
 
 ### 6.5 The analysis page
 
@@ -322,7 +322,7 @@ The owner's design:
 ### 6.6 Listening and auto-play
 
 - Each saved sentence remembers its last Clear or Casual voice, and showing it switches to that voice; choosing a voice, or hearing the sentence to its end, records it. The speaker and E play, pause, resume, and restart past 85%.
-- **Auto-play.** The round button starts it and opens its panel, "Auto-play": speed; Duration, 5 to 25 minutes (default 20); Repeats, ×1 to ×5 (default ×3); Interval, 2, 3, 5 or 10 seconds (default 2); and Stop auto-play. Each sentence is read Repeats times with the interval between reads, then the next. It ends after the last sentence or when Duration runs out; the read under way finishes, and paused time doesn't count.
+- **Auto-play.** The round button starts it and opens its panel, "Auto-play": speed; Duration, 5 to 25 minutes (default 20); Repeats, ×1 to ×5 (default ×3); Interval, 2, 3, 5 or 10 seconds (default 2); and Stop auto-play. Each sentence is read Repeats times with the interval between reads, then the next. It ends after the last sentence, when Duration runs out (the read under way finishes, and paused time doesn't count), or once it has stayed paused for 15 minutes.
 - **The lock.** While auto-play runs, Back reads "Auto-play" with a lock, and Esc, Back or a swipe right open the panel; Stop is the way out. A tap on the button toggles the panel, and a long press (half a second) opens it.
 - **Pausing.** Anything else that speaks (a lookup, a popup, a word, a voice change) pauses auto-play: the button shows Play and the countdown stops, and one tap resumes by reading the interrupted sentence again. A blank-space tap, the speaker, E and Space pause or resume it at any moment, and a pause from the phone (a call, AirPods taken out) shows as paused too.
 - It preloads the clips and pictures it can reach in the time left ("Preloading k/N"). The screen stays awake, and a pause lets it sleep after 2 minutes. The lock screen and AirPods play and pause it, and next and previous move between sentences.
@@ -351,14 +351,14 @@ Saved sentences and Real Life or essay lines can take a picture: tap the picture
 
 ### 7.1 What the three tabs share
 
-- Every sentence is unreviewed, due, or memorized (reviewed and not due yet). Study never takes sentences; you review them on these tabs and in their lessons.
+- Every sentence is new (never reviewed), due, or memorized (reviewed and not due yet). Study never takes sentences; you review them on these tabs and in their lessons.
 - Saved sentences, Real Life lines and essay sentences keep separate records: reviewing a Real Life line never changes a saved copy of the same text.
-- **A sentence keeps its place in a list until it is memorized**, by the owner's design. On the Sentences tab the order follows memory strength, which only a review (Got it or Reviewed) changes, so listening never moves a sentence. Real Life and essays keep their catalog order. Lists also don't shift as time passes or as syncs land: their clock is re-read only when you open a collection, an essay or a sentence, change the Sentences tab's filter or search, or come back to the tab or the app. An open lesson keeps the order it opened with.
+- **A sentence keeps its place in a list until it is memorized**, by the owner's design. On the Sentences tab the order follows memory strength, which only a review (Got it or Reviewed) changes, so listening never moves a sentence. Real Life and essays keep their catalog order. Lists also don't shift as time passes or as syncs land: their clock is re-read only when you open a collection, an essay or a sentence, change the filter or search on the Sentences tab or the theme, review chip or search in a Real Life collection, or come back to the tab or the app. An open lesson keeps the order it opened with.
 - Reviewed buttons record Good. A double click records one review, and a second Reviewed press within half a second in the same list is ignored.
 
 ### 7.2 Sentences
 
-- Your saved sentences, under "Sentences", "{N} saved" and an orange "{K} to review". Order: weakest memory strength first, ties to the newest saved. Filter chips: All, Unreviewed, Due, Memorized.
+- Your saved sentences, under "Sentences", "{N} saved" and an orange "{K} to review". Order: weakest memory strength first, ties to the newest saved. Filter chips: All, New, Due, Memorized.
 - **Search** ("Search saved sentences…") covers the sentence and its source word, ignoring case, accents, curly quotes and dashes. Literal matches update as you type (sentences in which the typed words start words come first), typo-tolerant ones 200 ms after typing pauses, and a search overrides the chips. With no match: "No sentences match “…”" and "Press Enter to look it up with AI instead". Enter sends the text to the search (section 3): a sentence is scanned, a word looked up. Esc clears the box.
 - **Rows:** a strip on the left (grey for a sentence never reviewed, red under 40%, amber from 40%, emerald from 70%); the sentence (tapping the studied phrase opens the row, a saved word opens its review popup, a green word looks it up); the source word (or "Saved sentence") and its sense; and, for a sentence not to review, when it comes due ("tomorrow", "in 3d"). A sentence to review is orange, with a green "Reviewed" button. The trash asks "Delete" or "Cancel" in place, then offers Undo.
 - A tap on a row, or Space or Enter on a focused row, opens its lesson.
@@ -376,9 +376,9 @@ Five collections ship with the app, 1,120 lines in all:
 | Travel Conversations | B2–C1 | 10 | 200 |
 
 - **Landing page:** a tile per collection with its level, themes, "N reviewed", "N% mastery", line count, and "N due · M new" (the due count in an orange pill) or "all reviewed".
-- **A collection** shows its title and "18% mastery · 46/234 reviewed"; wider screens add a stats strip with the due count over "due · M new". Below are a search box, the review chips (All, Unreviewed, Due, Memorized) and theme chips.
+- **A collection** shows its title and "18% mastery · 46/234 reviewed"; wider screens add a stats strip with the due count over "due · M new". Below are a search box, the review chips (All, New, Due, Memorized) and theme chips.
 - **Study** takes the theme and search in view, due lines first, then new ones: "Study 12"; "Practice" when nothing in view is due or new (it then goes through every line in view); a disabled "Study" when nothing is in view.
-- **Rows** come in catalog order. Each shows the line, its theme, "Saved" if it is also a saved sentence, a state pill (a check and its strength when memorized, an orange "Due", or a grey "Unreviewed"), Reviewed unless it is memorized, and a speaker; a line started from the speaker keeps playing when the row scrolls away or a filter hides it.
+- **Rows** come in catalog order. Each shows the line, its theme, "Saved" if it is also a saved sentence, a state pill (a check and its strength when memorized, an orange "Due", or a grey "New"), Reviewed unless it is memorized, and a speaker; a line started from the speaker keeps playing when the row scrolls away or a filter hides it.
 - The first Esc clears the search and the next returns to the collections; Back returns to the landing page where you left it.
 
 ### 7.4 Essays
@@ -441,12 +441,12 @@ Saved words and phrases that aren't archived, each meaning on its own schedule; 
 - **The grades** are four buttons in one row (Again, Hard, Good, Easy; keys 1-4), each showing its next interval, in the slot where Show answer was. A tap within 350 ms of the reveal or of a grade is ignored.
 - A grade whose interval is under a day brings the card back at the end of the session: Again (10 minutes), and Hard on a new or relearning card (15 minutes). A card reviewed elsewhere since the session began (in the popup, the card view or on another device), deleted or archived is skipped. Time away from a prompt counts at most two minutes toward the review.
 - **The receipt line** above the grades names the last grade, for example "↶ walk · Good · next in 2d". It says "again later this session" when the card will come back, shows "Undoing…" during an undo, and adds "· saved on this device" while the grade waits to reach the server.
-- **Undo** (U, or the line's button) goes back one grade only, to the card, revealed. It needs the grade to have reached the server first ("This review is still syncing. Try undo again." online, "Reconnect to undo this review." offline), and a failed undo shows in the line for 4 seconds. A grade, ending the session or an undo stops only audio the session started.
+- **Undo** (U, or the line's button) goes back one grade only, to the card, revealed. It needs the grade to have reached the server first ("This review is still syncing. Try undo again."). A failed undo says why, in the line for 4 seconds or on the summary: "This card changed since, so the review can’t be undone." when a later change to the card superseded the review, "Reconnect to undo this review." offline, and otherwise "The review could not be undone." A grade, ending the session or an undo stops only audio the session started.
 
 ### 8.6 Ending, the summary and reloads
 
 - × or Esc after at least one grade shows "Ended early · 23 of 50 reviewed" with Resume (R); before any grade it returns straight to the dashboard.
-- **The summary:** "Session complete · 50 cards"; the count of each grade and "Recalled X of Y prompts."; "Missed (N)", the words graded Again or Hard, each of which opens its card, with "Review missed words" to go through them in the card view; "Undo last rating"; and "Done" (Enter), back to the dashboard.
+- **The summary:** "Session complete · 50 cards"; the count of each grade and "Recalled X of Y prompts."; "To look at again (N)", the words rated Again or Hard, each of which opens its card, with "Open these cards" to go through them in the card view; "Undo last rating"; and "Done" (Enter), back to the dashboard.
 - A running session survives a reload, an update or iOS closing the app: for six hours after its last grade or move, it comes back at the card you were on, unrevealed, skipping cards reviewed elsewhere meanwhile. A session that ended early also comes back at its card.
 
 | Key | Action |
@@ -465,9 +465,9 @@ Saved words and phrases that aren't archived, each meaning on its own schedule; 
 
 - **It opens** from a saved word in a sentence: a dotted word on a Sentences or Real Life row, or the look-up gesture on a saved word or a selected saved phrase in a lesson.
 - **It shows** every saved meaning of the spelling, archived ones included, opening on the one you tapped; after them, the word's other meanings from a fresh lookup (once per word per session), each marked "Not in your library yet" with "Save this meaning". The header holds the word, its sense, "‹ i/N ›", Clear/Casual, speed and close. A sideways swipe changes the meaning, and each change says the word.
-- **A saved meaning's row** shows its memory (badge, review count, streak, next review), Reset, Delete (a first press turns it into "Sure?" for 2.5 seconds) and Got it. Confirmations show in a pill under the header for 1.6 seconds: "Next review in 32d", "Memory reset", "Saved to your library".
+- **A saved meaning's row** shows its memory (badge, review count, streak, next review), Reset, Delete (a first press turns it into "Sure?" for 2.5 seconds) and Got it. Confirmations show in a pill under the header for 1.6 seconds: "Next review in 32d", "Memory reset" ("Nothing to reset yet" on a meaning never reviewed), "Saved to your library".
 - **Reading by touch:** on a phone, the card's outer edges read (the top quarter example 1, the second quarter example 2); on wider touch screens the gutters beside the card do. Selecting text and letting go over the dimmed area doesn't close the popup, and it closes by itself once every meaning it showed is deleted, here or on another device.
-- **Keys:** ← → change the meaning; Space plays or pauses (the first example when nothing plays); P says the word; E reads the first two examples; ⌘1-4 read example 1-4; R is Got it, or saves an unsaved meaning; Shift+R resets; D deletes (press again to confirm); Enter saves an unsaved meaning; Esc closes. Other ⌘ and Ctrl shortcuts stay the browser's (⌘R reloads, ⌘P prints), and held keys act once.
+- **Keys:** ← → change the meaning; Space plays or pauses (the first example when nothing plays; a read still loading is left alone); P says the word; E reads the first two examples (again: pause or resume, or past 85% start again; one still loading is left alone); ⌘1-4 read example 1-4; R is Got it, or saves an unsaved meaning; Shift+R resets; D deletes (press again to confirm); Enter saves an unsaved meaning; Esc closes. Other ⌘ and Ctrl shortcuts stay the browser's (⌘R reloads, ⌘P prints), and held keys act once.
 
 ## 9. Audio
 
@@ -513,11 +513,12 @@ Notices are pills in one column at the bottom centre: above the tab bar on the t
 | Can't save | Rose: "Couldn’t save on this device. Your changes still sync." Offline: "Couldn’t save on this device. Keep this tab open until you’re back online." | When saving to the device fails, until a save works; also over cards |
 | Stuck sync | Amber: "3 changes not synced", with Retry | Online and visible, after two failed pushes in a row and a minute since the first |
 | Offline | Amber: "Offline" | After 3 seconds without a connection, until it returns; on the tabs only |
+| Refused changes | Amber: "1 change stays on this device: the server refused it" ("3 changes stay on this device: the server refused them") | While an item holds content the server refused (invalid, or too large), until it changes and is sent again |
 | Refused reviews | Amber: "1 review wasn’t accepted", with View | Until viewed or dismissed (11.3) |
 | Update | "Update ready" with Reload, or "Reload needed" | A new version waits until no card or popup is open; "Reload needed" (part of the app failed to load) shows at once |
 
 - A background job shows one result pill at a time, each with ×; a new result replaces the one showing. Reload reads "Saving…" while it sends pending changes (for up to 10 seconds), then reloads.
-- **What can be undone:** deleting, archiving and unarchiving a card; resetting a reviewed card (resetting a card never reviewed does nothing and offers nothing); Refresh with AI; and Clear all in the search results. Merging duplicates and removing a word from a phrase can't be undone.
+- **What can be undone:** deleting, archiving and unarchiving a card; resetting a reviewed card (resetting a card never reviewed does nothing and offers nothing); Refresh with AI; removing a word from a phrase; and Clear all in the search results. Merging duplicates can't be undone.
 - **How undo works:** one offer shows at a time, and a new one closes the old, whose change then goes through. Undo, or ⌘Z (Ctrl+Z elsewhere) while the pill shows, takes the change back; ⌘Z doesn't act in a text field, whose own undo wins, or while a decision dialog is open. An offered change is saved on the device at once but kept from the server until the pill closes, then pushed at once. Signing out or reloading closes the offer first.
 
 ## 11. Sync and offline
@@ -532,7 +533,7 @@ Notices are pills in one column at the bottom centre: above the tab bar on the t
 
 - **Launch:** the app reads the device's copy, then sends queued reviews, pulls changes and pushes local edits. A first visit takes a full copy, 500 items a page. If the device's copy can't be read: "Couldn’t open your library", with Try again, Reload app and Use the server copy (which may lose changes not yet synced).
 - **Pulls:** while the app is visible and online, it pulls the server's changes since its last revision, 500 at a time, every 8 seconds, when the window gets focus or the page becomes visible, when the connection returns, and when another tab of the app has sent something.
-- **Pushes:** 5 seconds after edits pause, and no later than 30 seconds into a steady stream of edits such as a study session, in batches of 200; deletes, archives and resets go at once, after their undo window. A failed push is retried after 8 seconds, then after longer waits up to 5 minutes, and at once when the connection returns. Two failures in a row and a minute without success bring up the stuck-sync pill.
+- **Pushes:** 5 seconds after edits pause, and no later than 30 seconds into a steady stream of edits such as a study session, in batches of 200; deletes, archives and resets go at once, after their undo window. A failed push is retried after 8 seconds, then after longer waits up to 5 minutes, and at once when the connection returns. Two failures in a row and a minute without success bring up the stuck-sync pill. An item the server refuses (invalid, or too large) stays on the device, with the refused-changes pill, until it changes; Retry can't help it, so it doesn't count toward the stuck-sync pill.
 - **Merging:** the server's revision numbers decide which copy is newer, and unsynced edits on the device survive a pull. A deletion wins unless the other copy is newer. A delete or archive made on the device applies on top of a server copy that changed meanwhile (an enrichment, for example). For schedules, the newer review wins. A copy stripped of its content never replaces a full one.
 
 ### 11.3 Reviews
@@ -549,10 +550,10 @@ Notices are pills in one column at the bottom centre: above the tab bar on the t
 
 ## 12. Accounts
 
-- **One owner.** DictProp signs in with Google only and admits one person. With `OWNER_GOOGLE_EMAIL` set, only that address can sign in; its first sign-in on an empty database creates the admin account, and later sign-ins need that account. Anyone else gets "This DictProp instance is private.", sent as plain JSON rather than a page.
+- **One owner.** DictProp signs in with Google only and admits one person. With `OWNER_GOOGLE_EMAIL` set, only that address can sign in; its first sign-in on an empty database creates the admin account, and later sign-ins need that account. Anyone else gets a page saying "This DictProp instance is private. If it’s yours, sign in with the Google account that owns it.", with a Back to DictProp link; a request that doesn't accept HTML still gets the JSON error.
 - **The sign-in screen** reads "DictProp", "AI-powered vocabulary learning" and "Sign in with Google". Offline, the button reads "Connect to sign in" and stays disabled until the connection returns.
 - **Sessions:** an httpOnly cookie, whose token the server stores only as a hash. A session lasts 30 days, and using the app renews it once it has less than 23 days left, up to 180 days after you signed in. In practice you sign in again after three to four weeks away from the app, or every 180 days.
-- **Expiry while the app is open:** the app keeps the library and any unsynced changes on the device and shows the sign-in screen with "Your sign-in expired. Your library and any changes not yet synced are kept on this device. Sign in to pick up where you left off." A lookup the expiry interrupted runs again after you sign in.
+- **Expiry while the app is open:** the app keeps the library and any unsynced changes on the device and shows the sign-in screen with "Your sign-in expired. Your library and any changes not yet synced are kept on this device. Sign in to pick up where you left off." The lookups, comparisons and scans the expiry interrupted run again after you sign in (3.3).
 - **Signing out** (the user menu in the Notebook header) asks "Sign out?" ("You'll need to be online to sign back in."), sends unsent changes first (for up to 10 seconds), then signs out and reloads. Offline it is greyed out; if the server can't be reached it says "Couldn't sign out", and you stay signed in.
 - The library, the outbox, the refused-review log and the reading places are kept per account on each device. www.dictprop.online redirects to dictprop.online, so the sign-in cookie lives on one address.
 
