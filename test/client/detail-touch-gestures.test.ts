@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { sentenceTouchAction, touchFacts, wordTouchAction, type ScrollPosition } from '../../views/detail/touchGestures.ts';
+import { TAP_CONTROL_SELECTOR, doubleTapControlSelector } from '../../services/reviewGestures.ts';
 
 const top: ScrollPosition = { scrollTop: 0, scrollHeight: 2000, clientHeight: 800 };
 const middle: ScrollPosition = { scrollTop: 600, scrollHeight: 2000, clientHeight: 800 };
@@ -108,3 +109,60 @@ test('on a word card a sideways swipe changes the meaning, and right past the fi
 function pick({ atTop, atBottom, fits }: ReturnType<typeof touchFacts>) {
   return { atTop, atBottom, fits };
 }
+
+/** A stand-in for a DOM element: enough of closest() for the selectors the gesture guards use. */
+class FakeElement {
+  constructor(readonly tag: string, readonly attributes: Record<string, string> = {}, readonly parent: FakeElement | null = null) {}
+
+  closest(selector: string): FakeElement | null {
+    const matches = selector.split(',').some(simple => this.matchesSimple(simple.trim()));
+    return matches ? this : this.parent?.closest(selector) ?? null;
+  }
+
+  private matchesSimple(simple: string): boolean {
+    if (/^[a-z]+$/.test(simple)) return this.tag === simple;
+    const attribute = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(simple);
+    if (!attribute) throw new Error(`the fake element can't match ${simple}`);
+    const [, name, value] = attribute;
+    return value === undefined ? name in this.attributes : this.attributes[name] === value;
+  }
+}
+
+/** Whether a double tap on `target` may count as Got it in that view. */
+const remembers = (target: FakeElement, mode: 'card' | 'sentence') => !target.closest(doubleTapControlSelector(mode));
+
+test('a double tap on a word card\'s controls, its look-up words included, never remembers; on blank space it does', () => {
+  const scroller = new FakeElement('div', { 'data-word-card-scroll': '' });
+  const definition = new FakeElement('p', {}, scroller);
+  const example = new FakeElement('span', { class: 'sentence-selectable' }, definition);
+  const controls = {
+    trash: new FakeElement('button', { title: 'Delete (D)' }, scroller),
+    speakerIcon: new FakeElement('svg', {}, new FakeElement('button', { 'aria-label': 'Listen to this sentence' }, scroller)),
+    ipaChip: new FakeElement('button', {}, definition),
+    termSearch: new FakeElement('span', {}, new FakeElement('button', { title: 'Search' }, definition)),
+    link: new FakeElement('a', { href: 'https://example.com' }, definition),
+    greenLookUpWord: new FakeElement('span', { role: 'button', tabindex: '0' }, example),
+  };
+  for (const [name, target] of Object.entries(controls)) assert.equal(remembers(target, 'card'), false, name);
+  assert.equal(remembers(definition, 'card'), true);
+  assert.equal(remembers(example, 'card'), true, 'plain sentence text is blank space');
+  // A single tap leaves the same targets alone: the read bands never read under a control or a look-up word.
+  for (const target of Object.values(controls)) assert.ok(target.closest(doubleTapControlSelector('card')));
+});
+
+test('in sentence review a double tap on a control never remembers, while one on the sentence\'s words still does', () => {
+  const banner = new FakeElement('div');
+  const hero = new FakeElement('p', { 'data-sentence-hero': '' }, banner);
+  const sentence = new FakeElement('span', { class: 'sentence-selectable' }, hero);
+  const savedWord = new FakeElement('span', { role: 'button', tabindex: '0', 'data-word-offset': '4' }, sentence);
+  const lookUpWord = new FakeElement('span', { 'data-word-offset': '10' }, sentence);
+  for (const word of [savedWord, lookUpWord]) {
+    assert.equal(remembers(word, 'sentence'), true, 'double-tapping a word still remembers');
+    assert.ok(word.closest(`${TAP_CONTROL_SELECTOR}, [data-word-offset]`), 'a single tap on a word plays from it instead');
+  }
+  const copyIcon = new FakeElement('svg', {}, new FakeElement('button', { title: 'Copy sentence (to paste into Meta AI)' }, banner));
+  const reset = new FakeElement('button', { title: 'Reset memory (Shift+R)' }, banner);
+  const imageNote = new FakeElement('div', { contenteditable: 'true' }, banner);
+  for (const control of [copyIcon, reset, imageNote]) assert.equal(remembers(control, 'sentence'), false);
+  assert.equal(remembers(banner, 'sentence'), true, 'blank space remembers');
+});

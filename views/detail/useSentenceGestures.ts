@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, type Dispatch, type MouseEvent as ReactMouseEvent, type RefObject, type SetStateAction, type TouchEvent as ReactTouchEvent } from 'react';
 import { log } from '../../services/logger';
+import { TAP_CONTROL_SELECTOR, doubleTapControlSelector } from '../../services/reviewGestures';
 import { sentenceTouchAction, touchFacts } from './touchGestures';
 
 interface SentenceGesturesOptions {
@@ -19,9 +20,9 @@ interface SentenceGesturesOptions {
 
 /**
  * Sentence review's taps, clicks and swipes, eyes-free like the word card: a still tap on blank space plays,
- * pauses or resumes the sentence and a double tap marks it remembered; ←/→ swipes switch between the sentence and
- * its analysis, ↑/↓ swipes between sentences. A tap or click on a word plays from it; a two-finger chord on a word
- * (⌘-click on a laptop) runs the word's lookup.
+ * pauses or resumes the sentence and a double tap off the controls (on the sentence's words too) marks it
+ * remembered; ←/→ swipes switch between the sentence and its analysis, ↑/↓ swipes between sentences. A tap or
+ * click on a word plays from it; a two-finger chord on a word (⌘-click on a laptop) runs the word's lookup.
  */
 export function useSentenceGestures({
   isMobile, sentencePage, setSentencePage, isSentenceAutoPlayingRef, setShowSentenceAutoPlayPanel, onClose,
@@ -113,11 +114,10 @@ export function useSentenceGestures({
       ? document.querySelector<HTMLElement>('[data-sentence-analysis]')
       : null;
     const facts = touchFacts(diffX, diffY, container);
-    // Controls keep their own handlers, so taps on them aren't gestures.
+    // Controls and the sentence's words keep their own handlers, so taps on them aren't gestures. (Every look-up
+    // word, the ARIA buttons among them, carries data-word-offset.)
     const tapTarget = e.target as HTMLElement | null;
-    const onControl = !!tapTarget?.closest(
-      'button, a, [role="button"], input, textarea, select, label, [contenteditable="true"]'
-    );
+    const onControl = !!tapTarget?.closest(TAP_CONTROL_SELECTOR);
     const onSentenceWord = !!tapTarget?.closest('[data-word-offset]');
 
     // A still one-finger tap on blank space toggles natural-voice playback — play → pause → resume; a
@@ -202,7 +202,10 @@ export function useSentenceGestures({
     playFromClickedWord(e);
   };
 
-  const handleDoubleClick = () => {
+  const handleDoubleClick = (e: ReactMouseEvent<HTMLElement>) => {
+    // A double click on a control is two clicks on it, never Got it: double-tapping the speaker, Copy, Reset or a
+    // term's search button doesn't review the sentence. Its words aren't controls here, so a double tap on them does.
+    if ((e.target as HTMLElement | null)?.closest(doubleTapControlSelector('sentence'))) return;
     // Avoid triggering when selecting text
     const selection = window.getSelection();
     if (selection && selection.toString().trim().length > 0) {
@@ -218,7 +221,7 @@ export function useSentenceGestures({
     if (Date.now() < suppressSentenceSurfaceClickUntilRef.current) return;
     if (window.getSelection()?.toString().trim()) return;
     const target = e.target as HTMLElement | null;
-    if (target?.closest('button, a, [role="button"], input, textarea, select, label, [contenteditable="true"], [data-word-offset]')) return;
+    if (target?.closest(`${TAP_CONTROL_SELECTOR}, [data-word-offset]`)) return;
     queueSentenceSurfaceTap(e.clientX, e.clientY);
   };
 

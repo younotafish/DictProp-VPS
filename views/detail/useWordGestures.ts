@@ -1,10 +1,14 @@
-import { useRef, type Dispatch, type RefObject, type SetStateAction, type TouchEvent as ReactTouchEvent, type UIEvent as ReactUIEvent } from 'react';
+import { useRef, type Dispatch, type MouseEvent as ReactMouseEvent, type RefObject, type SetStateAction, type TouchEvent as ReactTouchEvent, type UIEvent as ReactUIEvent } from 'react';
 import type { ItemGroup, SearchResult, StoredItem, VocabCard } from '../../types';
 import { useZoneFlash } from '../../components/EyesFreeZones';
 import { speakWord } from '../../services/neuralTts';
 import { log } from '../../services/logger';
+import { doubleTapControlSelector } from '../../services/reviewGestures';
 import { zoneText } from './cardReading';
 import { touchFacts, wordTouchAction } from './touchGestures';
+
+// On a word card every control keeps its own taps, single or double: the native ones and the green look-up words.
+const CARD_CONTROLS = doubleTapControlSelector('card');
 
 interface WordGesturesOptions {
   scrollContainerRef: RefObject<HTMLElement | null>;
@@ -27,7 +31,8 @@ interface WordGesturesOptions {
 /**
  * The word card's taps and swipes: eyes-free zone taps read the card's parts (see wordTouchAction), a short pull
  * down shows the header, ↑/↓ swipes move between words and ←/→ between meanings, a swipe right past the first
- * meaning closes the view, and a double click marks the card remembered. Scrolling down hides the header again.
+ * meaning closes the view, and a double click off the controls marks the card remembered. Scrolling down hides the
+ * header again.
  */
 export function useWordGestures({
   scrollContainerRef, showHeader, setShowHeader, currentGroup, currentItem, hasNextGroup, hasPrevGroup, hasPrevItem,
@@ -78,9 +83,7 @@ export function useWordGestures({
     const facts = touchFacts(diffX, diffY, scrollContainerRef.current);
     // Controls keep their own handlers, so taps on them aren't gestures.
     const tapTarget = e.target as HTMLElement | null;
-    const onControl = !!tapTarget?.closest(
-      'button, a, [role="button"], input, textarea, select, label, [contenteditable="true"]'
-    );
+    const onControl = !!tapTarget?.closest(CARD_CONTROLS);
 
     const action = wordTouchAction(facts, {
       onControl,
@@ -142,7 +145,10 @@ export function useWordGestures({
     touchStartY.current = null;
   };
 
-  const handleDoubleClick = () => {
+  const handleDoubleClick = (e: ReactMouseEvent<HTMLElement>) => {
+    // A double click on a control is two clicks on it, never Got it: double-tapping the trash, the speaker or a
+    // look-up word doesn't review the card.
+    if ((e.target as HTMLElement | null)?.closest(CARD_CONTROLS)) return;
     // Avoid triggering when selecting text
     const selection = window.getSelection();
     if (selection && selection.toString().trim().length > 0) {

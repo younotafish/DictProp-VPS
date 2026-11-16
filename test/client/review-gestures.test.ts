@@ -4,7 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { SRSData, StoredItem, VocabCard } from '../../types.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
-import { acceptRemember } from '../../services/reviewGestures.ts';
+import { TAP_CONTROL_SELECTOR, acceptRemember, doubleTapControlSelector } from '../../services/reviewGestures.ts';
 import { useRememberToast } from '../../views/detail/useRememberToast.ts';
 import { useSentenceActions } from '../../views/detail/useSentenceActions.ts';
 import { useWordActions } from '../../views/detail/useWordActions.ts';
@@ -85,4 +85,23 @@ test('on a word card Got it on the next card counts at once, and the confirmatio
   actionsFor(library[1]).handleRemember();
   assert.deepEqual(reviewed, ['apple-1', 'pear-1']);
   assert.deepEqual(confirmed, ['apple-1', 'pear-1']);
+});
+
+/** The simple selectors a selector list names, in no particular order. */
+const parts = (selector: string) => new Set(selector.split(',').map(part => part.trim()));
+
+test('a double tap never counts on a native control; on a word card the ARIA-button look-up words are controls too', () => {
+  for (const mode of ['card', 'sentence'] as const) {
+    for (const control of ['button', 'a', 'input', 'textarea', 'select', 'label', '[contenteditable="true"]']) {
+      assert.ok(parts(doubleTapControlSelector(mode)).has(control), `${control} is a control in ${mode} mode`);
+    }
+  }
+  assert.ok(parts(doubleTapControlSelector('card')).has('[role="button"]'));
+  assert.ok(!parts(doubleTapControlSelector('sentence')).has('[role="button"]'), 'a double tap on a sentence word still remembers');
+  assert.equal(doubleTapControlSelector('sentence'), TAP_CONTROL_SELECTOR);
+});
+
+test('a word card\'s taps leave alone the controls they always did', () => {
+  const before = 'button, a, [role="button"], input, textarea, select, label, [contenteditable="true"]';
+  assert.deepEqual(parts(doubleTapControlSelector('card')), parts(before));
 });
