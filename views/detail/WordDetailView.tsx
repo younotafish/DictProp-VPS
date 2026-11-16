@@ -485,6 +485,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
               onSaveVocab={handleSaveVocab}
               isVocabSaved={isVocabSaved}
               onSearch={onSearch}
+              onRefresh={onRefresh}
               onCompare={onCompare}
               onSaveSentence={onSaveSentence}
               onOpenExampleSentence={onOpenExampleSentence ? openExampleSentencePreview : undefined}

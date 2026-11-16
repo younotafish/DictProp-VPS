@@ -36,6 +36,8 @@ interface PhraseBodyProps {
   onSaveVocab: (vocab: VocabCard) => void;
   isVocabSaved: (vocab: VocabCard) => boolean;
   onSearch: (text: string) => void;
+  /** A key-vocabulary card's Refresh: runs the AI for its word again, as the card header's Refresh does. */
+  onRefresh?: (text: string) => void;
   onCompare?: (words: string[]) => void;
   onSaveSentence?: (text: string, word: string, sense?: string, prepared?: SentenceData) => void;
   onOpenExampleSentence?: (text: string, word: string, sense?: string) => void;
@@ -47,8 +49,8 @@ interface PhraseBodyProps {
  * key-vocabulary words.
  */
 export function PhraseBody({
-  phrase, onLazyLoadImage, onRemoveVocabFromPhrase, onSaveVocab, isVocabSaved, onSearch, onCompare, onSaveSentence,
-  onOpenExampleSentence, isSentenceSaved,
+  phrase, onLazyLoadImage, onRemoveVocabFromPhrase, onSaveVocab, isVocabSaved, onSearch, onRefresh, onCompare,
+  onSaveSentence, onOpenExampleSentence, isSentenceSaved,
 }: PhraseBodyProps) {
   return (
     <div className="space-y-6 max-w-3xl md:max-w-5xl lg:max-w-6xl xl:max-w-[1400px] 2xl:max-w-[1600px] mx-auto">
@@ -130,6 +132,7 @@ export function PhraseBody({
                     onSaveVocab={onSaveVocab}
                     isSaved={isVocabSaved(vocab)}
                     onSearch={onSearch}
+                    onRefresh={onRefresh}
                     showSave={true}
                     className="border-slate-200 shadow-sm hover:shadow-md transition-shadow"
                     onCompare={onCompare}
