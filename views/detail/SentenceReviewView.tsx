@@ -15,7 +15,6 @@ import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
 import { preloadSession } from './cardReading';
 import { resolveSentenceUnderReview } from './sentenceUnderReview';
-import { findSavedCard } from './savedCard';
 import { PLATFORM } from './platform';
 import { RememberToast } from './RememberToast';
 import { SentenceHero } from './SentenceHero';
@@ -55,9 +54,7 @@ export function SentenceReviewView({
   onClose,
   onSave,
   onDelete,
-  onUnarchive,
   onResetSRS,
-  savedItems,
   savedSentenceItems = [],
   onSearch,
   onLazyLoadImage,
@@ -211,9 +208,6 @@ export function SentenceReviewView({
   const upcomingItems = useMemo(() => sentencePreloadWindow.slice(1), [sentencePreloadWindow]);
   useWarmImages(upcomingItems, onLazyLoadImage);
 
-  // The source card's saved copy, which only re-registers the shortcut listener (see useSentenceShortcuts).
-  const sourceSavedCopy = useMemo(() => findSavedCard(savedItems, data, title), [savedItems, data, title]);
-
   const handleSentenceAutoPlayFab = useCallback(() => {
     if (!isSentenceAutoPlaying) {
       toggleSentenceAutoPlay();
@@ -341,9 +335,6 @@ export function SentenceReviewView({
     isSentenceAutoPlaying,
     toggleSentenceAutoPlay,
     cycleSpeed,
-    rebindOn: {
-      sourceData: data, sourceType: type, sourceSavedCopy, sourceSaved: !!sourceSavedCopy, onSave, onDelete, onUnarchive,
-    },
   });
 
   // The hero's props, shared by its two layouts (beside an attached picture, or on its own).
