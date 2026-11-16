@@ -142,8 +142,83 @@ test('streaming image QA defers images that exhaust their candidates and keeps a
   assert.match(output, /deferring 1 image\(s\) that failed 2 candidates to a later cycle/);
   assert.equal(readFileSync(join(images, 'easy.webp'), 'utf8'), 'candidate');
   assert.equal(existsSync(join(images, 'hard.webp')), false);
-  // A later cycle must render fresh candidates instead of re-judging the rejected ones.
-  assert.deepEqual(readdirSync(candidates).sort(), ['easy-1.webp', 'easy-2.webp']);
+  // A later cycle must render fresh candidates instead of re-judging the rejected ones, and the accepted image
+  // needs its candidates no more.
+  assert.deepEqual(readdirSync(candidates).sort(), []);
+  assert.match(output, /removed 2 candidate\(s\) of accepted images/);
+});
+
+/** Runs the image loop over `targets` with a renderer that renders nothing and the fake judge, and returns its output. */
+function runImageLoop(root: string, targets: Array<{ imageId: string; filename: string; prompt: string }>): string {
+  const renderer = join(root, 'python');
+  const claude = join(root, 'claude.cjs');
+  writeFileSync(renderer, '#!/bin/sh\nexit 0\n');
+  writeFileSync(claude, fakeClaude);
+  chmodSync(renderer, 0o700);
+  chmodSync(claude, 0o700);
+  const targetsPath = join(root, 'targets.json');
+  writeJson(targetsPath, {
+    version: 1,
+    targets: targets.map(target => ({ ...target, learningTarget: { kind: 'word sense', text: target.imageId, sense: '', definition: '' } })),
+  });
+  return execFileSync('bash', [
+    repoPath('scripts', 'offline', 'run-streaming-image-quality-loop.sh'),
+    targetsPath, join(root, 'candidates'), join(root, 'images'), join(root, 'work'), '1024', '576', '4', '1', '8',
+  ], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, KREA_PYTHON: renderer, CLAUDE_BIN: claude, ENRICHMENT_MODEL_PROVIDER: 'claude', IMAGE_MODEL: 'ernie-image-turbo' },
+  });
+}
+
+/** Writes each file, by its path under root, with its contents. */
+function seed(root: string, files: Record<string, string>) {
+  for (const [path, contents] of Object.entries(files)) {
+    mkdirSync(join(root, path, '..'), { recursive: true });
+    writeFileSync(join(root, path), contents);
+  }
+}
+
+test('a loop that accepts every image removes the candidates of each accepted image, an earlier run\'s included', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-image-complete-'));
+  seed(root, {
+    'candidates/calm-1.webp': 'candidate',
+    'candidates/still-1.webp': 'candidate',
+    // An image an earlier run accepted, whose candidates stayed behind.
+    'images/old.webp': 'accepted earlier',
+    'candidates/old-3.webp': 'candidate',
+    // Neither has an accepted image: another run's target, and an image left empty by a killed copy.
+    'candidates/pending-1.webp': 'candidate',
+    'images/empty.webp': '',
+    'candidates/empty-2.webp': 'candidate',
+  });
+  const output = runImageLoop(root, [
+    { imageId: 'calm', filename: 'calm.webp', prompt: 'A photorealistic calm lake at dawn.' },
+    { imageId: 'still', filename: 'still.webp', prompt: 'A photorealistic still pond under trees.' },
+  ]);
+
+  assert.match(output, /candidate 1: accepted=\d+, rejected=0/);
+  assert.match(output, /streaming image quality loop complete/);
+  assert.equal(readFileSync(join(root, 'images', 'calm.webp'), 'utf8'), 'candidate');
+  assert.match(output, /removed 3 candidate\(s\) of accepted images/);
+  assert.deepEqual(readdirSync(join(root, 'candidates')).sort(), ['empty-2.webp', 'pending-1.webp']);
+});
+
+test('a loop whose images were all accepted before it starts still removes their candidates', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-image-already-accepted-'));
+  seed(root, {
+    'images/calm.webp': 'accepted',
+    'candidates/calm-1.webp': 'candidate',
+    'candidates/calm-2.webp': 'candidate',
+    'candidates/other-1.webp': 'candidate',
+  });
+  const output = runImageLoop(root, [{ imageId: 'calm', filename: 'calm.webp', prompt: 'A photorealistic calm lake at dawn.' }]);
+
+  assert.match(output, /all target images are already accepted/);
+  assert.match(output, /removed 2 candidate\(s\) of accepted images/);
+  assert.deepEqual(readdirSync(join(root, 'candidates')), ['other-1.webp']);
+  assert.equal(readFileSync(join(root, 'images', 'calm.webp'), 'utf8'), 'accepted');
 });
 
 function exampleSentence(text: string) {

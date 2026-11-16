@@ -57,6 +57,37 @@ fi
 
 mkdir -p "$candidates" "$images" "$work_root"
 
+# Deletes every candidate whose target already has an accepted image, from this run or an earlier one: the loop
+# never renders or judges an accepted target again, and a changed prompt gets a new filename, so those candidates
+# only take disk space. Called before each successful exit, which a failed cleanup doesn't change.
+remove_accepted_candidates() {
+  if ! node - "$candidates" "$images" <<'NODE'
+const { readdirSync, statSync, unlinkSync } = require('node:fs');
+const { join, resolve } = require('node:path');
+const [candidatesPath, imagesPath] = process.argv.slice(2).map(path => resolve(path));
+const accepted = name => {
+  try {
+    return statSync(join(imagesPath, name)).size > 0;
+  } catch {
+    return false;
+  }
+};
+let removed = 0;
+for (const file of readdirSync(candidatesPath)) {
+  // A candidate is <stem>-<number><extension>, and the accepted image <stem><extension>.
+  const match = /^(.+)-\d+(\.[^.]+)$/.exec(file);
+  if (match && accepted(match[1] + match[2])) {
+    unlinkSync(join(candidatesPath, file));
+    removed += 1;
+  }
+}
+if (removed > 0) console.log(`[${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}] removed ${removed} candidate(s) of accepted images`);
+NODE
+  then
+    echo "[$(date -u +%FT%TZ)] could not remove the candidates of accepted images; a later run tries again" >&2
+  fi
+}
+
 if node - "$targets" "$images" <<'NODE'
 const { existsSync, readFileSync, statSync } = require('node:fs');
 const { join, resolve } = require('node:path');
@@ -72,6 +103,7 @@ process.exit(complete ? 0 : 1);
 NODE
 then
   echo "[$(date -u +%FT%TZ)] all target images are already accepted"
+  remove_accepted_candidates
   exit 0
 fi
 
@@ -147,6 +179,7 @@ while [[ "$candidate" -le "${defer_after:-99}" ]]; do
   echo "[$(date -u +%FT%TZ)] candidate $candidate: accepted=$accepted_count, rejected=$rejected_count"
   if [[ "$rejected_count" -eq 0 ]]; then
     echo "[$(date -u +%FT%TZ)] streaming image quality loop complete"
+    remove_accepted_candidates
     exit 0
   fi
 
@@ -171,6 +204,7 @@ for (const file of readdirSync(resolve(candidatesPath))) {
 }
 NODE
   echo "[$(date -u +%FT%TZ)] deferring $deferred_count image(s) that failed $defer_after candidates to a later cycle"
+  remove_accepted_candidates
   exit 0
 fi
 
