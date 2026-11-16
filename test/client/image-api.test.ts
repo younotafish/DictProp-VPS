@@ -76,7 +76,7 @@ test('uploads send each picture as its own file, in order, and a stalled one fai
   await assert.rejects(upload, { name: 'TimeoutError' });
 });
 
-test('an import passes the server\'s reply through as the error message, and a stall past ten minutes says so', async (t) => {
+test('an import passes the server\'s reply through as the error message, and a stall past twelve minutes says so', async (t) => {
   serve(() => Response.json({ ok: true, imported: 2, skipped: 0, imagesFetched: 1 }));
   assert.deepEqual(await importJSON([{}]), { ok: true, imported: 2, skipped: 0, imagesFetched: 1 });
   // The import dialog reads the raw body out of the message: a JSON error, text, or the status when it is empty.
@@ -90,7 +90,10 @@ test('an import passes the server\'s reply through as the error message, and a s
   t.mock.timers.enable({ apis: ['setTimeout'] });
   stall();
   const importing = importJSON([]);
+  // Ten minutes is how long the server can spend fetching pictures before it saves the cards and replies.
   t.mock.timers.tick(10 * 60_000);
+  assert.equal(await pending(importing), true, 'an import the server is still working on is waited for');
+  t.mock.timers.tick(2 * 60_000);
   await assert.rejects(importing, {
     message: 'The server took too long to answer. The import may still finish, so check your notebook before importing again.',
   });
