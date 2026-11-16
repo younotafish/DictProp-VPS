@@ -10,7 +10,8 @@ const held = (key: string) => press(key, { repeat: true });
 
 /** A card with its answer hidden and nothing to undo, the key going to the page. */
 const card = (overrides: Partial<StudyKeyState> = {}): StudyKeyState => ({
-  phase: 'card', revealed: false, canUndo: false, undoing: false, canResume: false, typing: false, onControl: false, dialogOutside: false,
+  phase: 'card', revealed: false, listening: false, hasExample: false, canUndo: false, undoing: false, canResume: false,
+  typing: false, onControl: false, dialogOutside: false,
   ...overrides,
 });
 
@@ -103,6 +104,40 @@ test('on the summary of a session ended early, R resumes it; elsewhere R is not 
   assert.equal(resolveStudyKey(press('r'), { ...ended, typing: true }), null);
   assert.equal(resolveStudyKey(press('r'), card({ phase: 'summary' })), null, 'a finished session has nothing to resume');
   assert.equal(resolveStudyKey(press('r'), card({ canResume: true })), null, 'not on a card');
+});
+
+test('P says the word once the answer shows, and never before, whatever the prompt asks', () => {
+  for (const key of ['p', 'P']) {
+    assert.deepEqual(resolveStudyKey(press(key), card({ revealed: true })), { type: 'speakWord' }, key);
+    assert.deepEqual(resolveStudyKey(press(key), card({ revealed: true, listening: true, hasExample: true })), { type: 'speakWord' });
+  }
+  assert.equal(resolveStudyKey(press('p'), card()), null, 'a production or cloze prompt would give the answer away');
+  assert.equal(resolveStudyKey(press('p'), card({ listening: true, hasExample: true })), null, 'nor a listening one');
+  assert.equal(resolveStudyKey(press('p'), card({ phase: 'summary', revealed: true })), null, 'not on the summary');
+  assert.equal(resolveStudyKey(press('p'), card({ revealed: true, canUndo: true, undoing: true })), null, 'an undo is bringing back another card');
+  assert.equal(resolveStudyKey(held('p'), card({ revealed: true })), null, 'a held P said the word once');
+  assert.equal(resolveStudyKey(press('p', { metaKey: true }), card({ revealed: true })), null, 'Cmd+P prints');
+  assert.equal(resolveStudyKey(press('p'), card({ revealed: true, typing: true })), null, 'typed');
+});
+
+test('E plays a listening card\'s prompt again before the answer shows, and plays or pauses the example after', () => {
+  for (const key of ['e', 'E']) {
+    assert.deepEqual(resolveStudyKey(press(key), card({ listening: true, hasExample: true })), { type: 'replayPrompt' }, key);
+    assert.deepEqual(resolveStudyKey(press(key), card({ revealed: true, listening: true, hasExample: true })), { type: 'toggleExample' }, key);
+  }
+  // Before the answer shows, another prompt's example would give the answer away.
+  assert.equal(resolveStudyKey(press('e'), card({ hasExample: true })), null);
+  assert.deepEqual(resolveStudyKey(press('e'), card({ revealed: true, hasExample: true })), { type: 'toggleExample' });
+  assert.equal(resolveStudyKey(press('e'), card({ revealed: true })), null, 'no example to read');
+  assert.equal(resolveStudyKey(press('e'), card({ phase: 'summary', revealed: true, hasExample: true })), null, 'not on the summary');
+  assert.equal(resolveStudyKey(press('e'), card({ listening: true, hasExample: true, canUndo: true, undoing: true })), null, 'undoing');
+  assert.equal(resolveStudyKey(held('e'), card({ listening: true, hasExample: true })), null, 'a held E replayed once');
+  assert.equal(resolveStudyKey(held('e'), card({ revealed: true, hasExample: true })), null, 'a held E toggled once');
+  for (const modifier of ['metaKey', 'ctrlKey', 'altKey', 'defaultPrevented'] as const) {
+    assert.equal(resolveStudyKey(press('e', { [modifier]: true }), card({ revealed: true, hasExample: true })), null, modifier);
+  }
+  assert.equal(resolveStudyKey(press('e'), card({ revealed: true, hasExample: true, typing: true })), null, 'typed');
+  assert.equal(resolveStudyKey(press('e'), card({ revealed: true, hasExample: true, dialogOutside: true })), null, 'under a dialog');
 });
 
 test('on the dashboard Enter presses Start once per press, while there is something to review', () => {

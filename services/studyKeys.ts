@@ -14,6 +14,11 @@ export interface StudyKeyState {
   phase: 'card' | 'summary';
   /** The card's answer is showing. */
   revealed: boolean;
+  /** The card's prompt is its example read aloud (the listening task), which E plays again before the answer shows.
+   *  Absent counts as false. */
+  listening?: boolean;
+  /** The card has an example sentence, which E plays or pauses once the answer shows. Absent counts as false. */
+  hasExample?: boolean;
   /** The last grade can be undone. */
   canUndo: boolean;
   /** An undo of the last grade is under way. */
@@ -36,6 +41,12 @@ export type StudyKeyAction =
   | { type: 'done' }
   /** The summary's Resume: back to the card a session ended early was on. */
   | { type: 'resume' }
+  /** P once the answer shows: say the word. */
+  | { type: 'speakWord' }
+  /** E before the answer shows, on a listening card: play its prompt again from the start. */
+  | { type: 'replayPrompt' }
+  /** E once the answer shows: play, pause or resume the example, as its speaker does. */
+  | { type: 'toggleExample' }
   /** A key the session owns that does nothing now. It's still stopped, so no other shortcut acts on it. */
   | { type: 'swallow' };
 
@@ -52,9 +63,10 @@ const RATING_KEYS: ReadonlyMap<string, ReviewRating> = new Map(RATINGS.map((rati
  * What a key does in a study session, or null when the session leaves it alone. The session owns 1-4 even
  * before the answer shows: an early press does nothing rather than switch tabs mid-session. U undoes the last
  * grade, and Space or Enter shows the answer unless the keyboard focused a control they should press; on the
- * summary Enter is Done, and R resumes a session ended early. While an undo is under way, grading and revealing
- * wait: the undo is about to bring back the card it undoes. A held key acts once, when pressed (acceptKeyRepeat); a
- * held 1-4 stays the session's, so its repeats don't switch tabs.
+ * summary Enter is Done, and R resumes a session ended early. On a card P says the word once the answer shows, never
+ * before, and E plays a listening card's prompt again before the answer shows and plays or pauses the example after.
+ * While an undo is under way, grading, revealing, P and E wait: the undo is about to bring back the card it undoes. A
+ * held key acts once, when pressed (acceptKeyRepeat); a held 1-4 stays the session's, so its repeats don't switch tabs.
  */
 export function resolveStudyKey(event: StudyKeyEvent, state: StudyKeyState): StudyKeyAction | null {
   if (isOthersKey(event, state)) return null;
@@ -64,12 +76,20 @@ export function resolveStudyKey(event: StudyKeyEvent, state: StudyKeyState): Stu
     return firstPress && state.phase === 'card' && state.revealed && !state.undoing ? { type: 'grade', rating } : { type: 'swallow' };
   }
   if (!firstPress) return null;
-  if (event.key.toLowerCase() === 'u' && state.canUndo && !state.undoing) return { type: 'undo' };
+  const letter = event.key.toLowerCase();
+  if (letter === 'u' && state.canUndo && !state.undoing) return { type: 'undo' };
+  if (state.phase === 'card' && !state.undoing) {
+    if (letter === 'p') return state.revealed ? { type: 'speakWord' } : null;
+    if (letter === 'e') {
+      if (!state.revealed) return state.listening ? { type: 'replayPrompt' } : null;
+      return state.hasExample ? { type: 'toggleExample' } : null;
+    }
+  }
   if ((event.key === ' ' || event.key === 'Enter') && state.phase === 'card' && !state.revealed && !state.onControl) {
     return state.undoing ? { type: 'swallow' } : { type: 'reveal' };
   }
   if (event.key === 'Enter' && state.phase === 'summary' && !state.onControl) return { type: 'done' };
-  if (event.key.toLowerCase() === 'r' && state.phase === 'summary' && state.canResume) return { type: 'resume' };
+  if (letter === 'r' && state.phase === 'summary' && state.canResume) return { type: 'resume' };
   return null;
 }
 

@@ -325,18 +325,22 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 
   // The session's keys (services/studyKeys.ts). One listener while the session has the keys, reading the
   // session and the handlers as they are now, so typing an answer doesn't register it again.
-  const keyContext = useLatest({ session, showingSummary, canResume, lastGrade, reveal, gradeCurrent, undoLastGrade, closeSession, resume });
+  const keyContext = useLatest({ session, currentItem, showingSummary, canResume, lastGrade, reveal, gradeCurrent, undoLastGrade, closeSession, resume });
   const keysActive = !!session && !interactionLocked;
   useEffect(() => {
     if (!keysActive) return;
     // In the capture phase the session gets its keys before the window-level shortcuts (1-3 also switch
     // tabs), and stops the ones it uses so no other shortcut reacts to them.
     const handleSessionKey = (event: KeyboardEvent) => {
-      const { session, showingSummary, canResume, lastGrade, reveal, gradeCurrent, undoLastGrade, closeSession, resume } = keyContext.current;
+      const { session, currentItem, showingSummary, canResume, lastGrade, reveal, gradeCurrent, undoLastGrade, closeSession, resume } = keyContext.current;
       if (!session) return;
+      const content = currentItem ? getStudyContent(currentItem) : null;
+      const cardPrompt = currentItem ? listeningPrompt(currentItem) : null;
       const action = resolveStudyKey(event, {
         phase: showingSummary ? 'summary' : 'card',
         revealed: session.revealed,
+        listening: cardPrompt !== null,
+        hasExample: !!content?.example,
         canUndo: !!lastGrade,
         undoing: lastGrade?.undoing ?? false,
         canResume,
@@ -352,10 +356,13 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       else if (action.type === 'reveal') reveal();
       else if (action.type === 'done') closeSession();
       else if (action.type === 'resume') resume();
+      else if (action.type === 'speakWord' && content) audio.sayWord(content.word);
+      else if (action.type === 'replayPrompt' && cardPrompt !== null) audio.replayPrompt(cardPrompt);
+      else if (action.type === 'toggleExample' && content) audio.toggleSentence(content.example);
     };
     window.addEventListener('keydown', handleSessionKey, true);
     return () => window.removeEventListener('keydown', handleSessionKey, true);
-  }, [keysActive, keyContext]);
+  }, [keysActive, keyContext, audio]);
 
   if (items.length === 0) {
     return (
