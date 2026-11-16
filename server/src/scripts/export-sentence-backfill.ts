@@ -2,6 +2,7 @@ import { getAllItems } from '../db.js';
 import { hasCompleteSentenceAnalysis, hasSentenceGrammarAnalysis, isSentenceAnalysis } from '../sentence-analysis.js';
 import type { SentenceExportRecord } from '../sentence-backfill.js';
 import { sentenceTextHash } from '../sentence-lookup.js';
+import { SERVER_IMAGE_MARKER } from '../shared/image-markers.js';
 import { requireOwner } from './support/run.js';
 
 const owner = requireOwner();
@@ -22,7 +23,7 @@ const sentences: SentenceExportRecord[] = getAllItems(owner.id)
       hasDetailedAnalysis: hasCompleteSentenceAnalysis(data.analysis),
       // Item data never holds image bytes: a write moves an inline image into item_images, and the read path gives
       // each image stored there a server:has_image marker.
-      hasImage: typeof data.imageUrl === 'string' && data.imageUrl.startsWith('server:has_image'),
+      hasImage: typeof data.imageUrl === 'string' && data.imageUrl.startsWith(SERVER_IMAGE_MARKER),
     };
   });
 

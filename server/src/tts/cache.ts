@@ -7,6 +7,7 @@ import { createHash, randomUUID } from 'crypto';
 import { access, link, open, rename, rm, writeFile } from 'fs/promises';
 import { join, resolve } from 'path';
 import { env } from '../env.js';
+import { isSha256 } from '../validation-helpers.js';
 
 // Default English voice. Options: Mia, Chloe (female), Milo, Dean (male), mimo_default.
 export const MIMO_VOICE = 'Mia';
@@ -27,7 +28,7 @@ export function ttsKey(text: string, voice: string): string {
   return createHash('sha256').update(`${voice}\n${text.trim()}`).digest('hex');
 }
 
-export const isCacheKey = (value: string): boolean => /^[0-9a-f]{64}$/.test(value);
+export const isCacheKey = (value: string): boolean => isSha256(value);
 
 export function audioPath(key: string): string {
   return join(TTS_DIR, key.slice(0, 2), key);

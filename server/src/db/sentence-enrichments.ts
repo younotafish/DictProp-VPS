@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { isSupportedImageMime, isValidImage } from '../image-format.js';
 import { hasCompleteSentenceAnalysis, type SentenceAnalysis } from '../sentence-analysis.js';
 import { sentenceLookupHash, type SentenceEnrichmentEntry } from '../sentence-enrichment.js';
+import { isSha256 } from '../validation-helpers.js';
 import { db, writeTransaction } from './connection.js';
 import { deleteUnreferencedBlobs, imageStmts } from './images.js';
 
@@ -108,7 +109,7 @@ export function getSentenceEnrichmentImage(lookupHash: string): {
   mimeType: string;
   contentHash: string;
 } | null {
-  if (!/^[a-f0-9]{64}$/.test(lookupHash)) return null;
+  if (!isSha256(lookupHash)) return null;
   const row = sentenceEnrichmentStmts.getImage.get(lookupHash) as {
     data: Buffer;
     image_mime_type: string;
