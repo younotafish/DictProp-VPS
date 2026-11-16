@@ -183,6 +183,10 @@ export function searchSentences(query: string, index: SentenceIndex, limit?: num
  * Hook: memoize the index over the given sentence items (rebuilt only when they change, and built only
  * when searched), and return a stable search function. Pass the SAME memoized `sentenceItems` array
  * (e.g. App's `sentenceItems` memo) so the index isn't rebuilt on every render.
+ *
+ * @deprecated hooks/useSentenceSearch replaces it: it runs the fuzzy tier once typing pauses rather than
+ * on every keystroke, and says when an answer is still pending. This one goes once GlobalSearch and
+ * SentencesView use that one.
  */
 export function useSentenceSearch(
   sentenceItems: StoredItem[]
