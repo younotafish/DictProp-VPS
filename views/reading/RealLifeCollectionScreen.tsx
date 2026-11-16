@@ -15,7 +15,6 @@ import type { ReviewRating, StoredItem } from '../../types';
 import { HighlightedSentence } from '../../components/HighlightedSentence';
 import { activateOnEnterOrSpace } from '../../components/activateOnKey';
 import { useEscapeLayer } from '../../components/escapeStack';
-import { isImeKey } from '../../components/keyboardTarget';
 import { SentenceSpeakerButton } from '../../components/SentenceSpeakerButton';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { acceptListReview } from '../../services/actionGuards';
@@ -165,11 +164,9 @@ export function RealLifeCollectionScreen({
   const deferredQuery = useDeferredValue(query);
 
   // Esc clears the search, then goes back to the collections, unless a layer above (a lesson, the word popup, a dialog,
-  // the search sheet) takes it. In the search box the box answers it instead, so an Esc that ends a composition in the
-  // input method (which Safari reports as keyCode 229) is the input method's.
-  const [searchFocused, setSearchFocused] = useState(false);
-  const escape = () => (query ? setQuery('') : onClose());
-  useEscapeLayer(escape, 0, !searchFocused);
+  // the search sheet) takes it. In the search box too: the escape stack leaves an Esc that ends a composition in the
+  // input method (which Safari reports as keyCode 229) to the input method.
+  useEscapeLayer(() => (query ? setQuery('') : onClose()), 0);
 
   const progress = useMemo(
     () => summarizeCatalogProgress(collection.sentences, progressIndex, now),
@@ -295,12 +292,6 @@ export function RealLifeCollectionScreen({
             <input
               value={query}
               onChange={event => setQuery(event.target.value)}
-              onFocus={() => setSearchFocused(true)}
-              onBlur={() => setSearchFocused(false)}
-              onKeyDown={event => {
-                // Mid-composition, Escape belongs to the input method.
-                if (event.key === 'Escape' && !isImeKey(event.nativeEvent)) escape();
-              }}
               placeholder={`Search ${collection.title.toLocaleLowerCase('en-US')}…`}
               aria-label={`Search ${collection.title}`}
               className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-9 text-sm text-slate-700 outline-none transition-colors placeholder:text-slate-400 focus:border-indigo-300 focus:bg-white"
