@@ -10,6 +10,7 @@ import { getMasteryColors } from './mastery';
 import { stripSentenceMarkers } from '../services/sentenceMarkers';
 import { getPlaybackState, pauseCurrent, resumeCurrent } from '../services/neuralTts';
 import { detectPlatform } from '../services/platform';
+import { acceptRemember } from '../services/reviewGestures';
 import { useLatest } from '../hooks/useStableValue';
 import { useWarmImages } from '../hooks/useWarmImages';
 import { useBackdropClick } from './backdropPress';
@@ -164,14 +165,25 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     : null;
   const colors = getMasteryColors(mastery?.color || 'slate');
 
+  // The last Got it or Save that counted, keyed by the meaning's sense label, which a meaning keeps when it's saved.
+  // Another press for the same meaning within 1.5 s is the second click of a double click, or of a double click on
+  // Save landing on the Got it that takes its place, so it does nothing; another meaning always counts.
+  const lastRememberRef = useRef<{ id: string; at: number } | null>(null);
+  const tryRemember = useCallback((sense: string): boolean => {
+    const now = performance.now();
+    if (!acceptRemember(lastRememberRef.current, sense, now)) return false;
+    lastRememberRef.current = { id: sense, at: now };
+    return true;
+  }, []);
+
   const handleGotIt = useCallback(() => {
-    if (!currentSaved) return;
+    if (!currentSaved || !current || !tryRemember(current.sense)) return;
     const base = SRSAlgorithm.ensure(currentSaved.srs, currentSaved.data.id, currentSaved.type);
     const preview = updateAfterRating(base, 'good');
     onUpdateSRS(currentSaved.data.id);
     setFlash(`Next review in ${Math.max(1, Math.round(preview.stability))}d`);
     setTimeout(() => setFlash(null), 1600);
-  }, [currentSaved, onUpdateSRS]);
+  }, [current, currentSaved, onUpdateSRS, tryRemember]);
 
   const handleReset = useCallback(() => {
     if (!currentSaved) return;
@@ -193,11 +205,11 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   }, [confirmDel, currentSaved, items.length, onDelete, onClose]);
 
   const handleSaveThis = useCallback(() => {
-    if (current?.kind !== 'unsaved' || !onSaveVocab) return;
+    if (current?.kind !== 'unsaved' || !onSaveVocab || !tryRemember(current.sense)) return;
     onSaveVocab(current.vocab);
     setFlash('Saved to your library');
     setTimeout(() => setFlash(null), 1600);
-  }, [current, onSaveVocab]);
+  }, [current, onSaveVocab, tryRemember]);
 
   // Eyes-free read zones are for touch only — on macOS the keyboard (P / E / Cmd+1–4) covers reading.
   const isTouch = hasTouchPoints();
