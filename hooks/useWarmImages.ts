@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { StoredItem } from '../types';
-import { picturesOf } from '../services/cardPictures';
-import { IMAGE_IDB_MARKER, getServerImageVersion } from '../services/libraryImages';
+import { getServerImageVersion, isLazyImageMarker, picturesOf } from '../services/libraryImages';
 import { decodeImage, warmImage } from '../services/storage';
 
 type LoadMissingImage = (itemId: string, imageVersion?: string) => Promise<string | null>;
@@ -27,8 +26,8 @@ export function useWarmImages(items: readonly StoredItem[], loadMissing?: LoadMi
             continue;
           }
           // Stored on this device, or on the server at a version; the bare legacy server marker isn't warmed.
+          if (!isLazyImageMarker(imageUrl)) continue;
           const version = getServerImageVersion(imageUrl);
-          if (imageUrl !== IMAGE_IDB_MARKER && version === undefined) continue;
           const key = `${id}\n${version ?? ''}`;
           void warmImage(id, version).then(async stored => {
             if (stored || !loadMissing || requested.has(key)) return;

@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { getItemSpelling, getItemTitle, isPhraseItem, isVocabItem, type SearchResult, type SentenceData, type StoredItem, type VocabCard } from '../types';
-import { IMAGE_IDB_MARKER, offloadImages, restoreInlineImages } from '../services/libraryImages';
+import { IMAGE_IDB_MARKER, extractInlineImages, offloadImages, restoreInlineImages } from '../services/libraryImages';
 import { makeVocabStoredItem, saveOverExisting } from '../services/items';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { log, warn, error as logError } from '../services/logger';
@@ -46,31 +46,7 @@ export function useLibraryActions(
       const canonicalItemId = latestItemsRef.current[findExistingIndex(latestItemsRef.current)]?.data.id || item.data.id;
 
       // Offload any base64 images to IDB before putting into state
-      const imagesToSave: Array<{ id: string; base64: string }> = [];
-      let data = item.data;
-      if (isVocabItem(item) && (data as VocabCard).imageUrl?.startsWith('data:image/')) {
-        imagesToSave.push({ id: canonicalItemId, base64: (data as VocabCard).imageUrl! });
-        data = { ...data, imageUrl: IMAGE_IDB_MARKER } as VocabCard;
-      }
-      if (isPhraseItem(item)) {
-        const sr = data as SearchResult;
-        if (sr.imageUrl?.startsWith('data:image/')) {
-          imagesToSave.push({ id: canonicalItemId, base64: sr.imageUrl });
-          data = { ...data, imageUrl: IMAGE_IDB_MARKER } as SearchResult;
-        }
-        if (sr.vocabs?.length) {
-          let vc = false;
-          const nv = sr.vocabs.map(v => {
-            if (v.imageUrl?.startsWith('data:image/')) {
-              imagesToSave.push({ id: v.id, base64: v.imageUrl });
-              vc = true;
-              return { ...v, imageUrl: IMAGE_IDB_MARKER };
-            }
-            return v;
-          });
-          if (vc) data = { ...data, vocabs: nv } as SearchResult;
-        }
-      }
+      const { item: stripped, images: imagesToSave } = extractInlineImages(item, canonicalItemId);
       if (imagesToSave.length > 0) {
         offloadImages(imagesToSave).catch(error => {
           // The images never reached this device's store. Put them back inline, where the next push
@@ -82,8 +58,7 @@ export function useLibraryActions(
 
       const now = Date.now();
       const itemToSave = {
-        ...item,
-        data,
+        ...stripped,
         updatedAt: now,
         savedAt: item.savedAt || now,
         // Cleared flags are absent, as the server echoes them.
