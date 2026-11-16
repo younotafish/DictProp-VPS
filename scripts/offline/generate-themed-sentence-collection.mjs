@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { installCodexSignalCleanup, killCodex } from './codex-process.mjs';
+import { installSignalCleanup, killProcessGroup } from './codex-process.mjs';
 import { readJson, writePrivateJson } from './offline-io.mjs';
 import { runThemedCodex, themedCodexSettings } from './themed-collection-codex.mjs';
 
@@ -57,7 +57,7 @@ const { model, timeoutMs } = themedCodexSettings();
 const concurrency = Math.max(1, Math.min(32, Number(process.env.CODEX_CONCURRENCY || 8)));
 const activeChildren = new Set();
 let aborting = false;
-installCodexSignalCleanup(activeChildren, () => { aborting = true; });
+installSignalCleanup(activeChildren, () => { aborting = true; });
 
 const normalized = value => String(value || '').normalize('NFKC').toLocaleLowerCase('en-US')
   .replace(/[\u2018\u2019]/g, "'")
@@ -167,7 +167,7 @@ try {
   await Promise.all(Array.from({ length: Math.min(concurrency, brief.sections.length) }, () => worker()));
 } catch (error) {
   aborting = true;
-  for (const child of activeChildren) killCodex(child, 'SIGTERM');
+  for (const child of activeChildren) killProcessGroup(child, 'SIGTERM');
   throw error;
 }
 

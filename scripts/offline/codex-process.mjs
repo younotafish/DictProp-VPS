@@ -67,7 +67,3 @@ export function installSignalCleanup(activeChildren, onSignal = () => {}) {
     process.off('exit', killRemaining);
   };
 }
-
-// The earlier names, which the Codex-only scripts still import.
-export const killCodex = killProcessGroup;
-export const installCodexSignalCleanup = installSignalCleanup;

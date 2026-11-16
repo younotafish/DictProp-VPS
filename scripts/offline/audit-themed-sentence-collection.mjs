@@ -2,7 +2,7 @@
 
 import { mkdirSync, renameSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { installCodexSignalCleanup } from './codex-process.mjs';
+import { installSignalCleanup } from './codex-process.mjs';
 import { readJson, writePrivateJson } from './offline-io.mjs';
 import { runThemedCodex, themedCodexSettings } from './themed-collection-codex.mjs';
 
@@ -89,7 +89,7 @@ COLLECTION:\n${JSON.stringify(compact)}`;
 // whole process group, so no stray run writes the report afterwards.
 const { model, timeoutMs } = themedCodexSettings();
 const activeChildren = new Set();
-installCodexSignalCleanup(activeChildren);
+installSignalCleanup(activeChildren);
 const resultPath = `${outputPath}.tmp`;
 rmSync(resultPath, { force: true });
 try {

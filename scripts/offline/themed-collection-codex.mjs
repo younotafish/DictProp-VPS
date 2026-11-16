@@ -3,7 +3,7 @@
 // Every cycle stage reaches its model through structured-model.mjs. These two manual tools still run `codex exec`
 // themselves: moving them onto structured-model.mjs would change their reasoning effort and let
 // ENRICHMENT_MODEL_PROVIDER switch them to Claude, which is for the owner to decide.
-import { killCodex, spawnCodex } from './codex-process.mjs';
+import { killProcessGroup, spawnCodex } from './codex-process.mjs';
 
 /** CODEX_MODEL (default gpt-5.6-sol), and CODEX_TIMEOUT_MINUTES clamped to 5-60 (default 30) per call. */
 export function themedCodexSettings(env = process.env) {
@@ -25,8 +25,8 @@ export function runThemedCodex({ prompt, schemaPath, resultPath, model, timeoutM
     let stderr = '';
     let hardKill;
     const timeout = setTimeout(() => {
-      killCodex(child, 'SIGTERM');
-      hardKill = setTimeout(() => killCodex(child, 'SIGKILL'), 10_000);
+      killProcessGroup(child, 'SIGTERM');
+      hardKill = setTimeout(() => killProcessGroup(child, 'SIGKILL'), 10_000);
     }, timeoutMs);
     child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-20_000); });
     child.on('error', error => {
