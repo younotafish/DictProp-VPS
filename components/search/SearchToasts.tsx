@@ -18,7 +18,7 @@ interface Props {
   error: SearchErrorToast | null;
   onRetry: () => void;
   onEdit: () => void;
-  /** × on the error toast: drops every failure and the notice. */
+  /** × on the error toast: clears what it shows, a notice, or else every failure. */
   onDismissError: () => void;
   /** On a tab (true), or over a card or sentence view (false); see errorBottom. */
   aboveTabBar: boolean;
@@ -45,7 +45,8 @@ export const SearchToasts: React.FC<Props> = ({ saveToast, error, onRetry, onEdi
       </div>
     )}
     {/* Error toast — failures surface here instead of vanishing, above the search box's suggestions (z-[56]). Its
-        action follows the newest failure (see GlobalSearch); the X drops every failure without retrying. */}
+        action follows the newest failure (see GlobalSearch); the X clears a notice, or drops every failure without
+        retrying. */}
     {error && (
       <div
         role="alert"

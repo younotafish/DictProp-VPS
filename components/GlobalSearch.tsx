@@ -85,9 +85,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     zoneFlash, flashZone, playOrToggleSentence, speakSheetWord, readExamples, togglePlayback, stopSheetAudio,
   } = useSheetPlayback(mode);
 
-  // The error toast shows a passing notice (a request refused offline, a refresh that failed) for 6 s, or else the
-  // failures the queue keeps (see summarizeFailures). The floating search has no inline results area, so without it a
-  // failed lookup would just vanish.
+  // The error toast shows a passing notice (a request refused offline, a refresh that failed) for 6 s, hiding the
+  // failures the queue keeps until it goes, or else those failures (see summarizeFailures). The floating search has no
+  // inline results area, so without it a failed lookup would just vanish.
   const { message: notice, show: showNotice, clear: clearNotice } = useTimedMessage<string>(6000);
 
   // The save confirmation pill.
@@ -439,8 +439,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   }, [mode, sheetKeysRef]);
 
   // The error toast's buttons. Retry runs every failure that retrying could fix again, each in its own mode, where it
-  // was; Edit puts a query the model found no entry for back in the box, selected, to fix the spelling; × drops every
-  // failure, and the notice.
+  // was; Edit puts a query the model found no entry for back in the box, selected, to fix the spelling; × clears what
+  // the toast shows: a notice, after which the failures it hid show again, or else every failure.
   const retryFailures = () => updateQueue({ type: 'retry-failed' });
   const editFailedQuery = () => {
     if (failures?.action !== 'edit') return;
@@ -454,9 +454,9 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       setMode('input');
     }
   };
-  const dismissFailures = () => {
-    updateQueue({ type: 'dismiss-failed' });
-    clearNotice();
+  const dismissErrorToast = () => {
+    if (notice !== null) clearNotice();
+    else updateQueue({ type: 'dismiss-failed' });
   };
 
   return (
@@ -466,7 +466,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         error={errorToast}
         onRetry={retryFailures}
         onEdit={editFailedQuery}
-        onDismissError={dismissFailures}
+        onDismissError={dismissErrorToast}
         aboveTabBar={aboveTabBar}
       />
 
