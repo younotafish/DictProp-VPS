@@ -62,7 +62,7 @@ const the = new FakeNode('the', sentence, { 'data-word-offset': '14' });
 const gamut = new FakeNode('gamut', sentence, { 'data-word-offset': '18' });
 const ranText = new FakeNode('#text ran', ran);
 const gamutText = new FakeNode('#text gamut', gamut);
-const ipaLine = new FakeNode('p[data-no-lookup]', page, { 'data-no-lookup': '' });
+const ipaLine = new FakeNode('p[role=note]', page);
 const ipaText = new FakeNode('#text ipa', ipaLine);
 const speakerRow = new FakeNode('div', page);
 const asNode = (node: FakeNode) => node as unknown as Node;

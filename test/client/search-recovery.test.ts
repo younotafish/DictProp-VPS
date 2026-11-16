@@ -63,7 +63,7 @@ test('a request that never reached DictProp says so, for a lookup, a comparison 
 
 test('a timeout says the model did not finish, by its name or a 504', () => {
   const timedOut = 'The model did not finish “gamut” before the timeout.';
-  assert.equal(describeSearchError(lookup('gamut'), new TimeoutError('The model did not finish this search before the timeout. Please retry it.')), timedOut);
+  assert.equal(describeSearchError(lookup('gamut'), new TimeoutError()), timedOut);
   assert.equal(describeSearchError(lookup('gamut'), new DOMException('The operation was aborted.', 'AbortError')), timedOut);
   assert.equal(describeSearchError(lookup('gamut'), new HttpError('Analysis failed (504)', 504, '')), timedOut);
   assert.equal(describeSearchError(scan('It ran the gamut.'), new TimeoutError()), 'The model did not finish “It ran the gamut.” before the timeout.');
