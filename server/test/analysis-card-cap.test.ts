@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Hono } from 'hono';
-import type { FetchLike } from '../src/ai-client.js';
+import type { FetchLike } from '../src/proxy-fetch.js';
 import { createAiRoutes } from '../src/routes/ai.js';
 
 // The AI routes on a bare app, with DeepInfra answering these replies in turn (the last one repeats).

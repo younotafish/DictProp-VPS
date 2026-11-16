@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Hono } from 'hono';
-import type { FetchLike } from '../src/ai-client.js';
+import type { FetchLike } from '../src/proxy-fetch.js';
 import { createAiRoutes, type AiRouteDependencies } from '../src/routes/ai.js';
 import { hang, httpStatus, keepingAlive, reply, type Responder } from './support/ai.js';
 import { bankCard as card } from './support/fixtures.js';

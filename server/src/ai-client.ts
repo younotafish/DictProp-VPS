@@ -9,7 +9,7 @@
 import type { Context } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { env } from './env.js';
-import { proxyFetch } from './proxy-fetch.js';
+import { proxyFetch, type FetchLike } from './proxy-fetch.js';
 
 export const DEEPINFRA_CHAT_URL = 'https://api.deepinfra.com/v1/openai/chat/completions';
 export const DEEPSEEK_MODEL = 'deepseek-ai/DeepSeek-V4-Flash';
@@ -21,8 +21,6 @@ const RETRY_DELAY_MS = 2_000;
 const MIN_RETRY_WINDOW_MS = 15_000;
 // Nginx's "client closed request": the caller is gone, so the status is only for logs.
 const CLIENT_CLOSED_REQUEST = 499;
-
-export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export type AiErrorKind =
   | 'quota'          // provider balance exhausted (402, or 429 naming billing)

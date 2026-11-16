@@ -1,8 +1,9 @@
 // The speech cache's HTTP routes: serve cached clips and their word timings, generate missing clips on request,
 // and start or report the background backfill. The cache itself lives in server/src/tts/.
-import { Hono, type Context } from 'hono';
+import { Hono } from 'hono';
 import { readFile } from 'fs/promises';
 import type { AlignmentPriority } from '../local-whisper.js';
+import { readJsonObject } from '../middleware/json-body.js';
 import { GENERATE_MAX_ITEMS } from '../shared/ai-limits.js';
 import { createBackfill, getDetachedBackfillStatus, type BackfillTexts } from '../tts/backfill.js';
 import {
@@ -24,13 +25,6 @@ export const GENERATE_MAX_TEXT_CHARS = 1000;
 const GENERATE_CONCURRENCY = 3;
 // Only the tracks the client plays. Any other name would mint a new MiMo cache entry per request.
 const GENERATE_VOICES = new Set([MIMO_VOICE, CASUAL_STYLE]);
-
-// The request's JSON body when it is an object; null for malformed JSON or anything else (null, an array, a string).
-// A copy of readJsonObject in server-core's middleware/json-body.ts, which replaces it once the two are merged.
-async function readJsonObject(c: Context): Promise<Record<string, unknown> | null> {
-  const body: unknown = await c.req.json().catch(() => null);
-  return body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null;
-}
 
 export interface TtsRouteDependencies extends Partial<ClipDependencies> {
   reduceBatch?: (sentences: string[]) => Promise<Array<string | null>>;

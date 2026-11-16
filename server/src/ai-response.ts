@@ -1,5 +1,11 @@
 import { exampleIdentity, exampleSetIssues } from './example-rules.js';
-import { isUsageAudit, USAGE_STATUSES, type UsageAudit, type UsageStatus } from './usage-audit.js';
+import {
+  isUsageAudit,
+  USAGE_PRIORITY,
+  USAGE_STATUSES,
+  type UsageAudit,
+  type UsageStatus,
+} from './shared/usage-audit.js';
 
 // The example rules live in an import-free module the offline scripts can load under plain node.
 export {
@@ -52,14 +58,6 @@ const isConfidence = (value: unknown): value is UsageAudit['confidence'] =>
   value === 'high' || value === 'medium' || value === 'low';
 
 const USAGE_STATUS_SET = new Set<string>(USAGE_STATUSES);
-
-const USAGE_ORDER: Record<UsageStatus, number> = {
-  modern_american: 0,
-  current_general: 1,
-  narrow_specialized: 2,
-  british_only: 3,
-  rare_or_dated: 4,
-};
 
 const stringValue = (value: unknown, fallback = ''): string =>
   typeof value === 'string' ? value.trim() : fallback;
@@ -396,8 +394,8 @@ export function sortVocabsByUsage<T extends { usageAudit?: { status?: UsageStatu
   return vocabs
     .map((vocab, index) => ({ vocab, index }))
     .sort((a, b) => {
-      const aRank = a.vocab.usageAudit?.status ? USAGE_ORDER[a.vocab.usageAudit.status] : 99;
-      const bRank = b.vocab.usageAudit?.status ? USAGE_ORDER[b.vocab.usageAudit.status] : 99;
+      const aRank = a.vocab.usageAudit?.status ? USAGE_PRIORITY[a.vocab.usageAudit.status] : 99;
+      const bRank = b.vocab.usageAudit?.status ? USAGE_PRIORITY[b.vocab.usageAudit.status] : 99;
       return aRank - bRank || a.index - b.index;
     })
     .map(entry => entry.vocab);

@@ -3,7 +3,8 @@
 // generation and output sanitizing live in server/src/ai/.
 import { Hono, type Context } from 'hono';
 import { env } from '../env.js';
-import { proxyFetch } from '../proxy-fetch.js';
+import { readJsonObject } from '../middleware/json-body.js';
+import { proxyFetch, type FetchLike } from '../proxy-fetch.js';
 import {
   AiError,
   aiErrorResponse,
@@ -11,7 +12,6 @@ import {
   createRequestContext,
   providerError,
   type AiErrorMessages,
-  type FetchLike,
 } from '../ai-client.js';
 import { generateAnalysisData, routeQuery } from '../ai/analysis.js';
 import { comparisonPrompts, vocabularyScanPrompts } from '../ai/prompts.js';
@@ -60,13 +60,6 @@ const TRANSCRIBE_ERRORS: AiErrorMessages = { label: 'Transcription', failed: 'Tr
 
 function errorResponse(msg: string, status: number) {
   return { error: msg, status };
-}
-
-// The request's JSON body when it is an object; null for malformed JSON or anything else (null, an array, a string).
-// A copy of readJsonObject in server-core's middleware/json-body.ts, which replaces it once the two are merged.
-async function readJsonObject(c: Context): Promise<Record<string, unknown> | null> {
-  const body: unknown = await c.req.json().catch(() => null);
-  return body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null;
 }
 
 // ============================================================================

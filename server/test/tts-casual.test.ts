@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AiError, createChatClient, createChatTextClient, type FetchLike } from '../src/ai-client.js';
+import { AiError, createChatClient, createChatTextClient } from '../src/ai-client.js';
+import type { FetchLike } from '../src/proxy-fetch.js';
 import {
   acceptBatchRespellings,
   cleanCasualRespelling,

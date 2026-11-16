@@ -9,8 +9,8 @@ import {
   createRequestContext,
   providerError,
   type ChatRequest,
-  type FetchLike,
 } from '../src/ai-client.js';
+import type { FetchLike } from '../src/proxy-fetch.js';
 import { hang, httpStatus as status, keepingAlive, reply, type Responder } from './support/ai.js';
 
 // A fetch stub that answers from a script (the last responder repeats) and records each request body.
