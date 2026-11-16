@@ -358,10 +358,11 @@ const C = '<root>/<scenario>/cycle';
 // Each stage's wave-state root for this cycle, named for its corpus export run, 101.
 const STATE = `${C}/publish-state`;
 
-// The calls every cycle makes before its first stage. The sweep gets each stage's root of per-cycle roots,
-// then the roots cycles shared before.
+// The calls every cycle makes before its first stage. The sweep gets each stage's root of per-cycle roots, the image
+// loops' roots of per-cycle working directories, then the roots cycles shared before.
 const START = [
   `sweep-bridge-leftovers.sh ${STATE}/vocabulary ${STATE}/saved-sentences ${STATE}/item-images ${STATE}/example-analyses ${STATE}/example-enrichments `
+    + `${C}/item-images/streaming-quality ${C}/final-images/streaming-quality `
     + `${C}/publish-state-coverage-v2 ${C}/analysis-publish-state-coverage-v2 ${C}/saved-sentences/publish-state-detailed-v1 ${C}/vocabulary/publish-state ${C}/item-images/publish-state`,
   'check-structured-model.mjs',
   'gh run list --repo younotafish/DictProp-VPS --workflow sentence-backfill.yml --event workflow_dispatch --limit 1 --json databaseId --jq if length == 0 then 0 else .[0].databaseId end',

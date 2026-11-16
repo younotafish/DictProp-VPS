@@ -580,10 +580,12 @@ fi
 # published waves' archives. No cycle opens a past cycle's directory again, so a wave one left unpublished
 # there counts as failed. It also removes the temp files a killed encryption or decryption leaves under
 # data/offline-backfill once a day old, a decryption's with plaintext in them.
-# The last five roots are the ones cycles used until 2026-11-15, still swept for what they hold.
+# After the stages' roots come the image loops' working roots, whose past cycles' directories go the same way,
+# and then the five roots cycles used until 2026-11-15, still swept for what they hold.
 if ! GH_BIN="$GH_BIN" NODE_BIN="$NODE_BIN" GITHUB_REPOSITORY="$REPO" scripts/offline/sweep-bridge-leftovers.sh \
   "$PUBLISH_STATE_ROOT/vocabulary" "$PUBLISH_STATE_ROOT/saved-sentences" "$PUBLISH_STATE_ROOT/item-images" \
   "$PUBLISH_STATE_ROOT/example-analyses" "$PUBLISH_STATE_ROOT/example-enrichments" \
+  "$ITEM_IMAGE_ROOT/streaming-quality" "$IMAGE_ROOT/streaming-quality" \
   "$ROOT/publish-state-coverage-v2" "$ROOT/analysis-publish-state-coverage-v2" \
   "$SAVED_ROOT/publish-state-detailed-v1" "$VOCAB_ROOT/publish-state" "$ITEM_IMAGE_ROOT/publish-state"; then
   log "the sweep of bridge leftovers did not finish; the next cycle tries again"

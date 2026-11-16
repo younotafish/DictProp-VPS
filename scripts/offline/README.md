@@ -69,7 +69,7 @@ The LaunchAgent `ops/launchd/com.dictprop.incremental-example-enrichment.plist` 
 - `deadline.sh` — Sourced by the runner and by most of the shell scripts it calls, so that no wait holds the cycle lock forever. It provides wall-clock deadlines; `run_bounded` and `run_stage`, which run a command in its own process group under a time limit; `gh_bounded` for GitHub CLI calls; and `cap_publish_deadline`.
 - `sweep-bridge-leftovers.sh` — Deletes the leftovers of killed runs and past cycles:
   - publisher releases that have been idle for six hours;
-  - a past cycle's own directory under a stage's state root, and each fingerprint directory the stages used before those, once nothing in it has changed for a week;
+  - a past cycle's own directory under a stage's state root or under an image stage's `streaming-quality/`, where the image loop works, and each fingerprint directory the stages used before those, once nothing in it has changed for a week;
   - failed waves, a wave a past cycle left unpublished among them, once idle for a week (later cycles publish whatever of it production still lacks);
   - the archives of published waves;
   - the temp files that a killed encryption or decryption left, once they are a day old; a decryption's hold plaintext.
