@@ -45,6 +45,7 @@ function push(device: Device): number {
 }
 
 const find = (items: readonly StoredItem[], id: string) => items.find(item => item.data.id === id)!;
+const vocabData = (item: StoredItem) => item.data as VocabCard;
 const serverCopy = (id: string) => find(asClientItems(getItemsAfterRevision({ revision: 0, id: '' }, 500, USER).items), id);
 
 function vocabItem(id: string, srs = SRSAlgorithm.createNew(id, 'vocab')): StoredItem {
@@ -97,9 +98,9 @@ test('a device still holding the reviewed schedule takes the reset, even with an
 
   const merged = find(other.items, 'reset-seen');
   assert.equal(merged.srs.totalReviews, 0);
-  assert.equal((merged.data as any).definition, 'edited on the other device');
+  assert.equal(vocabData(merged).definition, 'edited on the other device');
   assert.equal(serverCopy('reset-seen').srs.totalReviews, 0);
-  assert.equal((serverCopy('reset-seen').data as any).definition, 'edited on the other device');
+  assert.equal(vocabData(serverCopy('reset-seen')).definition, 'edited on the other device');
 });
 
 test('an undo reaches a device that pulled the review before it', () => {
@@ -177,7 +178,7 @@ const makeItem = (
   updatedAt: number,
   lastReviewDate: number,
   totalReviews: number,
-) => ({
+): StoredItem => ({
   type: 'vocab',
   data: {
     id,
@@ -217,7 +218,7 @@ test('a cleared flag or an image URL survives a server round trip without re-dir
     ['echo-image-url', { data: { ...makeItem('echo-image-url', 'with url', 1, 0, 0).data, imageUrl: 'https://example.com/a.png' } }],
   ] as const) {
     const saved = makeItem(id, 'with url', 1, 0, 0);
-    const edited = { ...saved, ...change, updatedAt: 2 } as any;
+    const edited: StoredItem = { ...saved, ...change, updatedAt: 2 };
     // Push, as pushNow does, then pull the server's copy back, as pullChanges does.
     const { revision } = upsertItem(structuredClone(edited), userId);
     const [pushed] = applyServerSave([edited], [edited], { revisions: new Map([[id, revision]]), canonical: new Map() });
@@ -234,7 +235,7 @@ test('a reviewed item keeps its unsynced edits only while the server changed not
     const items = asClientItems(getItemsAfterRevision({ revision: 0, id: '' }, 500, userId).items.filter(item => item.data.id === id));
     return trackServerContent(mergeDatasets([], items), items)[0];
   };
-  const edit = (item: any) => ({ ...item, updatedAt: 2, data: { ...item.data, mnemonic: 'my note' } });
+  const edit = (item: StoredItem): StoredItem => ({ ...item, updatedAt: 2, data: { ...item.data, mnemonic: 'my note' } });
   const review = (id: string, eventId: string) => applyReviewEvent(
     { id: eventId, itemId: id, itemType: 'vocab', reviewedAt: Date.now(), previousStep: 0, nextStep: 1, rating: 'good' },
     [id],
@@ -245,8 +246,8 @@ test('a reviewed item keeps its unsynced edits only while the server changed not
   upsertItem(makeItem('reconcile-quiet', 'plain', 1, 0, 0), userId);
   let local = edit(pull('reconcile-quiet'));
   const applied = review('reconcile-quiet', 'reconcile-quiet-review');
-  let reconciled: any = reconcileReviewedItem(local, asClientItem(applied.items[0]), applied.baseRevisions['reconcile-quiet']);
-  assert.equal(reconciled.data.mnemonic, 'my note');
+  let reconciled = reconcileReviewedItem(local, asClientItem(applied.items[0]), applied.baseRevisions['reconcile-quiet']);
+  assert.equal(vocabData(reconciled).mnemonic, 'my note');
   assert.equal(reconciled.srs.totalReviews, 1);
   assert.equal(isItemDirty(reconciled), true);
   // A retried review reports the same base while it is still the item's latest change, and none after.
@@ -262,7 +263,7 @@ test('a reviewed item keeps its unsynced edits only while the server changed not
   upsertItem({ ...makeItem('reconcile-enriched', 'enriched', 3, 0, 0), serverRevision: local.serverRevision }, userId);
   const raced = review('reconcile-enriched', 'reconcile-enriched-review');
   reconciled = reconcileReviewedItem(local, asClientItem(raced.items[0]), raced.baseRevisions['reconcile-enriched']);
-  assert.equal(reconciled.data.definition, 'enriched');
+  assert.equal(vocabData(reconciled).definition, 'enriched');
   assert.equal(reconciled.srs.totalReviews, 1);
   assert.equal(isItemDirty(reconciled), false);
 
@@ -272,7 +273,7 @@ test('a reviewed item keeps its unsynced edits only while the server changed not
   local = edit(pull('reconcile-undo'));
   const undone = undoReviewEvent('reconcile-undo-review', userId)!;
   reconciled = reconcileReviewedItem(local, asClientItem(undone.items[0]), undone.baseRevisions['reconcile-undo']);
-  assert.equal(reconciled.data.mnemonic, 'my note');
+  assert.equal(vocabData(reconciled).mnemonic, 'my note');
   assert.equal(reconciled.srs.totalReviews, 0);
   assert.equal(isItemDirty(reconciled), true);
 });

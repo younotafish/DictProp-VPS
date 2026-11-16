@@ -99,7 +99,7 @@ test('detailed sentence migration splits failures, resumes caches, and preserves
     assert.equal(existsSync(outputPath), false);
     assert.equal(JSON.parse(readFileSync(join(workDir, 'progress.json'), 'utf8')).status, 'incomplete');
     assert.deepEqual(
-      JSON.parse(readFileSync(join(workDir, 'failures.json'), 'utf8')).failures.map((value: any) => value.id),
+      JSON.parse(readFileSync(join(workDir, 'failures.json'), 'utf8')).failures.map((value: { id: string }) => value.id),
       ['three'],
     );
     const callsAfterFirstRun = readFileSync(callsPath, 'utf8').trim().split('\n').length;

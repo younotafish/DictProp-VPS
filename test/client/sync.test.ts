@@ -46,12 +46,13 @@ function phrase(vocabs: VocabCard[], updatedAt: number): StoredItem {
     },
   };
 }
+const phraseData = (item: StoredItem) => item.data as SearchResult;
 
 test('phrase image merge follows vocab ids after reordering', () => {
   const local = phrase([vocab('alpha', 'idb:alpha'), vocab('beta', 'idb:beta')], 1);
   const remote = phrase([vocab('beta', 'server:beta'), vocab('alpha', 'server:alpha')], 2);
 
-  const merged = mergeDatasets([local], [remote])[0].data as any;
+  const merged = phraseData(mergeDatasets([local], [remote])[0]);
   assert.equal(merged.vocabs[0].id, 'beta');
   assert.equal(merged.vocabs[0].imageUrl, 'idb:beta');
   assert.equal(merged.vocabs[1].id, 'alpha');
@@ -65,7 +66,7 @@ test('newer versioned server markers invalidate local image caches by vocab id',
     vocab('alpha', 'server:has_image:aaaaaaaaaaaaaaaaaaaa'),
   ], 2);
 
-  const merged = mergeDatasets([local], [remote])[0].data as any;
+  const merged = phraseData(mergeDatasets([local], [remote])[0]);
   assert.equal(merged.vocabs[0].imageUrl, 'server:has_image:bbbbbbbbbbbbbbbbbbbb');
   assert.equal(merged.vocabs[1].imageUrl, 'server:has_image:aaaaaaaaaaaaaaaaaaaa');
 });
@@ -73,9 +74,9 @@ test('newer versioned server markers invalidate local image caches by vocab id',
 test('newer versioned server marker invalidates a saved top-level image', () => {
   const local = { ...phrase([], 9_999_999), serverRevision: 4 };
   const remote = { ...phrase([], 2), serverRevision: 5 };
-  (local.data as any).imageUrl = 'idb:stored';
-  (remote.data as any).imageUrl = 'server:has_image:cccccccccccccccccccc';
-  const merged = mergeDatasets([local], [remote])[0].data as any;
+  phraseData(local).imageUrl = 'idb:stored';
+  phraseData(remote).imageUrl = 'server:has_image:cccccccccccccccccccc';
+  const merged = phraseData(mergeDatasets([local], [remote])[0]);
   assert.equal(merged.imageUrl, 'server:has_image:cccccccccccccccccccc');
 });
 
@@ -101,16 +102,16 @@ test('newer complete sentence content is not mistaken for a lightweight cache en
   };
 
   const merged = mergeDatasets([local], [remote])[0];
-  assert.equal((merged.data as any).text, 'new sentence');
+  assert.equal((merged.data as SentenceData).text, 'new sentence');
 });
 
 test('server revision outranks a skewed device timestamp', () => {
   const local = { ...phrase([], 9_999_999), serverRevision: 4 };
   const remote = { ...phrase([], 1), serverRevision: 5 };
-  (local.data as any).translation = 'stale local edit';
-  (remote.data as any).translation = 'server revision wins';
+  phraseData(local).translation = 'stale local edit';
+  phraseData(remote).translation = 'server revision wins';
   const merged = mergeDatasets([local], [remote])[0];
-  assert.equal((merged.data as any).translation, 'server revision wins');
+  assert.equal(phraseData(merged).translation, 'server revision wins');
   assert.equal(merged.serverRevision, 5);
 });
 
@@ -168,10 +169,10 @@ test('legacy passive strength is removed when an unreviewed sentence returns fro
 test('equal revisions keep unsynced local edits over the server echo', () => {
   const local = { ...phrase([], 1), serverRevision: 5 };
   const remote = { ...phrase([], 9), serverRevision: 5 };
-  (local.data as any).translation = 'edited after the push';
-  (remote.data as any).translation = 'echo of the push';
+  phraseData(local).translation = 'edited after the push';
+  phraseData(remote).translation = 'echo of the push';
   const merged = mergeDatasets([local], [remote])[0];
-  assert.equal((merged.data as any).translation, 'edited after the push');
+  assert.equal(phraseData(merged).translation, 'edited after the push');
 });
 
 test('a revision bump that kept the synced content rebases unsynced local edits', () => {
@@ -189,14 +190,14 @@ test('a revision bump that kept the synced content rebases unsynced local edits'
     data: { ...structuredClone(synced.data), vocabs: [vocab('alpha', 'server:has_image:aaaaaaaaaaaaaaaaaaaa')] },
   };
   const merged = mergeDatasets([local], [bumped])[0];
-  assert.equal((merged.data as any).translation, 'unsynced edit');
-  assert.equal((merged.data as any).vocabs[0].imageUrl, 'server:has_image:aaaaaaaaaaaaaaaaaaaa');
+  assert.equal(phraseData(merged).translation, 'unsynced edit');
+  assert.equal(phraseData(merged).vocabs[0].imageUrl, 'server:has_image:aaaaaaaaaaaaaaaaaaaa');
   assert.equal(merged.serverRevision, 9);
   assert.equal(isItemDirty(merged), true);
 
   // Content this device never synced still wins by revision.
   const edited: StoredItem = { ...bumped, data: { ...bumped.data, translation: 'server edit' } };
-  assert.equal((mergeDatasets([local], [edited])[0].data as any).translation, 'server edit');
+  assert.equal(phraseData(mergeDatasets([local], [edited])[0]).translation, 'server edit');
 });
 
 test('a review on another device rebases unsynced local edits and brings its schedule', () => {
@@ -305,19 +306,19 @@ test('a push acknowledgement marks the sent copy clean and keeps later edits dir
 
   const [dirty] = applyServerSave([editedMeanwhile], [sent], result);
   assert.equal(dirty.serverRevision, 5);
-  assert.equal((dirty.data as any).translation, 'edited later');
+  assert.equal(phraseData(dirty).translation, 'edited later');
   assert.equal(isItemDirty(dirty), true);
 });
 
 test('a push acknowledgement adopts the copy the server kept', () => {
   const sent = { ...phrase([], 1), serverRevision: 3 };
-  (sent.data as any).translation = 'stale edit';
+  phraseData(sent).translation = 'stale edit';
   const kept = { ...phrase([], 1), serverRevision: 6 };
-  (kept.data as any).translation = 'server copy';
+  phraseData(kept).translation = 'server copy';
   const result = { revisions: new Map<string, number>(), canonical: new Map([['phrase', kept]]) };
 
   const [adopted] = applyServerSave([sent], [sent], result);
-  assert.equal((adopted.data as any).translation, 'server copy');
+  assert.equal(phraseData(adopted).translation, 'server copy');
   assert.equal(adopted.serverRevision, 6);
   assert.equal(isItemDirty(adopted), false);
 });
@@ -347,7 +348,6 @@ const keptReply = () => ({
   canonical: new Map<string, StoredItem>(),
   kept: new Map([['phrase', { usageAudit: keptAudit, vocabs: [{ id: 'beta', advancedEnrichment: keptEnrichment }] }]]),
 });
-const phraseData = (item: StoredItem) => item.data as SearchResult;
 
 test('a push acknowledgement fills in the server-owned fields the server kept, so the copy is clean before any pull', () => {
   const sent = refreshed();
@@ -484,41 +484,41 @@ test('a pull at the same revision brings the server-owned fields a save here lef
   const local: StoredItem = { ...pushed, lastSyncedHash: getItemContentHash(pushed) };
   // The server kept them, at the same revision (a save that only left them out changes nothing there).
   const server: StoredItem = structuredClone(pushed);
-  Object.assign((server.data as any), { usageAudit: audit });
-  Object.assign((server.data as any).vocabs[1], { advancedEnrichment: enrichment });
+  Object.assign(server.data, { usageAudit: audit });
+  Object.assign(phraseData(server).vocabs[1], { advancedEnrichment: enrichment });
 
   const merged = trackServerContent(mergeDatasets([local], [server]), [server])[0];
-  assert.deepEqual((merged.data as any).usageAudit, audit);
-  assert.deepEqual((merged.data as any).vocabs[1].advancedEnrichment, enrichment);
+  assert.deepEqual(phraseData(merged).usageAudit, audit);
+  assert.deepEqual(phraseData(merged).vocabs[1].advancedEnrichment, enrichment);
   assert.equal(isItemDirty(merged), false, 'the item matches its server copy, so nothing is pushed again');
 
   // Edits made here since are kept, on top of the fields.
   const edited: StoredItem = { ...local, data: { ...local.data, translation: 'unsynced edit' } };
   const mergedEdit = trackServerContent(mergeDatasets([edited], [server]), [server])[0];
-  assert.equal((mergedEdit.data as any).translation, 'unsynced edit');
-  assert.deepEqual((mergedEdit.data as any).usageAudit, audit);
+  assert.equal(phraseData(mergedEdit).translation, 'unsynced edit');
+  assert.deepEqual(phraseData(mergedEdit).usageAudit, audit);
   assert.equal(isItemDirty(mergedEdit), true);
 
   // A copy of an older revision doesn't speak for the server's current one.
   const newer: StoredItem = { ...local, serverRevision: 6 };
-  assert.equal((mergeDatasets([newer], [server])[0].data as any).usageAudit, undefined);
+  assert.equal(phraseData(mergeDatasets([newer], [server])[0]).usageAudit, undefined);
 });
 
 test('a sentence takes the server analysis only for the text it analyzed', () => {
   const sentence = (text: string, revision: number): StoredItem => ({
     type: 'sentence',
-    data: { id: 's1', text, sourceWord: 'word', createdAt: 1 } as any,
+    data: { id: 's1', text, sourceWord: 'word', createdAt: 1 } as SentenceData,
     savedAt: 1,
     updatedAt: 1,
     serverRevision: revision,
     srs: { ...srs('s1', 0, 0), type: 'sentence' },
   });
   const server = sentence('The same text.', 3);
-  Object.assign(server.data as any, { analysis: { summary: 'x' }, analysisGeneratedAt: 7 });
+  Object.assign(server.data, { analysis: { summary: 'x' }, analysisGeneratedAt: 7 });
   const same = sentence('The same text.', 3);
-  assert.deepEqual((mergeDatasets([same], [server])[0].data as any).analysis, { summary: 'x' });
+  assert.deepEqual((mergeDatasets([same], [server])[0].data as SentenceData).analysis, { summary: 'x' });
   const rewritten = sentence('Rewritten here.', 3);
-  assert.equal((mergeDatasets([rewritten], [server])[0].data as any).analysis, undefined);
+  assert.equal((mergeDatasets([rewritten], [server])[0].data as SentenceData).analysis, undefined);
 });
 
 test('a synced copy takes the server schedule even when it moved back, and unsynced progress keeps its review', () => {
