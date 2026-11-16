@@ -23,8 +23,15 @@ test('server search stays immediate while local Claude Opus enrichment runs ever
   assert.match(serverAi, /POST \/api\/analyze/);
   assert.match(serverAi, /proxyFetch/);
   assert.doesNotMatch(launchAgent, /Qwen3-30B|Qwen3-VL|LOCAL_MLX/);
-  // A loaded job keeps its environment until reloaded, so concurrency stays a runner default.
-  assert.doesNotMatch(launchAgent, /CONCURRENCY/);
+  // A loaded job keeps its environment until it is reloaded, so every setting but PATH is a runner default,
+  // which a new value reaches without a reload. The model choice lives there.
+  const environment = /<key>EnvironmentVariables<\/key>\s*<dict>([\s\S]*?)<\/dict>/.exec(launchAgent)?.[1] ?? '';
+  assert.deepEqual([...environment.matchAll(/<key>([^<]+)<\/key>/g)].map(match => match[1]), ['PATH']);
+  assert.match(runner, /ENRICHMENT_MODEL_PROVIDER="\$\{ENRICHMENT_MODEL_PROVIDER:-claude\}"/);
+  assert.match(runner, /CLAUDE_MODEL="\$\{CLAUDE_MODEL:-claude-opus-5-5\}"/);
+  assert.match(runner, /CLAUDE_REASONING_EFFORT="\$\{CLAUDE_REASONING_EFFORT:-xhigh\}"/);
+  assert.match(runner, /CODEX_MODEL="\$\{CODEX_MODEL:-gpt-5\.6-sol\}"/);
+  assert.match(runner, /CODEX_REASONING_EFFORT="\$\{CODEX_REASONING_EFFORT:-xhigh\}"/);
   assert.match(runner, /complete-corpus-fields\.mjs/);
   assert.match(runner, /prepare-incremental-item-images\.mjs/);
   assert.match(runner, /export ENRICHMENT_MODEL_PROVIDER CLAUDE_MODEL CLAUDE_REASONING_EFFORT CODEX_MODEL/);
