@@ -19,6 +19,8 @@ export function useNavBar(currentView: ViewState, setCurrentView: (view: ViewSta
   // When the tab last changed and when the showing one was last tapped: a reselect soon after either does nothing.
   const lastSwitchAtRef = useRef(-Infinity);
   const lastReselectAtRef = useRef(-Infinity);
+  // Until then a scroll down doesn't hide the bar: a list's own correction after a synced position reads as one.
+  const settlingUntilRef = useRef(0);
   // Direct DOM mutation, so hiding the nav bar on scroll doesn't re-render App.
   const setNavShown = useCallback((shown: boolean) => {
     if (shown === showNavRef.current) return;
@@ -43,7 +45,7 @@ export function useNavBar(currentView: ViewState, setCurrentView: (view: ViewSta
 
     if (currentScrollY < 10) {
       shouldShow = true;
-    } else if (currentScrollY > lastScrollY && currentScrollY > 100) {
+    } else if (currentScrollY > lastScrollY && currentScrollY > 100 && Date.now() >= settlingUntilRef.current) {
       shouldShow = false;
     } else if (currentScrollY < lastScrollY) {
       shouldShow = true;
@@ -53,11 +55,16 @@ export function useNavBar(currentView: ViewState, setCurrentView: (view: ViewSta
     lastScrollYs.current.set(scroller, currentScrollY);
   }, [currentViewRef, setNavShown]);
 
-  /** Takes `scroller` as the showing tab's, where it is now, without a scroll event and without moving the bar. */
+  /**
+   * Takes `scroller` as the showing tab's, where it is now, without a scroll event, and shows the bar. For 400 ms a
+   * scroll down doesn't hide it again, since the list's own position correction can read as one.
+   */
   const syncScrollPosition = useCallback((scroller: HTMLElement) => {
     scrollers.current.set(currentViewRef.current, scroller);
     lastScrollYs.current.set(scroller, scroller.scrollTop);
-  }, [currentViewRef]);
+    settlingUntilRef.current = Date.now() + 400;
+    setNavShown(true);
+  }, [currentViewRef, setNavShown]);
 
   /** A tap on tab `view`, or its number key. */
   const navigate = useCallback((view: ViewState) => {
