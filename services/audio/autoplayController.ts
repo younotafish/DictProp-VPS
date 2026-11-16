@@ -402,6 +402,12 @@ export function createAutoplayController(deps: AutoplayDeps): AutoplayController
   };
 }
 
+/**
+ * A pause this long ends auto-play, as the end of its Duration does, so a pause nobody comes back to can't hold the
+ * audio session open for good.
+ */
+export const PAUSE_CAP_MS = 15 * 60_000;
+
 /** The pause-aware clock behind the Duration countdown: time spent paused doesn't count. */
 export interface SessionClock {
   start: () => void;
@@ -413,6 +419,8 @@ export interface SessionClock {
   /** When a session of `durationMs` ends at this pace: null while paused (the countdown stands still) or before start. */
   deadline: (durationMs: number) => number | null;
   isPaused: () => boolean;
+  /** The session is over: running, its `durationMs` has run out; paused, the pause has lasted PAUSE_CAP_MS. */
+  isOver: (durationMs: number) => boolean;
 }
 
 export function createSessionClock(now: () => number): SessionClock {
@@ -420,6 +428,7 @@ export function createSessionClock(now: () => number): SessionClock {
   let pausedAt: number | null = null;
   let pausedMs = 0;
   const elapsedMs = () => (startedAt === null ? 0 : (pausedAt ?? now()) - startedAt - pausedMs);
+  const remainingMs = (durationMs: number) => Math.max(0, durationMs - elapsedMs());
   return {
     start: () => { startedAt = now(); pausedAt = null; pausedMs = 0; },
     pause: () => { if (startedAt !== null && pausedAt === null) pausedAt = now(); },
@@ -429,8 +438,9 @@ export function createSessionClock(now: () => number): SessionClock {
       pausedAt = null;
     },
     elapsedMs,
-    remainingMs: durationMs => Math.max(0, durationMs - elapsedMs()),
+    remainingMs,
     deadline: durationMs => (startedAt === null || pausedAt !== null ? null : startedAt + pausedMs + durationMs),
     isPaused: () => pausedAt !== null,
+    isOver: durationMs => (pausedAt === null ? remainingMs(durationMs) <= 0 : now() - pausedAt >= PAUSE_CAP_MS),
   };
 }

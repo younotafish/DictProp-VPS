@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  CARD_GAP_MS, EMPTY_CARD_MS, createAutoplayController, createSessionClock, initialAutoplayState, reduceAutoplay,
+  CARD_GAP_MS, EMPTY_CARD_MS, PAUSE_CAP_MS, createAutoplayController, createSessionClock, initialAutoplayState, reduceAutoplay,
   type AutoplayMode, type AutoplaySettings,
 } from '../../services/audio/autoplayController.ts';
 import type { InterruptReason, PlaybackStatus } from '../../services/audio/player.ts';
@@ -365,4 +365,35 @@ test('the session clock stands still while paused', () => {
   now += minutes(16);
   assert.equal(clock.remainingMs(minutes(20)), 0);
   assert.equal(clock.elapsedMs(), minutes(21));
+});
+
+test('a pause that lasts 15 minutes ends the session, though the Duration stands still through it', () => {
+  let now = 0;
+  const minutes = (count: number) => count * 60_000;
+  const duration = minutes(20);
+  assert.equal(PAUSE_CAP_MS, minutes(15));
+  const clock = createSessionClock(() => now);
+  clock.start();
+  now += minutes(5);
+  assert.equal(clock.isOver(duration), false);
+  clock.pause();
+  now += PAUSE_CAP_MS - 1;
+  assert.equal(clock.isOver(duration), false, 'paused just short of the cap');
+  assert.equal(clock.remainingMs(duration), minutes(15), 'the Duration stood still');
+  now += 1;
+  assert.equal(clock.isOver(duration), true, 'the pause reached the cap');
+
+  // Each pause counts afresh, and running, the Duration ends the session as before, the pauses not counted.
+  const resumed = createSessionClock(() => now);
+  resumed.start();
+  for (let pause = 0; pause < 2; pause++) {
+    resumed.pause();
+    now += minutes(14);
+    assert.equal(resumed.isOver(duration), false, 'a pause under the cap');
+    resumed.resume();
+  }
+  now += duration - 1;
+  assert.equal(resumed.isOver(duration), false);
+  now += 1;
+  assert.equal(resumed.isOver(duration), true, 'the Duration ran out');
 });

@@ -20,7 +20,8 @@ export type AutoPlayMode = 'off' | 'slideshow' | 'examples';
  * cards; sentence auto-play (isSentenceAutoPlaying) reads each card's example sentences, or in sentence review
  * the sentence itself. Only one runs at a time. Either keeps the screen awake, and stops itself when its timer
  * runs out. Sentence auto-play can pause (its reader reports it through setSentenceAutoPlayPaused): the timer stands
- * still meanwhile, and the screen stays awake for the pause's first two minutes only.
+ * still meanwhile, the screen stays awake for the pause's first two minutes only, and a pause that lasts 15 minutes
+ * (PAUSE_CAP_MS) ends auto-play as the timer's end does.
  */
 export function useAutoPlay() {
   const [autoPlayMode, setAutoPlayMode] = useState<AutoPlayMode>('off');
@@ -117,13 +118,15 @@ export function useAutoPlay() {
   const timerExpiryRef = useRef<(() => void) | null>(null);
   const setTimerExpiry = useCallback((onExpired: (() => void) | null) => { timerExpiryRef.current = onExpired; }, []);
 
-  // Stop auto-play when the timer expires; a paused session's timer stands still, so it can't run out. The check sets
-  // no state until then, so the card doesn't re-render every second; AutoPlayCountdown shows the time left.
+  // Stop auto-play when the timer expires. A paused session's timer stands still, so it can't run out, but a pause that
+  // lasts PAUSE_CAP_MS ends auto-play the same way, which lets go of the silent keep-alive, the lock-screen controls and
+  // the screen. The check sets no state until then, so the card doesn't re-render every second; AutoPlayCountdown shows
+  // the time left.
   const durationMs = autoPlayTimerMinutes * 60_000;
   useEffect(() => {
     if (!clock) return;
     const interval = setInterval(() => {
-      if (clock.isPaused() || clock.remainingMs(durationMs) > 0) return;
+      if (!clock.isOver(durationMs)) return;
       const onExpired = timerExpiryRef.current;
       if (onExpired) onExpired();
       else setAutoPlayMode('off');

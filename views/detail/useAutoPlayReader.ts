@@ -37,7 +37,8 @@ interface AutoPlayReaderOptions {
   onRoundListened?: () => void;
   /** Hears auto-play pause and resume, and false when it stops: the countdown stands still and the button shows it. */
   onPausedChange?: (paused: boolean) => void;
-  /** Registers what the Duration timer's end does while the reading runs (useAutoPlay's setTimerExpiry). */
+  /** Registers what ends the reading when the Duration runs out or a pause has lasted 15 minutes (useAutoPlay's
+   *  setTimerExpiry). */
   setTimerExpiry?: (onExpired: (() => void) | null) => void;
   /** After a pause, takes the screen lock and the silent keep-alive again (useAutoPlay's rearmAutoPlay). */
   rearm?: () => void;
