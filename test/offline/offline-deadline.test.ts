@@ -190,3 +190,58 @@ test('gh_bounded limits a stalled GitHub call and never lets it read the caller 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("delete_run_artifact_and_log deletes a run's artifacts by name, then its log, and no failure stops the caller", () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-run-cleanup-'));
+  try {
+    // Logs each call, answers the artifact list with FAKE_IDS, and fails every call that mentions FAKE_FAIL.
+    const gh = join(root, 'gh');
+    writeFileSync(gh, `#!/bin/sh
+echo "$*" >> "$FAKE_LOG"
+if [ -n "$FAKE_FAIL" ]; then
+  case "$*" in *"$FAKE_FAIL"*) echo 'HTTP 502: Bad Gateway' >&2; exit 1 ;; esac
+fi
+case "$*" in "api repos/"*"/artifacts --jq "*) printf '%s\\n' $FAKE_IDS ;; esac
+`);
+    chmodSync(gh, 0o700);
+    const cleanup = (name: string, ids: string, fail = '') => {
+      const calls = join(root, `${name}.log`);
+      writeFileSync(calls, '');
+      // The scripts run it under set -e, which a failure inside would turn into the caller's own.
+      const result = bash('log() { echo "log: $*"; }\ndelete_run_artifact_and_log 42 corpus-export\necho "carried on"', {
+        GH_BIN: gh, GITHUB_REPOSITORY: 'owner/repo', FAKE_LOG: calls, FAKE_IDS: ids, FAKE_FAIL: fail,
+      });
+      assert.equal(result.status, 0, result.stderr);
+      return { log: result.stdout.trim().split('\n'), calls: readFileSync(calls, 'utf8').trim().split('\n') };
+    };
+    const list = 'api repos/owner/repo/actions/runs/42/artifacts --jq .artifacts[] | select(.name == "corpus-export") | .id';
+    const deleteLog = 'api -X DELETE repos/owner/repo/actions/runs/42/logs';
+
+    assert.deepEqual(cleanup('deleted', '9001 9002'), {
+      log: [
+        'log: deleted artifact 9001 (corpus-export) of run 42',
+        'log: deleted artifact 9002 (corpus-export) of run 42',
+        'log: deleted the logs of run 42',
+        'carried on',
+      ],
+      calls: [list, 'api -X DELETE repos/owner/repo/actions/artifacts/9001', 'api -X DELETE repos/owner/repo/actions/artifacts/9002', deleteLog],
+    });
+    // An id that is not a number is never sent to the API.
+    assert.deepEqual(cleanup('refused', '9001 not-an-id', 'DELETE'), {
+      log: [
+        'log: could not delete artifact 9001 of run 42; it expires within a day',
+        'log: could not delete artifact not-an-id of run 42; it expires within a day',
+        'log: could not delete the logs of run 42',
+        'carried on',
+      ],
+      calls: [list, 'api -X DELETE repos/owner/repo/actions/artifacts/9001', deleteLog],
+    });
+    assert.deepEqual(cleanup('unreachable', '9001', 'api').log, [
+      'log: could not find artifact corpus-export of run 42 to delete; it expires within a day',
+      'log: could not delete the logs of run 42',
+      'carried on',
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

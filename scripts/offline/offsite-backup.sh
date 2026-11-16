@@ -239,25 +239,7 @@ mv "$DOWNLOAD/sidecar.json" "$ROOT/$NAME.json"
 rm -rf "$DOWNLOAD"
 DOWNLOAD=""
 
-# The artifact expires within a day anyway, so a cleanup that fails is only logged.
-ARTIFACT_IDS="$(gh_bounded api "repos/$REPO/actions/runs/$RUN_ID/artifacts" \
-  --jq ".artifacts[] | select(.name == \"$ARTIFACT\") | .id" 2>/dev/null || true)"
-if [ -z "$ARTIFACT_IDS" ]; then
-  log "could not find the artifact of run $RUN_ID to delete; it expires within a day"
-fi
-for artifact_id in $ARTIFACT_IDS; do
-  if [[ "$artifact_id" =~ ^[0-9]+$ ]] \
-    && gh_bounded api -X DELETE "repos/$REPO/actions/artifacts/$artifact_id" > /dev/null; then
-    log "deleted artifact $artifact_id of run $RUN_ID"
-  else
-    log "could not delete artifact $artifact_id of run $RUN_ID; it expires within a day"
-  fi
-done
-if gh_bounded api -X DELETE "repos/$REPO/actions/runs/$RUN_ID/logs" > /dev/null; then
-  log "deleted the logs of run $RUN_ID"
-else
-  log "could not delete the logs of run $RUN_ID"
-fi
+delete_run_artifact_and_log "$RUN_ID" "$ARTIFACT"
 
 # The newest KEEP copies stay, each with its sidecar, and nothing else does. sed reads the whole list, where head
 # would close the pipe early, which pipefail could take for a failure.

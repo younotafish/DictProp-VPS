@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Sourced by the offline publishers and the incremental runner. Every wait that holds the cycle lock
-# needs an end: macOS has no timeout(1), so polling loops compare wall-clock deadlines and single
-# commands run under a perl alarm.
+# Sourced by the incremental runner and most of the offline shell scripts. Every wait that holds the
+# cycle lock needs an end: macOS has no timeout(1), so polling loops compare wall-clock deadlines and
+# single commands run under a perl alarm. The GitHub CLI helpers those scripts share live here too.
 
 # The GitHub CLI and the repository the offline scripts talk to. The CLI binary is kept in .tools/, which
 # git ignores, relative to the repository root that the cycle and the publishers run from.
@@ -115,6 +115,32 @@ gh_bounded() {
 # after a dispatch, starting slightly early in case the local clock runs ahead of GitHub's.
 utc_timestamp_ago() {
   perl -MPOSIX=strftime -e 'print strftime("%Y-%m-%dT%H:%M:%SZ", gmtime(time - $ARGV[0])), "\n"' "$1"
+}
+
+# delete_run_artifact_and_log RUN_ID ARTIFACT
+# Deletes run RUN_ID's artifacts named ARTIFACT, then the run's log, saying what it did through the caller's log
+# function; callers run it once they hold what they downloaded. GitHub expires an artifact within a day anyway, so a
+# failure here is only logged, and the function returns 0, under set -e too.
+delete_run_artifact_and_log() {
+  local run_id="$1" artifact="$2" artifact_ids artifact_id
+  artifact_ids="$(gh_bounded api "repos/$REPO/actions/runs/$run_id/artifacts" \
+    --jq ".artifacts[] | select(.name == \"$artifact\") | .id" 2>/dev/null || true)"
+  if [ -z "$artifact_ids" ]; then
+    log "could not find artifact $artifact of run $run_id to delete; it expires within a day"
+  fi
+  for artifact_id in $artifact_ids; do
+    if [[ "$artifact_id" =~ ^[0-9]+$ ]] \
+      && gh_bounded api -X DELETE "repos/$REPO/actions/artifacts/$artifact_id" > /dev/null; then
+      log "deleted artifact $artifact_id ($artifact) of run $run_id"
+    else
+      log "could not delete artifact $artifact_id of run $run_id; it expires within a day"
+    fi
+  done
+  if gh_bounded api -X DELETE "repos/$REPO/actions/runs/$run_id/logs" > /dev/null; then
+    log "deleted the logs of run $run_id"
+  else
+    log "could not delete the logs of run $run_id"
+  fi
 }
 
 # The sweep (bridge-leftovers.mjs) deletes a publisher release idle for six hours as one a killed
