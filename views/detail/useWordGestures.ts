@@ -7,7 +7,7 @@ import {
   doubleTapControlSelector, isFlingStopTap, zoneDoubleTapUndo, zoneTapEffect, type ZoneTapEffect,
 } from '../../services/reviewGestures';
 import { zoneText } from './cardReading';
-import { touchFacts, wordTouchAction } from './touchGestures';
+import { scrollEdges, touchFacts, wordTouchAction, type ScrollEdges } from './touchGestures';
 
 // On a word card every control keeps its own taps, single or double: the native ones and the green look-up words.
 const CARD_CONTROLS = doubleTapControlSelector('card');
@@ -57,6 +57,8 @@ export function useWordGestures({
   // Touch Handling for swipe navigation
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
+  // Where the card's page stood as the touch began: a long swipe changes the word only from the matching edge.
+  const touchStartEdgesRef = useRef<ScrollEdges | null>(null);
   // Eyes-free zone tap-confirmation flash (see EyesFreeZones). The guides only render on touch devices, since
   // those zones only fire from taps (a mouse click does nothing there).
   const { zoneFlash, flashZone } = useZoneFlash();
@@ -81,6 +83,7 @@ export function useWordGestures({
     if (!touch) return;
     touchStartX.current = touch.clientX;
     touchStartY.current = touch.clientY;
+    touchStartEdgesRef.current = scrollEdges(scrollContainerRef.current);
     touchStoppedFlingRef.current = isFlingStopTap(lastScrollAtRef.current, e.timeStamp);
   };
   
@@ -99,8 +102,8 @@ export function useWordGestures({
     const touch = e.changedTouches[0];
     const diffX = touch.clientX - touchStartX.current;
     const diffY = touch.clientY - touchStartY.current;
-    // Edges are measured on the card's scroller, the page the touch moved.
-    const facts = touchFacts(diffX, diffY, scrollContainerRef.current);
+    // Edges are the card's scroller's, the page the touch moved, as it stood when the touch began.
+    const facts = touchFacts(diffX, diffY, scrollContainerRef.current, touchStartEdgesRef.current ?? undefined);
     // A still tap that stopped a fling only stopped the page: it reads nothing and starts no double tap.
     if (facts.isStillTap && touchStoppedFlingRef.current) {
       touchStartX.current = null;

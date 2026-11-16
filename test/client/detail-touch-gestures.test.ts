@@ -2,9 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { sentenceTouchAction, touchFacts, wordTouchAction, type ScrollPosition } from '../../views/detail/touchGestures.ts';
+import type { ItemGroup, StoredItem } from '../../types.ts';
+import {
+  scrollEdges, sentenceTouchAction, touchFacts, wordTouchAction, type ScrollPosition,
+} from '../../views/detail/touchGestures.ts';
 import { TAP_CONTROL_SELECTOR, doubleTapControlSelector } from '../../services/reviewGestures.ts';
 import { useSentenceGestures } from '../../views/detail/useSentenceGestures.ts';
+import { useWordGestures } from '../../views/detail/useWordGestures.ts';
 
 const top: ScrollPosition = { scrollTop: 0, scrollHeight: 2000, clientHeight: 800 };
 const middle: ScrollPosition = { scrollTop: 600, scrollHeight: 2000, clientHeight: 800 };
@@ -116,6 +120,44 @@ function pick({ atTop, atBottom, fits }: ReturnType<typeof touchFacts>) {
   return { atTop, atBottom, fits };
 }
 
+test('the edges a touch goes by are where its scroller stood when it began, when the view measured that', () => {
+  assert.deepEqual(scrollEdges(middle), { atTop: false, atBottom: false, fits: false });
+  assert.deepEqual(scrollEdges(null), { atTop: true, atBottom: true, fits: true });
+  // The drag scrolled from the middle to the bottom: the facts keep the middle.
+  assert.deepEqual(pick(touchFacts(0, -150, bottom, scrollEdges(middle))), { atTop: false, atBottom: false, fits: false });
+  assert.deepEqual(pick(touchFacts(0, -150, bottom)), { atTop: false, atBottom: true, fits: false }, 'without a snapshot, the end');
+});
+
+/** A swipe of `dy` that began with its scroller at `startedAt` and ended at `endedAt`. */
+const wordSwipe = (dy: number, startedAt: ScrollPosition, endedAt: ScrollPosition) =>
+  wordTouchAction(touchFacts(0, dy, endedAt, scrollEdges(startedAt)), {
+    onControl: false, y: 100, viewportHeight: 800, hasNextGroup: true, hasPrevGroup: true, hasPrevItem: true,
+  });
+const sentenceSwipe = (dy: number, startedAt: ScrollPosition, endedAt: ScrollPosition, onAnalysisPage = false) =>
+  sentenceTouchAction(touchFacts(0, dy, endedAt, scrollEdges(startedAt)), {
+    onAnalysisPage, autoPlaying: false, onControl: false, onSentenceWord: false,
+  });
+
+test('a long swipe changes words only when it starts at the matching edge; one that reaches it partway only scrolls', () => {
+  assert.equal(wordSwipe(-150, middle, bottom), null, 'started mid-card, reached the bottom');
+  assert.equal(wordSwipe(150, middle, top), null, 'scrolled down a little, dragged back up to the picture');
+  assert.deepEqual(wordSwipe(-150, bottom, bottom), { kind: 'next-word' });
+  assert.deepEqual(wordSwipe(150, top, top), { kind: 'previous-word' });
+  assert.deepEqual(wordSwipe(-150, short, short), { kind: 'next-word' }, 'a card that fits the page');
+  // The pull-down that opens the header starts at the top too.
+  assert.equal(wordSwipe(80, middle, top), null);
+  assert.deepEqual(wordSwipe(80, top, top), { kind: 'reveal-header' });
+});
+
+test('in sentence review a long swipe changes sentences only when it starts at the page\'s matching end', () => {
+  for (const onAnalysisPage of [false, true]) {
+    assert.equal(sentenceSwipe(-150, middle, bottom, onAnalysisPage), null);
+    assert.equal(sentenceSwipe(150, middle, top, onAnalysisPage), null);
+    assert.equal(sentenceSwipe(-150, bottom, bottom, onAnalysisPage), 'next');
+    assert.equal(sentenceSwipe(150, top, top, onAnalysisPage), 'previous');
+  }
+});
+
 /** A stand-in for a DOM element: enough of closest() for the selectors the gesture guards use. */
 class FakeElement {
   constructor(readonly tag: string, readonly attributes: Record<string, string> = {}, readonly parent: FakeElement | null = null) {}
@@ -217,4 +259,44 @@ test('on the sentence page a long swipe scrolls a long sentence to its end befor
   assert.deepEqual(sentencePage(short).swipe(-150), ['sentence 6'], 'a sentence that fits the page');
   assert.deepEqual(sentencePage(middle).swipe(150), []);
   assert.deepEqual(sentencePage(top).swipe(150), ['sentence 4']);
+  // A drag that starts mid-sentence and reaches an end on the way only scrolls.
+  assert.deepEqual(sentencePage(middle).swipe(-150, bottom), []);
+  assert.deepEqual(sentencePage(middle).swipe(150, top), []);
+});
+
+/** The word card's touch handlers, as the view wires them, on word 5 of 10; `page` stands for the card's scroller. */
+function wordCard(page: ScrollPosition) {
+  const asked: string[] = [];
+  const scroller = { ...page };
+  const card = { type: 'vocab', data: { id: 'w5', word: 'gamut', examples: [] }, savedAt: 1 } as unknown as StoredItem;
+  const handlers = capture(() => useWordGestures({
+    scrollContainerRef: { current: scroller as unknown as HTMLElement }, showHeader: false,
+    setShowHeader: shown => { asked.push(`header ${String(shown)}`); }, currentGroup: { title: 'gamut', items: [card] } as ItemGroup,
+    currentItem: card, hasNextGroup: true, hasPrevGroup: true, hasPrevItem: false,
+    setCurrentGroupIndex: next => { asked.push(`word ${typeof next === 'function' ? next(5) : next}`); },
+    setCurrentItemIndex: () => {}, stopSlideshow: () => {}, toggleSpeak: () => {}, onClose: () => { asked.push('close'); },
+    handleRemember: () => {},
+  }));
+  const swipe = (dy: number, during?: ScrollPosition) => {
+    const globals = globalThis as Record<string, unknown>;
+    globals.window = { getSelection: () => null, innerHeight: 800 };
+    try {
+      handlers.onContentTouchStart({ touches: [{ clientX: 200, clientY: 500 }], timeStamp: 1_000 } as never);
+      if (during) Object.assign(scroller, during);
+      handlers.onContentTouchEnd({ changedTouches: [{ clientX: 200, clientY: 500 + dy }], target: null, timeStamp: 1_300 } as never);
+    } finally {
+      delete globals.window;
+    }
+    return asked.splice(0).filter(step => step !== 'header false');
+  };
+  return { swipe };
+}
+
+test('on a word card the edges are measured as the touch begins, so reaching the top on the way never changes the word', () => {
+  assert.deepEqual(wordCard(middle).swipe(150, top), [], 'scrolled down a little, dragged back up to the picture');
+  assert.deepEqual(wordCard(middle).swipe(-150, bottom), []);
+  assert.deepEqual(wordCard(top).swipe(150), ['word 4']);
+  assert.deepEqual(wordCard(bottom).swipe(-150), ['word 6']);
+  assert.deepEqual(wordCard(middle).swipe(80, top), [], 'nor does it open the header');
+  assert.deepEqual(wordCard(top).swipe(80), ['header true']);
 });

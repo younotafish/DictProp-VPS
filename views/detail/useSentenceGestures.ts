@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, type Dispatch, type MouseEvent as ReactMouseEvent, type RefObject, type SetStateAction, type TouchEvent as ReactTouchEvent } from 'react';
 import { log } from '../../services/logger';
 import { TAP_CONTROL_SELECTOR, doubleTapControlSelector, isFlingStopTap } from '../../services/reviewGestures';
-import { sentenceTouchAction, touchFacts } from './touchGestures';
+import { scrollEdges, sentenceTouchAction, touchFacts, type ScrollEdges } from './touchGestures';
 
 interface SentenceGesturesOptions {
   /** The view's root: a scroll anywhere in it (the sentence's page or the analysis) means a fling may be under way. */
@@ -36,6 +36,12 @@ export function useSentenceGestures({
   // Touch Handling for swipe navigation
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
+  // Where the page the touch moves stood as it began: a long swipe changes the sentence only from the matching edge.
+  const touchStartEdgesRef = useRef<ScrollEdges | null>(null);
+  // The page a touch moves: the analysis page, or the sentence page's scroller.
+  const pageScroller = () => sentencePage === 'analysis'
+    ? document.querySelector<HTMLElement>('[data-sentence-analysis]')
+    : heroScrollRef.current;
   // A two-finger word chord (lookup) owns both touch endings; blank-space sentence gestures must ignore them.
   const mobileWordChordActiveRef = useRef(false);
   const suppressMobileWordClickUntilRef = useRef(0);
@@ -104,6 +110,7 @@ export function useSentenceGestures({
     if (!touch) return;
     touchStartX.current = touch.clientX;
     touchStartY.current = touch.clientY;
+    touchStartEdgesRef.current = scrollEdges(pageScroller());
     touchStoppedFlingRef.current = isFlingStopTap(lastScrollAtRef.current, e.timeStamp);
   };
 
@@ -126,12 +133,9 @@ export function useSentenceGestures({
 
     const diffX = e.changedTouches[0].clientX - touchStartX.current;
     const diffY = e.changedTouches[0].clientY - touchStartY.current;
-    // Edges are measured on the page the touch moved: the analysis page, or the sentence page's scroller, so a long
-    // swipe scrolls a long sentence to its end before it changes sentences.
-    const container = sentencePage === 'analysis'
-      ? document.querySelector<HTMLElement>('[data-sentence-analysis]')
-      : heroScrollRef.current;
-    const facts = touchFacts(diffX, diffY, container);
+    // Edges are the page the touch moved, as it stood when the touch began: a long swipe scrolls a long sentence or
+    // analysis to its end, and the next one from there changes sentences.
+    const facts = touchFacts(diffX, diffY, pageScroller(), touchStartEdgesRef.current ?? undefined);
     // A still tap that stopped a fling only stopped the page: it neither plays nor pauses and starts no double tap,
     // and a click the browser may still make of it is swallowed like a tap's.
     if (facts.isStillTap && touchStoppedFlingRef.current) {

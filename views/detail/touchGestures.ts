@@ -1,6 +1,6 @@
 /**
- * What a finished one-finger touch on the card view means. The view measures the touch and the scroller it
- * moved; these functions decide, so the thresholds and edge rules are pinned by tests rather than by reading.
+ * What a finished one-finger touch on the card view means. The view measures the touch and, as it began, the scroller
+ * it moved; these functions decide, so the thresholds and edge rules are pinned by tests rather than by reading.
  */
 import { eyesFreeZoneAt } from '../../components/eyesFreeBands';
 
@@ -23,7 +23,30 @@ export interface ScrollPosition {
   clientHeight: number;
 }
 
-export interface TouchFacts {
+/** Where a scroller stands. */
+export interface ScrollEdges {
+  /** At its top... */
+  atTop: boolean;
+  /** ...or its bottom... */
+  atBottom: boolean;
+  /** ...or holding content no taller than the page. A missing scroller counts as all three. */
+  fits: boolean;
+}
+
+/** Where `scroller` stands, with five pixels of slack at each end. */
+export function scrollEdges(scroller: ScrollPosition | null): ScrollEdges {
+  const scrollTop = scroller?.scrollTop || 0;
+  const scrollHeight = scroller?.scrollHeight || 0;
+  const clientHeight = scroller?.clientHeight || 0;
+  return {
+    atTop: scrollTop <= EDGE_SLACK,
+    atBottom: scrollTop + clientHeight >= scrollHeight - EDGE_SLACK,
+    fits: scrollHeight <= clientHeight,
+  };
+}
+
+/** A finished touch: how far it moved, what kind of gesture that makes, and where its scroller stood when it began. */
+export interface TouchFacts extends ScrollEdges {
   dx: number;
   dy: number;
   isStillTap: boolean;
@@ -31,21 +54,17 @@ export interface TouchFacts {
   isShortSwipe: boolean;
   isLongSwipe: boolean;
   isHorizontalSwipe: boolean;
-  /** The scroller the touch moved is at its top... */
-  atTop: boolean;
-  /** ...or its bottom... */
-  atBottom: boolean;
-  /** ...or its content is no taller than the page. A missing scroller counts as all three. */
-  fits: boolean;
 }
 
-/** Classifies a touch that moved `dx`, `dy` over `scroller` (the card's, or the analysis page's). */
-export function touchFacts(dx: number, dy: number, scroller: ScrollPosition | null): TouchFacts {
+/**
+ * Classifies a touch that moved `dx`, `dy` over `scroller` (the card's, the sentence page's or the analysis page's).
+ * The edges are `start`, the scroller's as the touch began, so a long swipe changes the card only when it starts at
+ * the matching edge, and a drag that reaches an edge partway only scrolls; without a snapshot they're `scroller`'s now.
+ */
+export function touchFacts(dx: number, dy: number, scroller: ScrollPosition | null, start?: ScrollEdges): TouchFacts {
   const absX = Math.abs(dx);
   const absY = Math.abs(dy);
-  const scrollTop = scroller?.scrollTop || 0;
-  const scrollHeight = scroller?.scrollHeight || 0;
-  const clientHeight = scroller?.clientHeight || 0;
+  const { atTop, atBottom, fits } = start ?? scrollEdges(scroller);
   return {
     dx,
     dy,
@@ -54,9 +73,9 @@ export function touchFacts(dx: number, dy: number, scroller: ScrollPosition | nu
     isShortSwipe: absY >= SWIPE_MIN && absY < SHORT_SWIPE_MAX,
     isLongSwipe: absY >= LONG_SWIPE_MIN,
     isHorizontalSwipe: absX > absY * 1.5 && absX > HORIZONTAL_SWIPE_MIN,
-    atTop: scrollTop <= EDGE_SLACK,
-    atBottom: scrollTop + clientHeight >= scrollHeight - EDGE_SLACK,
-    fits: scrollHeight <= clientHeight,
+    atTop,
+    atBottom,
+    fits,
   };
 }
 
@@ -74,7 +93,7 @@ export type SentenceTouchAction =
  * Sentence review, on either page. Sideways flips between the sentence and its analysis; past the sentence
  * page's left edge it leaves, unless auto-play is locked on, when it opens the auto-play panel. A still tap on
  * blank space plays, pauses or (twice) remembers; controls and words keep their own handlers. Long vertical
- * swipes change sentences, but only once the page has reached the matching end, so ordinary drags just scroll.
+ * swipes change sentences, but only when they start at the page's matching end, so ordinary drags just scroll.
  */
 export function sentenceTouchAction(
   facts: TouchFacts,
@@ -107,8 +126,8 @@ export type WordTouchAction =
 /**
  * A word or phrase card. A still tap off the controls reads by a fixed screen band in the top half: the top
  * quarter reads the first example, the second quarter the second, and the bottom half is safe empty space. A
- * short swipe down at the top reveals the header; long vertical swipes change words at the matching end; a
- * sideways swipe changes the meaning, and past the first meaning a swipe right leaves.
+ * short swipe down that starts at the top reveals the header; long vertical swipes change words when they start at
+ * the matching end; a sideways swipe changes the meaning, and past the first meaning a swipe right leaves.
  */
 export function wordTouchAction(
   facts: TouchFacts,
