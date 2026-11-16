@@ -5,7 +5,7 @@ import { Hono } from 'hono';
 import { getComparisons, upsertComparison } from '../db.js';
 import type { AppEnv } from '../middleware/auth.js';
 import { readJsonObject } from '../middleware/json-body.js';
-import { MAX_COMPARE_WORDS } from '../query-mode.js';
+import { MAX_COMPARE_WORDS } from '../shared/query-mode.js';
 
 export const comparisonsRoutes = new Hono<AppEnv>();
 
