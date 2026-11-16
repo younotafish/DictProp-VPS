@@ -1,4 +1,4 @@
-import { db, deleteUnreferencedBlobs, getAllItems, softDeleteItem, upsertItem } from '../db.js';
+import { db, deleteUnreferencedBlobs, getAllItems, softDeleteItem, upsertItem, type ItemRead } from '../db.js';
 import { backupBeforeWrite, checkpointAfterWrite } from '../import-support.js';
 import { normalizeLabel, vocabSenseKey } from '../library-identity.js';
 import { requireOwner } from './support/run.js';
@@ -151,7 +151,7 @@ const duplicateGroups = [
   })),
 ];
 const duplicatePlans = duplicateGroups.flatMap(({ ids, semantic, preferredSurvivorId }) => {
-  const live = ids.map(id => byId.get(id)).filter(item => item && !item.isDeleted);
+  const live = ids.map(id => byId.get(id)).filter((item): item is ItemRead => item !== undefined && !item.isDeleted);
   if (live.length < 2) return [];
   assertSameIdentity(live, semantic);
   const content = [...live].sort((left, right) =>
