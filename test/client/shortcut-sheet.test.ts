@@ -58,10 +58,11 @@ test('the sheet drops what the app no longer does', () => {
     const text = `${row.keys.join(' ')} ${row.label}`;
     assert.doesNotMatch(text, /toggle save|vertical|footnote|ⁿ|back to sentences/i, text);
   }
-  // ⌘-click looks up and a plain click plays (f40102e); no row says ⌘-click plays.
+  // ⌘-click looks up and a plain click plays (f40102e); no row says ⌘-click plays. Inside a selection ⌘-click looks
+  // up the selected phrase (UX-36, on a laptop).
   const sentences = section(mac, 'sentences').rows;
   assert.ok(hasRow(sentences, ['Click'], 'On a word: play from it'));
-  assert.ok(hasRow(sentences, ['⌘', 'Click'], 'On a word: look it up (a saved word opens its card)'));
+  assert.ok(hasRow(sentences, ['⌘', 'Click'], 'Look up the word, or the selected phrase when you click inside a selection'));
   assert.ok(!sentences.some(row => row.keys.includes('⌘') && /play/i.test(row.label)));
   // S only saves, as ⌘S does (UX-04).
   assert.ok(hasRow(section(mac, 'card').rows, ['S', '⌘', 'S'], 'Save the card'));

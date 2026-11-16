@@ -119,7 +119,7 @@ const SECTIONS: readonly ShortcutSection[] = [
     title: 'Sentences',
     rows: [
       { keys: ['Click'], label: 'On a word: play from it' },
-      { keys: ['Mod', 'Click'], label: 'On a word: look it up (a saved word opens its card)' },
+      { keys: ['Mod', 'Click'], label: 'Look up the word, or the selected phrase when you click inside a selection' },
       { keys: ['Click'], label: 'On blank space: play or pause, or at 85% or more start it again; during auto-play, pause or resume it' },
       { keys: ['Double-click'], label: 'On blank space or a word: Got it' },
       { keys: ['↑', '↓'], label: 'Previous or next sentence, read aloud' },
