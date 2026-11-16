@@ -8,9 +8,8 @@ const { stmts } = await import('../src/db/items.js');
 const { imageStmts } = await import('../src/db/images.js');
 const { orphanStmts, userStmts } = await import('../src/db/users.js');
 
-// A database file as the server created it in March, before accounts, revisions, ratings and image blobs,
-// with the indexes the schema has since retired.
-const MARCH_SCHEMA = `
+// items and users as the server first created them in March 2026, with indexes the schema has since retired.
+const MARCH_TABLES = `
   CREATE TABLE items (
     id TEXT PRIMARY KEY, type TEXT NOT NULL CHECK(type IN ('vocab', 'phrase', 'sentence')), data TEXT NOT NULL,
     srs TEXT NOT NULL, saved_at INTEGER NOT NULL, updated_at INTEGER, is_deleted INTEGER DEFAULT 0, is_archived INTEGER DEFAULT 0
@@ -22,6 +21,26 @@ const MARCH_SCHEMA = `
     is_approved INTEGER DEFAULT 0, is_admin INTEGER DEFAULT 0, created_at INTEGER NOT NULL
   );
   CREATE INDEX idx_users_google_id ON users(google_id);
+`;
+
+// A file as the server left it once accounts arrived in March: items gained user_id by ALTER TABLE, with an index
+// of its own, beside the new sessions table.
+const MARCH_FILE = `${MARCH_TABLES}
+  CREATE TABLE sessions (
+    token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_sessions_user_id ON sessions(user_id);
+  CREATE INDEX idx_sessions_expires ON sessions(expires_at);
+  ALTER TABLE items ADD COLUMN user_id TEXT;
+  CREATE INDEX idx_items_user_id ON items(user_id);
+  INSERT INTO items (id, type, data, srs, saved_at, user_id) VALUES ('march-item', 'vocab', '{}', '{}', 1, 'march-user');
+`;
+
+// Every table that later gained columns or lost indexes, each in the shape it was first created in (items and users
+// in March, item_images in June, review_events, review_event_items and sentence_enrichments in July), with the
+// retired indexes those shapes had. No real file held this mix: it runs every ALTER and DROP at once. The tables it
+// leaves out were first created in their final shape, and a file that lacks a table gets it by CREATE.
+const FIRST_SHAPES = `${MARCH_TABLES}
   CREATE TABLE review_events (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, item_id TEXT NOT NULL,
     item_type TEXT NOT NULL CHECK(item_type IN ('vocab', 'phrase', 'sentence')), reviewed_at INTEGER NOT NULL,
@@ -40,7 +59,7 @@ const MARCH_SCHEMA = `
     updated_at INTEGER NOT NULL
   );
   CREATE INDEX idx_sentence_enrichments_source_id ON sentence_enrichments(source_id);
-  INSERT INTO items (id, type, data, srs, saved_at) VALUES ('march-item', 'vocab', '{}', '{}', 1);
+  INSERT INTO items (id, type, data, srs, saved_at) VALUES ('first-shape-item', 'vocab', '{}', '{}', 1);
 `;
 
 /** Every table's columns and indexes, in a form two databases can be compared by. */
@@ -64,13 +83,22 @@ const fresh = () => {
   return database;
 };
 
-test('a March database file upgrades to exactly the tables, columns and indexes of a fresh one', () => {
+test('every table in its first shape upgrades to exactly the tables, columns and indexes of a fresh database', () => {
+  const upgraded = new Database(':memory:');
+  upgraded.exec(FIRST_SHAPES);
+  applySchema(upgraded);
+  assert.deepEqual(shape(upgraded), shape(fresh()));
+  const row = upgraded.prepare(`SELECT user_id, project, revision FROM items WHERE id = 'first-shape-item'`).get();
+  assert.deepEqual(row, { user_id: null, project: null, revision: 0 });
+});
+
+test('a file from March, once accounts arrived, upgrades to exactly a fresh database and keeps its rows', () => {
   const march = new Database(':memory:');
-  march.exec(MARCH_SCHEMA);
+  march.exec(MARCH_FILE);
   applySchema(march);
   assert.deepEqual(shape(march), shape(fresh()));
   const row = march.prepare(`SELECT user_id, project, revision FROM items WHERE id = 'march-item'`).get();
-  assert.deepEqual(row, { user_id: null, project: null, revision: 0 });
+  assert.deepEqual(row, { user_id: 'march-user', project: null, revision: 0 });
 });
 
 test('applying the schema again changes nothing', () => {
