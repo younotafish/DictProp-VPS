@@ -15,6 +15,7 @@ import {
   studyForecast,
 } from '../../services/studyStats.ts';
 import { LibraryCounts } from '../../views/detail/LibraryCounts.tsx';
+import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -66,6 +67,17 @@ test('study stats bucket items by memory strength and count due spellings once',
   assert.equal(stats.due, 2);
   assert.equal(stats.total, 6);
   assert.equal(stats.avgStrength, Math.round((90 + 72 + 55 + 30 + 12) / 6));
+});
+
+test('a card never reviewed adds 0 to the average strength, as its badge shows it New at 0, whatever its seed stability stores', () => {
+  // A newly saved word goes through SRSAlgorithm.ensure, which stores the seed stability's display strength.
+  const saved = { ...vocab('new', 'fresh'), srs: SRSAlgorithm.ensure(SRSAlgorithm.createNew('new', 'vocab', NOW), 'new', 'vocab') };
+  assert.equal(saved.srs.memoryStrength, 7);
+  assert.equal(computeItemStats([saved], NOW).avgStrength, 0);
+  const stats = computeItemStats([vocab('run', 'run', { strength: 40, reviews: 2 }), saved], NOW);
+  assert.equal(stats.avgStrength, 20);
+  assert.equal(stats.mastery.new, 1);
+  assert.equal(stats.mastery.learning, 1);
 });
 
 test('the due count takes each spelling once, reviewed and due, leaving out new, archived and deleted cards', () => {

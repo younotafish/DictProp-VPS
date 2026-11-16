@@ -9,6 +9,7 @@ export interface StudyStats {
   /** How many items each mastery level holds: New for the never reviewed, the rest banded by stored display strength. */
   mastery: Record<MasteryKey, number>;
   total: number;
+  /** The items' average display strength (0–100), a card never reviewed counting 0, as its badge shows it (New). */
   avgStrength: number;
   /** Consecutive days with a review, counting back from today, or from yesterday if today has none yet. */
   streak: number;
@@ -136,15 +137,16 @@ export function computeItemStats(items: readonly StoredItem[], now: number): Ite
 
   for (const item of items) {
     const srs = item.srs;
+    const reviews = reviewsOf(item);
     const strength = srs?.memoryStrength ?? 0;
-    const level = masteryLevelFor(strength, srs?.totalReviews ?? 0);
+    const level = masteryLevelFor(strength, reviews);
     if (level) mastery[level.key]++;
-    strengthSum += strength;
-    legacyReviewFloor += srs?.totalReviews ?? 0;
+    // The strength a never-reviewed card's seed stability gives it isn't anything learned, so it adds nothing.
+    if (reviews > 0) strengthSum += strength;
+    legacyReviewFloor += reviews;
     longestStreak = Math.max(longestStreak, srs?.correctStreak ?? 0);
 
     // The most reviewed items, earlier items first on ties; an item never reviewed isn't among them.
-    const reviews = reviewsOf(item);
     if (reviews > 0 && (mostReviewed.length < MOST_REVIEWED || reviews > reviewsOf(mostReviewed[MOST_REVIEWED - 1]))) {
       let at = mostReviewed.length;
       while (at > 0 && reviewsOf(mostReviewed[at - 1]) < reviews) at--;
