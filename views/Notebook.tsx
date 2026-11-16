@@ -72,13 +72,17 @@ interface NotebookProps {
   onCompare: (words: string[]) => void;
   onSaveSentence: (text: string, word: string, sense?: string) => void;
   isSentenceSaved: (text: string) => boolean;
-  /** A card or dialog is open over the notebook, whose keys are its own. */
+  /**
+   * Something covers the notebook and takes its keys: anything open in the overlay stack (components/overlayStack),
+   * such as a card, the card popup, a dialog or the search sheet.
+   */
   hasOverlay: boolean;
   onBatchImport: (words: string[]) => void;
   batchImportProgress: BatchImportProgress | null;
   onJSONImported: () => void;
   onGenerateAllSpeech: () => void;
-  ttsGenProgress: { current: number; total: number; isRunning: boolean } | null;
+  /** The speech sweep is running, so its tool shows busy. */
+  speechGenerationRunning: boolean;
   onRestoreImagesToServer: () => void;
   imageRestoreRunning: boolean;
   onDownloadOfflineImages: () => void;
@@ -92,7 +96,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
     isVocabSaved, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
     onBatchImport, batchImportProgress, onJSONImported,
-    onGenerateAllSpeech, ttsGenProgress,
+    onGenerateAllSpeech, speechGenerationRunning,
     onRestoreImagesToServer, imageRestoreRunning, onDownloadOfflineImages, matchSavedBases, onSyncScroll, onShowShortcuts,
 }) => {
   // The sort and filter last chosen on this device (review priority and words only at first), kept across relaunches.
@@ -197,8 +201,8 @@ export const NotebookView: React.FC<NotebookProps> = ({
   };
 
   // Global Escape (works even when the input is not focused) clears the search, and a second one leaves compare
-  // mode. It's the notebook's own Escape, so it stands down while an overlay (DetailView, a modal) is open and
-  // for an Escape something else already used, such as closing the tools menu.
+  // mode. It's the notebook's own Escape, so it stands down while something covers the notebook and for an Escape
+  // something else already used, such as closing the tools menu.
   useEffect(() => {
     if (hasOverlay) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -447,7 +451,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
             onForceSync={onForceSync}
             syncStatus={syncStatus}
             onGenerateAllSpeech={onGenerateAllSpeech}
-            speechGenerationRunning={!!ttsGenProgress?.isRunning}
+            speechGenerationRunning={speechGenerationRunning}
             onRestoreImagesToServer={onRestoreImagesToServer}
             imageRestoreRunning={imageRestoreRunning}
             onFindDuplicates={onFindDuplicates}

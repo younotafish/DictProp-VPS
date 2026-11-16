@@ -306,12 +306,12 @@ function SignedInApp({ user }: { user: AuthUser }) {
             onCompare={handleCompare}
             onSaveSentence={handleSaveSentence}
             isSentenceSaved={isSentenceSaved}
-            hasOverlay={!!detailContext || dialogOpen}
+            hasOverlay={overlayOpen}
             onBatchImport={handleBatchImport}
             onJSONImported={handleForceSync}
             batchImportProgress={batchImportProgress}
             onGenerateAllSpeech={handleGenerateAllSpeech}
-            ttsGenProgress={ttsGenProgress}
+            speechGenerationRunning={!!ttsGenProgress?.isRunning}
             onRestoreImagesToServer={handleRestoreImagesToServer}
             imageRestoreRunning={imageRestoreProgress !== null}
             onDownloadOfflineImages={handleDownloadOfflineImages}

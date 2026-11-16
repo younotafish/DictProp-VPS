@@ -14,7 +14,7 @@ const render = (items: StoredItem[], extra: Partial<ComponentProps<typeof Notebo
     onSignOut: async () => false, onViewRefusedReviews: noop, onScroll: noop,
     onForceSync: noop, isVocabSaved: () => false, onFindDuplicates: noop, onArchive: noop, onUnarchive: noop,
     onSave: noop, onCompare: noop, onSaveSentence: noop, isSentenceSaved: () => false, onBatchImport: noop,
-    batchImportProgress: null, onJSONImported: noop, onGenerateAllSpeech: noop, ttsGenProgress: null,
+    batchImportProgress: null, onJSONImported: noop, onGenerateAllSpeech: noop, speechGenerationRunning: false,
     onRestoreImagesToServer: noop, imageRestoreRunning: false, onDownloadOfflineImages: noop,
     ...extra,
   }));
