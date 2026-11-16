@@ -1,9 +1,9 @@
 /**
- * Learning-progress records: new, migrated and reset schedules, passive exposure, and mastery display.
+ * Learning-progress records: new, migrated and reset schedules, and mastery display.
  * Scheduling a review with FSRS v6 lives in fsrsScheduler.ts, which loads only where reviews happen.
  *
  * - memoryStrength is display-only, derived from stability
- * - Passive listening records recency for queue rotation without changing mastery
+ * - lastExposureDate is legacy: nothing writes it after wave 2 (wave 3 removes it)
  */
 
 import type { SRSData, StoredItem } from '../types';
@@ -119,14 +119,6 @@ export class SRSAlgorithm {
    */
   static reset(id: string, type: 'vocab' | 'phrase' | 'sentence', now = Date.now()): SRSData {
     return { ...SRSAlgorithm.createNew(id, type, now), nextReview: now, lastReviewDate: now };
-  }
-
-  /** Record a completed passive listen without changing any memorization or FSRS state. */
-  static updateAfterExposure(srs: SRSData, now = Date.now()): SRSData {
-    return {
-      ...srs,
-      lastExposureDate: Math.max(srs.lastExposureDate ?? 0, now),
-    };
   }
 
   /**

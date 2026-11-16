@@ -132,24 +132,6 @@ test('the first grades of a new card follow the 10-minute learning step, as the 
   ]);
 });
 
-test('passive exposure records recency without changing memorization or review state', () => {
-  const now = 50 * 86_400_000;
-  const base = {
-    ...SRSAlgorithm.createNew('sentence', 'sentence'),
-    nextReview: 40 * 86_400_000,
-  };
-  const exposed = SRSAlgorithm.updateAfterExposure(base, now);
-
-  assert.equal(exposed.lastExposureDate, now);
-  assert.equal(exposed.totalReviews, base.totalReviews);
-  assert.equal(exposed.correctStreak, base.correctStreak);
-  assert.equal(exposed.lastReviewDate, base.lastReviewDate);
-  assert.equal(exposed.nextReview, base.nextReview);
-  assert.equal(exposed.stability, base.stability);
-  assert.equal(exposed.memoryStrength, base.memoryStrength);
-  assert.equal(exposed.fsrsState, base.fsrsState);
-});
-
 test('migrating a never-reviewed item does not manufacture display strength from seed stability', () => {
   const pollutedByLegacyExposure = {
     ...SRSAlgorithm.createNew('fresh-sentence', 'sentence'),
