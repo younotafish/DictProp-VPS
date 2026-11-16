@@ -7,6 +7,7 @@ import { useEssayCatalog } from './reading/useEssayCatalog';
 import { EssayIndex } from './reading/EssayIndex';
 import { EssayReader } from './reading/EssayReader';
 import { nextReading } from './reading/essayGroups';
+import type { LandingScroll } from './reading/landingScroll';
 
 interface EssaysViewProps {
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
@@ -33,7 +34,7 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
     noteOpened();
   }, [onOpenSentence, noteOpened]);
   // Back from an essay finds the landing page scrolled where it was left.
-  const landingScroll = useRef(0);
+  const landingScroll = useRef<LandingScroll>({ scrollTop: 0, cardSpace: 0 });
   // Where each essay was left, read as the tab opens (it opens for one signed-in user), so the Continue card is on the
   // landing page from its first frame.
   const [positions, setPositions] = useState<ReadingPosition[]>(() => readReadingPositions(userId));

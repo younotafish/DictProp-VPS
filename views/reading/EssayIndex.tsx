@@ -7,9 +7,16 @@ import type { ReviewSummary } from '../../services/sentenceReviewState';
 import { continueCandidate, returnTarget, type ContinueReading, type ReadingPosition } from '../../services/readingPosition';
 import { essayStyle } from './essayStyle';
 import { groupModernEssays } from './essayGroups';
+import { restoredScrollTop, type LandingScroll } from './landingScroll';
 import type { PrivateCatalogStatus } from './useEssayCatalog';
 
 const NO_POSITIONS: readonly ReadingPosition[] = [];
+
+/** How far down `scroller`'s page the Continue card's slot starts, and its height: the room the card takes, or 0. */
+const measureSlot = (scroller: HTMLElement, slot: HTMLElement) => {
+  const box = slot.getBoundingClientRect();
+  return { slotTop: box.top - scroller.getBoundingClientRect().top + scroller.scrollTop, cardSpace: box.height };
+};
 
 const EssayTile: React.FC<{
   essay: Essay;
@@ -115,8 +122,11 @@ interface EssayIndexProps {
   now: number;
   onOpenEssay: (essayId: string) => void;
   onScroll: (event: React.UIEvent<HTMLElement>) => void;
-  /** Where the page is scrolled, kept while it's away (an essay open over it) and put back when it mounts again. */
-  scrollMemory?: { current: number };
+  /**
+   * Where the page is scrolled and the room the Continue card takes, kept while the page is away (an essay open over
+   * it) and put back when it mounts again.
+   */
+  scrollMemory?: { current: LandingScroll };
   /** Where the essays were left, for the Continue card. */
   readingPositions?: readonly ReadingPosition[];
 }
@@ -134,11 +144,19 @@ export function EssayIndex({
   readingPositions = NO_POSITIONS,
 }: EssayIndexProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const slotRef = useRef<HTMLDivElement>(null);
+  // Coming back finds the page where it was left. When the Continue card came, went or changed height meanwhile, a page
+  // left past the card moves by the change, so the tiles stay where they were.
   useLayoutEffect(() => {
-    if (scrollMemory && scrollerRef.current) scrollerRef.current.scrollTop = scrollMemory.current;
+    const scroller = scrollerRef.current;
+    const slot = slotRef.current;
+    if (!scrollMemory || !scroller || !slot) return;
+    const { slotTop, cardSpace } = measureSlot(scroller, slot);
+    scroller.scrollTop = restoredScrollTop(scrollMemory.current, slotTop, cardSpace);
+    scrollMemory.current = { scrollTop: scroller.scrollTop, cardSpace };
   }, [scrollMemory]);
   const handleScroll = (event: React.UIEvent<HTMLElement>) => {
-    if (scrollMemory) scrollMemory.current = event.currentTarget.scrollTop;
+    if (scrollMemory) scrollMemory.current.scrollTop = event.currentTarget.scrollTop;
     onScroll(event);
   };
   const progressByEssay = useMemo(
@@ -152,6 +170,11 @@ export function EssayIndex({
     () => continueCandidate(readingPositions, essays, catalogStatus === 'ready'),
     [readingPositions, essays, catalogStatus],
   );
+  // The card can also change while the page shows (the private catalog loads without the essay it named), so the memory
+  // notes the card's room each time: coming back then compares with the page as it was left.
+  useLayoutEffect(() => {
+    if (scrollMemory && slotRef.current) scrollMemory.current.cardSpace = slotRef.current.getBoundingClientRect().height;
+  }, [scrollMemory, continueReading]);
 
   return (
     <div ref={scrollerRef} className="h-full min-h-0 overflow-y-auto bg-slate-50" onScroll={handleScroll}>
@@ -169,7 +192,10 @@ export function EssayIndex({
           </p>
         </header>
 
-        {continueReading && <ContinueCard reading={continueReading} onOpen={onOpenEssay} />}
+        {/* The card's slot holds the card and the space under it, so its height is the room the card takes. */}
+        <div ref={slotRef} className="flow-root">
+          {continueReading && <ContinueCard reading={continueReading} onOpen={onOpenEssay} />}
+        </div>
 
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
