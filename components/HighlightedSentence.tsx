@@ -20,11 +20,13 @@ import { tokenizeSentence, type SentenceUnit } from '../services/sentenceTokens'
  * popup. The highlight itself is the affordance. This is independent of the source word — the sentence
  * is its own study item. Unsaved [[uncommon]] words stay green → look-up search.
  *
- * WORD OFFSETS (a contract with views/DetailView.tsx and src/index.css): whenever plain runs are split
- * into words (saved-word lookup or tap-any-word mode), each marker segment and each word that can be
- * opened or looked up carries `data-word-offset`, its character index in stripSentenceMarkers(text).
- * DetailView's click, two-finger-tap and Enter handlers find the word through that attribute and play
- * from its offset, and index.css keeps those words selectable and styles the Command-hover preview.
+ * WORD OFFSETS (a contract with sentence review's views/detail/useSentenceGestures.ts and
+ * useSentencePlayback.ts, and with src/index.css): whenever plain runs are split into words (saved-word
+ * lookup or tap-any-word mode), each marker segment and each word that can be opened or looked up carries
+ * `data-word-offset`, its character index in stripSentenceMarkers(text). Sentence review finds the word
+ * through that attribute: a click or one-finger tap (useSentenceGestures) and Enter (useSentencePlayback)
+ * play from its offset, a two-finger tap looks the word up, and the blank-space taps and clicks leave words
+ * alone. index.css keeps those words selectable and styles the Command-hover preview.
  *
  * How the text splits into these pieces (markers, words, saved phrases, lookup terms) is decided by
  * services/sentenceTokens.ts, which is pure and node-tested; this component maps each piece to its span.

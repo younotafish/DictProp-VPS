@@ -66,7 +66,7 @@ export function useAutoPlay() {
     };
   }, [isAutoPlaying, isSentenceAutoPlaying]);
 
-  // Auto-play slideshow effect
+  // How long each slide shows; useWordSlideshow reads it as each slide starts.
   const autoPlaySpeedRef = useLatest(autoPlaySpeed);
 
   const cycleSpeed = useCallback(() => {

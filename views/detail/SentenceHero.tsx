@@ -19,7 +19,7 @@ interface SentenceHeroProps {
   onSearchWord: (text: string) => void;
   /** Command is held on a Mac, so the words preview the look-up a click would make. */
   commandHeld: boolean;
-  /** The phone's word gestures, taken before the words' own handlers (see useSentenceWordGestures). */
+  /** The phone's word gestures, taken before the words' own handlers (see useSentenceGestures). */
   onWordTouchStartCapture?: React.TouchEventHandler<HTMLElement>;
   onWordClickCapture: React.MouseEventHandler<HTMLElement>;
   /** The speaker played the sentence to its end. */
