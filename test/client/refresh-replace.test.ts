@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { planRefreshReplace } from '../../services/refreshReplace.ts';
+import { makeVocabStoredItem } from '../../services/items.ts';
+import { planRefreshReplace, undoRefreshReplace } from '../../services/refreshReplace.ts';
 import type { SRSData, StoredItem, VocabCard } from '../../types.ts';
 
 // services/refreshReplace.ts: what Refresh with AI saves over a saved word.
@@ -76,4 +77,51 @@ test('two fresh senses with one label both update its card, in the result\'s ord
     vocab('ai-2', 'gamut', 'noun: range', { definition: 'second' }),
   ]);
   assert.deepEqual(updates.map(item => [item.data.id, (item.data as VocabCard).definition]), [['w1', 'first'], ['w1', 'second']]);
+});
+
+// The undo of a refresh. The libraries are as handleSave leaves them: a card updated in place keeps its id and its
+// wrapper, and a new card goes first.
+function refreshed() {
+  const card = saved(vocab('w1', 'bank', 'noun: river'));
+  const updated: StoredItem = { ...card, data: vocab('w1', 'bank', 'noun: river', { definition: 'fresh' }), srs: { ...card.srs }, updatedAt: 300 };
+  const added: StoredItem = { ...makeVocabStoredItem(vocab('ai-2', 'bank', 'noun: money')), updatedAt: 300 };
+  const other = saved(vocab('x1', 'gamut', 'noun: range'));
+  const undo = undoRefreshReplace([card, other], [added, updated, other], ['w1', 'ai-2'], () => 999);
+  return { card, updated, added, other, undo };
+}
+
+test('undo gives a card untouched since its copy from before, exactly, and deletes the card the refresh added', () => {
+  const { card, updated, added, undo } = refreshed();
+  assert.equal(undo(updated), card, 'the same object, which matches the server copy again, so nothing is pushed');
+  assert.deepEqual(undo(added), { ...added, isDeleted: true, updatedAt: 999 });
+});
+
+test('a card reviewed since keeps its new schedule and sync record and gets its content back, stamped now', () => {
+  const { card, updated, added, undo } = refreshed();
+  const reviewed: StoredItem = { ...updated, srs: schedule('w1', 7), serverRevision: 9, lastSyncedHash: 'after the review', updatedAt: 400 };
+  assert.deepEqual(undo(reviewed), { ...card, srs: reviewed.srs, serverRevision: 9, lastSyncedHash: 'after the review', updatedAt: 999 });
+  const reviewedAdded: StoredItem = { ...added, srs: schedule('ai-2', 1), updatedAt: 400 };
+  assert.deepEqual(undo(reviewedAdded), { ...reviewedAdded, isDeleted: true, updatedAt: 999 }, 'an added card goes even when reviewed');
+});
+
+test('a card whose content or flags changed since otherwise is left as it is, and so is every other item', () => {
+  const { updated, added, other, undo } = refreshed();
+  const edited: StoredItem = { ...updated, data: { ...updated.data, definition: 'edited' } as VocabCard };
+  assert.equal(undo(edited), edited);
+  const archived: StoredItem = { ...updated, isArchived: true };
+  assert.equal(undo(archived), archived);
+  const deleted: StoredItem = { ...added, isDeleted: true, updatedAt: 500 };
+  assert.equal(undo(deleted), deleted);
+  assert.equal(undo(other), other);
+  const missing = undoRefreshReplace([], [], ['gone'], () => 999);
+  assert.equal(missing(other), other, 'an id the refresh did not leave in the library holds nothing to undo');
+});
+
+test('a deleted card the refresh brought back is deleted again, keeping a review made since', () => {
+  const tombstone = saved(vocab('w1', 'bank', 'noun: money'), { isDeleted: true, srs: schedule('w1', 5) });
+  const revived: StoredItem = { ...tombstone, data: vocab('w1', 'bank', 'noun: money', { definition: 'fresh' }), isDeleted: undefined, updatedAt: 300 };
+  const undo = undoRefreshReplace([tombstone], [revived], ['w1'], () => 999);
+  assert.equal(undo(revived), tombstone);
+  const reviewed: StoredItem = { ...revived, srs: schedule('w1', 6), updatedAt: 400 };
+  assert.deepEqual(undo(reviewed), { ...tombstone, srs: reviewed.srs, updatedAt: 999 });
 });

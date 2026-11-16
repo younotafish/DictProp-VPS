@@ -15,20 +15,22 @@ export function useLibraryActions(
     Pick<Library, 'userId' | 'latestItemsRef' | 'updateItems' | 'replaceItem' | 'persistChangedItems'>,
   { removeFromDetailView, removeItemFromDetailContext, removeSentenceFromDetailContext }: Pick<DetailViewState,
     'removeFromDetailView' | 'removeItemFromDetailContext' | 'removeSentenceFromDetailContext'>,
-  { offerUndo }: Pick<UndoOfferState, 'offerUndo'>,
+  // Without offerUndoChange, a refresh offers no undo; App passes the whole undo state.
+  { offerUndo, offerUndoChange }: Pick<UndoOfferState, 'offerUndo'> & Partial<Pick<UndoOfferState, 'offerUndoChange'>>,
 ) {
-  const handleSave = useCallback((item: StoredItem) => {
+  /** Saves `item` over its saved copy, or as a new card. Returns the id it's saved under, or undefined when it isn't saved. */
+  const handleSave = useCallback((item: StoredItem): string | undefined => {
     try {
       if (!item || !item.data || !item.data.id) {
         warn('⭐ handleSave: early return - missing item/data/id', item?.data?.id);
-        return;
+        return undefined;
       }
 
       const rawTitle = getItemTitle(item);
       const incomingTitle = String(rawTitle || '').toLowerCase().trim();
       if (!incomingTitle) {
         warn('⭐ handleSave: early return - empty title', rawTitle);
-        return;
+        return undefined;
       }
       log('⭐ handleSave: saving', incomingTitle, 'type:', item.type, 'id:', item.data.id);
 
@@ -78,8 +80,10 @@ export function useLibraryActions(
         next[existingIndex] = saveOverExisting(items[existingIndex], itemToSave, now);
         return next;
       });
+      return canonicalItemId;
     } catch (err) {
       logError("Error during save operation:", err);
+      return undefined;
     }
   }, [updateItems, replaceItem, userId]);
 
@@ -180,21 +184,31 @@ export function useLibraryActions(
   /**
    * Refresh-replace: a real re-run of the AI for an already-saved word replaces its saved cards. A meaning the word
    * has a card for updates that card in place, keeping its schedule, and a new meaning gets a card of its own
-   * (services/refreshReplace, loaded when a refresh lands). The fresh result shows in the search sheet either way,
-   * so should that code fail to load, only the saving is lost, and the error is logged.
+   * (services/refreshReplace, loaded when a refresh lands). Like a delete, the refresh can be taken back for a few
+   * seconds, and its cards stay on this device meanwhile. The fresh result shows in the search sheet either way, so
+   * should that code fail to load, only the saving is lost, and the error is logged.
    */
   const handleRefreshReplace = useCallback(async (word: string, vocabs: VocabCard[]): Promise<void> => {
     if (!vocabs?.length) return;
     try {
-      const { planRefreshReplace } = await import('../services/refreshReplace');
-      const { updates, created } = planRefreshReplace(latestItemsRef.current, word, vocabs);
+      const { planRefreshReplace, undoRefreshReplace } = await import('../services/refreshReplace');
+      const before = latestItemsRef.current;
+      const { updates, created } = planRefreshReplace(before, word, vocabs);
       // Updates replace their cards where they are and new cards go first in the result's order, so saving the
       // updates before the new cards leaves the library as saving them in the result's order would.
-      for (const item of [...updates, ...created]) handleSave(item);
+      const ids = new Set<string>();
+      for (const item of [...updates, ...created]) {
+        const id = handleSave(item);
+        if (id) ids.add(id);
+      }
+      // Offered in the same task as the saves, which push nothing themselves, so every push finds the cards held.
+      if (ids.size > 0) {
+        offerUndoChange?.({ ids: [...ids], message: `Refreshed “${word.trim()}”`, undo: undoRefreshReplace(before, latestItemsRef.current, ids) });
+      }
     } catch (error) {
-      logError(`Refresh: the fresh result for "${word}" was not saved`, error);
+      logError('Refresh: the fresh result was not saved for', word, error);
     }
-  }, [latestItemsRef, handleSave]);
+  }, [latestItemsRef, handleSave, offerUndoChange]);
 
   // Reset only this sense/item. Different meanings now keep independent FSRS schedules. False when the item isn't
   // in the library, and the caller saves a fresh copy instead; true when handled, which includes leaving a card

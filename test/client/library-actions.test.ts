@@ -1,13 +1,23 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useLibraryActions } from '../../hooks/useLibraryActions.ts';
+import { useUndoOffer, type UndoOffer } from '../../hooks/useUndoOffer.ts';
 import { makeVocabStoredItem } from '../../services/items.ts';
 import type { SRSData, StoredItem, VocabCard } from '../../types.ts';
 
 // hooks/useLibraryActions.ts, run once through a server render. Its handlers keep working afterwards: they close over
-// the fakes below, which hold the library and record what the handlers ask of them.
+// the fakes below, which hold the library and record what the handlers ask of them. With the real undo offer
+// (hooks/useUndoOffer.ts) beside it, as App has it, the offer's 6-second timer goes through window.setTimeout, which
+// each test's mock clock drives.
+(globalThis as { window?: unknown }).window = {
+  setTimeout: (callback: () => void, ms: number) => setTimeout(callback, ms),
+  clearTimeout: (handle: ReturnType<typeof setTimeout>) => clearTimeout(handle),
+};
+// handleSave logs each save (services/logger logs outside production builds), and this process's stdout also carries
+// the test runner's results, which those lines can garble ('Unable to deserialize cloned data'), so they go nowhere.
+mock.method(console, 'log', () => {});
 
 const schedule = (id: string, totalReviews = 0): SRSData => ({
   id, type: 'vocab', nextReview: 0, interval: 0, memoryStrength: 0, lastReviewDate: 0, totalReviews, correctStreak: 0, stability: 0.5,
@@ -19,7 +29,7 @@ const saved = (data: VocabCard, fields: Partial<StoredItem> = {}): StoredItem =>
   type: 'vocab', data, srs: schedule(data.id, 3), savedAt: 1, updatedAt: 1, ...fields,
 });
 
-function renderActions(initial: StoredItem[]) {
+function renderActions(initial: StoredItem[], { withUndoOffer = false } = {}) {
   let items = initial;
   const calls: string[] = [];
   // As useLibrary's: an update that replaces no item keeps the library array.
@@ -43,17 +53,36 @@ function renderActions(initial: StoredItem[]) {
       return replaced;
     },
     persistChangedItems: async (changed: StoredItem[], label: string) => { calls.push(`persist ${label} ${changed.map(item => item.data.id).join(',')}`); },
+    holdFromPush: (ids: readonly string[] | null) => { calls.push(`hold ${ids?.length ? ids.join(',') : 'none'}`); },
+    pushDirtyItems: async (ids?: ReadonlySet<string>) => { calls.push(`push ${[...ids ?? []].join(',')}`); return 0; },
+    storeItemUpdates: async (stored: StoredItem[]) => { calls.push(`store ${stored.map(item => item.data.id).join(',')}`); },
   };
   const detail = {
     removeFromDetailView: (remove: () => void) => { remove(); return undefined; },
     removeItemFromDetailContext: () => {},
     removeSentenceFromDetailContext: () => {},
+    detailVersionRef: { current: 0 },
+    updateDetailContext: () => {},
   };
-  const undo = { offerUndo: (verb: string, before: StoredItem) => { calls.push(`offer ${verb} ${before.data.id}`); } };
+  // The offers made, and the undo offer itself when it's the real one.
+  const offers: UndoOffer[] = [];
+  let undoOffer: ReturnType<typeof useUndoOffer> | undefined;
   let actions: ReturnType<typeof useLibraryActions> | undefined;
-  const Probe = () => { actions = useLibraryActions(library, detail, undo); return null; };
+  const Probe = () => {
+    if (!withUndoOffer) {
+      actions = useLibraryActions(library, detail, { offerUndo: (verb: string, before: StoredItem) => { calls.push(`offer ${verb} ${before.data.id}`); } });
+      return null;
+    }
+    const offer = useUndoOffer(library, detail);
+    undoOffer = offer;
+    actions = useLibraryActions(library, detail, {
+      offerUndo: offer.offerUndo,
+      offerUndoChange: change => { offers.push(change); offer.offerUndoChange(change); },
+    });
+    return null;
+  };
   renderToStaticMarkup(createElement(Probe));
-  return { actions: actions!, calls, items: () => items };
+  return { actions: actions!, undoOffer, offers, calls, library, items: () => items };
 }
 
 test('a word saved over its saved sense lands on that card, and another sense label gets a card of its own', () => {
@@ -154,4 +183,50 @@ test('a refresh that brings no senses saves nothing', async () => {
   const library = items();
   await actions.handleRefreshReplace('bank', []);
   assert.equal(items(), library);
+});
+
+test('a refresh offers to take it back, holding every card it saved, and Undo puts the library back as it was', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 10_000 });
+  const river = saved(vocab('w1', 'bank', 'noun: river'), { srs: schedule('w1', 4), lastSyncedHash: 'synced', serverRevision: 3 });
+  const other = saved(vocab('x1', 'gamut', undefined));
+  const { actions, undoOffer, offers, calls, items } = renderActions([river, other], { withUndoOffer: true });
+  await actions.handleRefreshReplace(' bank ', [
+    vocab('ai-1', 'bank', 'noun: money'),
+    vocab('ai-2', 'bank', 'noun: river', 'the land beside a river'),
+    vocab('ai-3', 'bank', 'verb: tilt'),
+  ]);
+  assert.deepEqual(offers.map(offer => [offer.message, offer.ids]), [['Refreshed “bank”', ['w1', 'ai-1', 'ai-3']]]);
+  assert.deepEqual(calls, ['hold w1,ai-1,ai-3'], 'held on this device, and nothing pushed yet');
+
+  await undoOffer!.undoLastChange();
+  assert.equal(items().find(item => item.data.id === 'w1'), river, 'the refreshed card exactly as it was');
+  assert.deepEqual(items().filter(item => item.isDeleted).map(item => [item.data.id, item.updatedAt]), [['ai-3', 10_000], ['ai-1', 10_000]], 'the added cards deleted');
+  assert.equal(items().find(item => item.data.id === 'x1'), other);
+  assert.deepEqual(calls.slice(1), ['hold none', 'push w1,ai-1,ai-3', 'store w1,ai-1,ai-3']);
+});
+
+test('a card reviewed between the refresh and Undo keeps its new schedule and gets its old content back', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 10_000 });
+  const river = saved(vocab('w1', 'bank', 'noun: river'), { srs: schedule('w1', 4) });
+  const { actions, undoOffer, library, items } = renderActions([river], { withUndoOffer: true });
+  await actions.handleRefreshReplace('bank', [vocab('ai-2', 'bank', 'noun: river', 'the land beside a river')]);
+  const reviewedSrs = schedule('w1', 5);
+  library.replaceItem('w1', item => ({ ...item, srs: reviewedSrs, updatedAt: 10_500 }));
+  t.mock.timers.tick(1_000);
+  await undoOffer!.undoLastChange();
+  const [card] = items();
+  assert.equal(card.data, river.data);
+  assert.equal(card.srs, reviewedSrs);
+  assert.equal(card.updatedAt, 11_000);
+});
+
+test('the offer closes after six seconds and sends the refresh on; a refresh none of whose saves lands offers nothing', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 10_000 });
+  const { actions, offers, calls } = renderActions([saved(vocab('w1', 'bank', 'noun: river'))], { withUndoOffer: true });
+  await actions.handleRefreshReplace('bank', [vocab('ai-1', 'bank', 'noun: money')]);
+  t.mock.timers.tick(6_000);
+  assert.deepEqual(calls, ['hold ai-1', 'hold none', 'push ai-1']);
+
+  await actions.handleRefreshReplace('bank', [vocab('ai-2', '', 'noun: money')]);
+  assert.equal(offers.length, 1, 'a card with no word is never saved, so there is nothing to take back');
 });
