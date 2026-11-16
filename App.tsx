@@ -109,15 +109,16 @@ function SignedInApp({ user }: { user: AuthUser }) {
   const overlays = useOverlays(allActiveItems);
   const {
     cardPopup, openCardPopup, closeCardPopup, popupItems, duplicateClusters, setDuplicateClusters, confirmModal, setConfirmModal,
-    showKeyboardHelp, setShowKeyboardHelp, openKeyboardHelp, showRefusedReviews, setShowRefusedReviews, openRefusedReviews,
+    showKeyboardHelp, setShowKeyboardHelp, openKeyboardHelp, showRefusedReviews, setShowRefusedReviews, openRefusedReviews, dialogOpen,
   } = overlays;
 
   // The notebook sits under DetailView and the card popup, so it skips the reviews made there as they
   // happen. It catches up a second after they stop, while hidden, so closing them doesn't have to.
   const notebookItems = useFrozenWhile(allActiveItems, !!detailContext || !!cardPopup, 1_000);
   // A card covers the page from the moment it's opened, also while its code loads behind the spinner or
-  // when it crashes, not only once DetailView has registered itself.
+  // when it crashes, not only once DetailView has registered itself. So does the card popup.
   useOverlay(!!detailContext);
+  useOverlay(!!cardPopup && popupItems.length > 0);
   // While anything covers the page, the page and the nav bar are inert; focus comes back when it closes.
   const overlayOpen = useOverlayFocusReturn(mainRef, navRef);
 
@@ -247,7 +248,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
               onRemoveVocabFromPhrase={handleRemoveVocabFromPhrase}
               findSaved={findSavedItem}
               onOpenCard={openCardPopup}
-              interactionLocked={!!cardPopup || showKeyboardHelp || !!confirmModal}
+              interactionLocked={dialogOpen}
               onAttachImage={handleAttachSentenceImage}
           />
         </ErrorBoundary>
@@ -305,7 +306,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
             onCompare={handleCompare}
             onSaveSentence={handleSaveSentence}
             isSentenceSaved={isSentenceSaved}
-            hasOverlay={!!detailContext || !!confirmModal || showKeyboardHelp || !!cardPopup}
+            hasOverlay={!!detailContext || dialogOpen}
             onBatchImport={handleBatchImport}
             onJSONImported={handleForceSync}
             batchImportProgress={batchImportProgress}

@@ -14,11 +14,11 @@ const TAB_KEYS: ReadonlyMap<string, ViewState> = new Map([['1', 'notebook'], ['2
 export function useAppShortcuts(
   navigate: (view: ViewState) => void,
   { detailContext, updateDetailContext }: Pick<DetailViewState, 'detailContext' | 'updateDetailContext'>,
-  { cardPopup, setCardPopup, confirmModal, setConfirmModal, showKeyboardHelp, setShowKeyboardHelp, duplicateClusters }: Pick<Overlays,
-    'cardPopup' | 'setCardPopup' | 'confirmModal' | 'setConfirmModal' | 'showKeyboardHelp' | 'setShowKeyboardHelp' | 'duplicateClusters'>,
+  { cardPopup, setCardPopup, confirmModal, setConfirmModal, showKeyboardHelp, setShowKeyboardHelp, dialogOpen }: Pick<Overlays,
+    'cardPopup' | 'setCardPopup' | 'confirmModal' | 'setConfirmModal' | 'showKeyboardHelp' | 'setShowKeyboardHelp' | 'dialogOpen'>,
 ) {
   // 1, 2 and 3 switch tabs, while nothing covers them.
-  const tabKeysEnabled = !detailContext && !confirmModal && !showKeyboardHelp && !cardPopup && !duplicateClusters;
+  const tabKeysEnabled = !detailContext && !dialogOpen;
   useEffect(() => {
     if (!tabKeysEnabled) return;
 

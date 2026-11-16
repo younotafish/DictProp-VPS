@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getItemSpelling, type StoredItem } from '../types';
 import { sortStoredSensesByUsage } from '../services/usageAudit';
 import type { DuplicateClusterView } from '../components/DuplicatesModal';
@@ -49,6 +49,10 @@ export function useOverlays(allActiveItems: StoredItem[]) {
     [cardPopup, allActiveItems],
   );
   const closeCardPopup = useCallback(() => setCardPopup(null), []);
+  // Once every sense the popup showed is gone, deleted here or on another device, it closes, rather than staying
+  // open with nothing on screen while the page's keys stay off.
+  const popupEmpty = popupIsEmpty(cardPopup, popupItems);
+  useEffect(() => { if (popupEmpty) setCardPopup(null); }, [popupEmpty]);
 
   // Phase 2 dedup tool: variant-duplicate clusters under review (null = modal closed).
   const [duplicateClusters, setDuplicateClusters] = useState<DuplicateClusterView[] | null>(null);
