@@ -60,10 +60,9 @@ interface Options {
 
 /**
  * The search queue's lifecycle. Lookups, comparisons and sentence scans join it from the search box, from the rest of
- * the app (services/searchRequests and, until App switches to it, the window's 'global-search' event), and from a
- * resume after signing in again; every pending entry starts at once and runs once; each settles as ready, opening in
- * the sheet when that was asked for, or as failed, keeping its failure for the error toast. A finished scan queues a
- * lookup of each expression it found.
+ * the app (services/searchRequests), and from a resume after signing in again; every pending entry starts at once and
+ * runs once; each settles as ready, opening in the sheet when that was asked for, or as failed, keeping its failure
+ * for the error toast. A finished scan queues a lookup of each expression it found.
  */
 export function useSearchQueue({
   findSavedByWord, isOnline, onRefreshReplace, onCompareReady, onCompare, openWhenReady, showNotice,
@@ -332,18 +331,6 @@ export function useSearchQueue({
     lookup: request => { lookUpRef.current(request); },
     compare: request => enqueueCompareRef.current(request),
   }), [lookUpRef, enqueueCompareRef]);
-
-  // wave-2 adapter: remove in P3
-  // App's lookups (a tapped word, a term's button, a refresh) and the Notebook row's Refresh still arrive as this window
-  // event until they call requestLookup. Each one is an expression picked on screen, as their requests will say.
-  useEffect(() => {
-    const onWindowLookup = (e: Event) => {
-      const detail = (e as CustomEvent<{ query?: unknown; forceAI?: unknown } | null>).detail;
-      if (typeof detail?.query === 'string') lookUpRef.current({ query: detail.query, source: 'expression', forceAI: !!detail.forceAI });
-    };
-    window.addEventListener('global-search', onWindowLookup);
-    return () => window.removeEventListener('global-search', onWindowLookup);
-  }, [lookUpRef]);
 
   // Derived state — searches AND comparisons are both queue items, so every count of results includes both; a scan
   // running keeps the search busy without adding to the count.

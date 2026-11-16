@@ -2,6 +2,7 @@ import React, { useRef, useEffect } from 'react';
 import { Trash2, RefreshCw, Archive, ArchiveRestore, MoreHorizontal } from 'lucide-react';
 import { getItemTitle, isPhraseItem, isVocabItem, type StoredItem } from '../../types';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
+import { requestLookup } from '../../services/searchRequests';
 import { PronunciationBlock } from '../../components/PronunciationBlock';
 import { useEscapeLayer } from '../../components/escapeStack';
 import { activateOnEnterOrSpace } from '../../components/activateOnKey';
@@ -146,7 +147,7 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
       {showActions && (
         <div ref={actionsRef} className="absolute top-3 right-3 flex flex-col gap-2 z-20">
           <button
-            onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('global-search', { detail: { query: title, forceAI: true } })); closeActions(); }}
+            onClick={(e) => { e.stopPropagation(); requestLookup({ query: title, source: 'expression', forceAI: true }); closeActions(); }}
             className="p-2 bg-white text-indigo-500 shadow rounded-full hover:bg-indigo-50 active:scale-95 transition-all"
             title="Refresh with AI (re-run, don't reuse)"
           >

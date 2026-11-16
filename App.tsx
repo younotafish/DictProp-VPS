@@ -9,6 +9,7 @@ import { TabScreen } from './components/TabScreen';
 import { useOverlay, useOverlayFocusReturn } from './components/overlayStack';
 import { AppStatusPills } from './components/AppStatus';
 import { connectivityNotice } from './services/connectivityNotice';
+import { requestLookup } from './services/searchRequests';
 import { useFrozenWhile } from './hooks/useStableValue';
 import { warn } from './services/logger';
 import { installDebugItems } from './services/debugItems';
@@ -148,16 +149,17 @@ function SignedInApp({ user }: { user: AuthUser }) {
 
   const { fetchSensesForWord, saveVocabSense } = useSenseLookup(handleSave);
 
-  // Search handler - triggers GlobalSearch popup (bottom-right search icon)
-  const handleRecursiveSearch = useCallback((text: string) => {
-      window.dispatchEvent(new CustomEvent('global-search', { detail: { query: text } }));
+  // A look-up asked for on a card, in the card popup, on a tab or in the search's own results: the search
+  // (services/searchRequests, components/GlobalSearch) runs it as an expression picked on screen. `context` is the
+  // sentence it was picked from, which the search shows above its meanings.
+  const handleRecursiveSearch = useCallback((text: string, options?: { context?: string }) => {
+    requestLookup({ query: text, source: 'expression', context: options?.context });
   }, []);
 
-  // Refresh handler - re-runs the AI for a word through the SAME bottom-right GlobalSearch
-  // (forceAI bypasses the saved-card reuse and auto-opens the result). Used by the detail-view
-  // refresh button so refreshing routes to the bottom-right icon, not the notebook top bar.
+  // Refresh: the search runs the AI for a word again even when it's saved (forceAI) and opens the fresh result,
+  // so a refresh from a card goes through the search button, not the notebook's own search box.
   const handleRefreshViaGlobal = useCallback((text: string) => {
-      window.dispatchEvent(new CustomEvent('global-search', { detail: { query: text, forceAI: true } }));
+    requestLookup({ query: text, source: 'expression', forceAI: true });
   }, []);
 
   if (libraryReadFailed) {
