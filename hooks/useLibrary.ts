@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import type { RevisionCursor, StoredItem } from '../types';
 import { deleteItemRecords, saveData, saveItemUpdates } from '../services/libraryStore';
 import { applyServerSave, dropExpiredTombstones, mergeDatasets, trackServerContent } from '../services/sync';
-import { getItemContentHash } from '../services/itemHash';
+import { getItemContentHash, isItemDirty } from '../services/itemHash';
 import { loadAllItems, loadItemChangesSince, saveItems } from '../services/api/library';
 import { excludePendingReviewItems, readPendingReviewMutations } from '../services/reviewQueue';
 import { createSerialLane } from '../services/serialLane';
@@ -76,6 +76,15 @@ export function useLibrary(userId: string) {
 
   // Items the server refused, with the content it refused: sending that again would be refused again.
   const refusedPushesRef = useRef(new Map<string, string>());
+  // How many items stay on this device because the server refused what they hold, for the notice that says so
+  // (components/AppStatus), counted again by each push. An item changed since its refusal no longer counts: the push
+  // sends the change.
+  const [refusedChanges, setRefusedChanges] = useState(0);
+  const countRefusedChanges = useCallback(() => {
+    const refused = refusedPushesRef.current;
+    setRefusedChanges(refused.size && latestItemsRef.current.filter(item =>
+      refused.has(item.data.id) && refused.get(item.data.id) === getItemContentHash(item) && isItemDirty(item)).length);
+  }, []);
   // A change the user can still undo stays on this device until the offer closes, so an undone change never
   // reaches the server or another device.
   const heldIdsRef = useRef<ReadonlySet<string>>(NOTHING_HELD);
@@ -125,6 +134,7 @@ export function useLibrary(userId: string) {
    * bring back what a push whose answer was lost had saved); while those wait, the retries go on.
    */
   const pushNow = useCallback(async (ids?: ReadonlySet<string>): Promise<number> => {
+    countRefusedChanges();
     const refused = refusedPushesRef.current;
     const unsent = selectUnsent(latestItemsRef.current, { heldIds: heldIdsRef.current, refused }, ids);
     // Items with an unsent review wait for the review outbox, which applies the review atomically.
@@ -145,9 +155,10 @@ export function useLibrary(userId: string) {
       if (item) refused.set(id, getItemContentHash(item));
       logError(`The server refused item ${id}, which stays on this device until it changes: ${reason}`);
     }
+    if (result.rejected.size > 0) countRefusedChanges();
     if (result.error) throw result.error;
     return toPush.length;
-  }, [updateItems, userId, notePushTrouble, hasUnsentChanges]);
+  }, [updateItems, userId, notePushTrouble, hasUnsentChanges, countRefusedChanges]);
 
   /** Pushes again when a failed push's next try is due (services/syncRetry). Call it in the sync lane, as pushNow. */
   const retryPushIfDue = useCallback(
@@ -235,7 +246,7 @@ export function useLibrary(userId: string) {
   return {
     userId, savedItems, latestItemsRef, updateItems, replaceItem, userSaveData, storeItemUpdates, adoptStoredLibrary,
     holdFromPush, hasUnsentChanges, countUnsentChanges, inSyncLane, pushNow, pushDirtyItems, pushTrouble, noteOnline,
-    retryPushIfDue, syncFullSnapshot, syncWithServer, persistChangedItems,
+    retryPushIfDue, syncFullSnapshot, syncWithServer, persistChangedItems, refusedChanges,
   };
 }
 

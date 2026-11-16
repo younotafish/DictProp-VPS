@@ -45,6 +45,11 @@ interface AppStatusPillsProps {
   /** The Offline chip shows (services/connectivityNotice): an outage has settled and nothing covers the tabs. */
   offlineChip: boolean;
   /**
+   * How many items stay on this device because the server refused what they hold (useLibrary's refusedChanges); none
+   * unless given.
+   */
+  refusedChanges?: number;
+  /**
    * The tabs show, with the tab bar: the stack floats just above the bar (src/index.css's --nav-h) and above a footer
    * the visible tab sets (--tab-footer-h, Study's grade row). Otherwise a card covers the bar, and the stack starts at
    * --card-float-bottom, as everything floating over a card does.
@@ -66,7 +71,8 @@ interface AppStatusPillsProps {
  * keeps its pills in order of how long they stay, so one coming or going moves only the shorter-lived ones above
  * it: short-lived on top (the undo offer, then the search status line's slot), then progress (a session's preload
  * slot, the background jobs and Sync now, then the result of the last job to end), then the long-lived notices at
- * the bottom (the couldn't-save alert, changes that won't sync, the Offline chip, refused reviews, then the update).
+ * the bottom (the couldn't-save alert, changes that won't sync, the Offline chip, refused changes and refused reviews,
+ * then the update).
  * Both slots are always rendered, under the same parent: the notices that portal into them would vanish with a slot
  * rendered conditionally or moved. On the tabs the stack floats above the tab bar, so it never covers a tab; over a card
  * it starts where the card's floating controls end. The column is as wide as its widest pill (w-max), so each pill's
@@ -75,7 +81,7 @@ interface AppStatusPillsProps {
  */
 export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
   userId, onViewRefusedReviews, imagePrefetchProgress, onStopImageDownload, imageRestoreProgress, jobPills, undoMessage,
-  onUndo, stuckSyncPill, writeFailed, offline, offlineChip, aboveTabBar, holdUpdate, liftAbovePopup,
+  onUndo, stuckSyncPill, writeFailed, offline, offlineChip, refusedChanges = 0, aboveTabBar, holdUpdate, liftAbovePopup,
 }) => (
   <div className={`fixed ${aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+0.5rem)]' : 'bottom-[var(--card-float-bottom)]'} left-1/2 -translate-x-1/2 w-max ${liftAbovePopup ? 'z-[110]' : 'z-[80]'} flex flex-col items-center gap-2 pointer-events-none`}>
     {undoMessage && (
@@ -113,6 +119,13 @@ export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
     )}
     {stuckSyncPill}
     {offlineChip && <NoticePill tone="amber" icon={<WifiOff size={16} className="shrink-0" />}>Offline</NoticePill>}
+    {refusedChanges > 0 && (
+      <NoticePill tone="amber" wrap>
+        {refusedChanges === 1
+          ? '1 change stays on this device: the server refused it'
+          : `${refusedChanges} changes stay on this device: the server refused them`}
+      </NoticePill>
+    )}
     <RefusedReviewsNotice userId={userId} onView={onViewRefusedReviews} />
     <AppUpdateToast hold={holdUpdate} />
   </div>

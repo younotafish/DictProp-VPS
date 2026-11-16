@@ -171,6 +171,22 @@ test('the Offline chip shows only when told, below the couldn\'t-save alert and 
   assert.deepEqual([...order].sort((a, b) => a - b), order);
 });
 
+test('changes the server refused get one amber pill, worded for the count, after the Offline chip and before refused reviews', t => {
+  refuseOneReview();
+  t.after(() => clearRefusedReviews('u1'));
+  assert.doesNotMatch(renderStack(), /on this device: the server refused/, 'none by default');
+  assert.doesNotMatch(renderStack({ refusedChanges: 0 }), /on this device: the server refused/);
+  const one = renderStack({ refusedChanges: 1 });
+  assert.match(one, /<div role="status" class="[^"]*rounded-2xl bg-amber-600[^"]*"><span class="min-w-0 line-clamp-3">1 change stays on this device: the server refused it<\/span><\/div>/);
+  assert.match(renderStack({ refusedChanges: 3 }), />3 changes stay on this device: the server refused them</);
+  // Nothing to press: the change waits for its next edit, which goes to the server again.
+  assert.equal(one.match(/<button/g)?.length, 2, 'only the refused reviews\' View and ×');
+  const html = renderStack({ refusedChanges: 2, offlineChip: true, offline: true, writeFailed: true });
+  const order = ['role="alert"', '>Offline<', '>2 changes stay on this device', '1 review wasn’t accepted'].map(text => html.indexOf(text));
+  assert.ok(order.every(index => index >= 0), `every notice renders: ${order}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order);
+});
+
 test('the offline and couldn\'t-save banners above the page are gone, so nothing moves the page', () => {
   assert.deepEqual(Object.keys(AppStatus), ['AppStatusPills']);
 });

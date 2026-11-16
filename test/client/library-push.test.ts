@@ -10,8 +10,8 @@ import type { ReviewEvent, StoredItem } from '../../types.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
 // hooks/useLibrary.ts's pushes, mounted in a component that draws nothing and run against a fake server: what a push
-// that sends nothing does to the retries. The review outbox reads localStorage, and the library is stored in memory,
-// as on a browser without IndexedDB.
+// that sends nothing does to the retries, and the count of items the server refused. The review outbox reads
+// localStorage, and the library is stored in memory, as on a browser without IndexedDB.
 
 const USER = 'u1';
 const card = (id: string): StoredItem => ({
@@ -24,8 +24,9 @@ const card = (id: string): StoredItem => ({
 const synced = (item: StoredItem): StoredItem => ({ ...item, lastSyncedHash: getItemContentHash(item) });
 const review = (id: string, itemId: string): ReviewEvent => ({ id, itemId, itemType: 'vocab', reviewedAt: 1, previousStep: 0, nextStep: 1 });
 
-/** How the fake server answers a push: it's down. */
-const answerPush = (): Response => new Response('Service unavailable', { status: 503 });
+const down = (): Response => new Response('Service unavailable', { status: 503 });
+/** How the fake server answers a push: by default it's down. */
+let answerPush = down;
 
 // Just enough of a browser for React to mount the hook, as in connectivity-notice.test.ts, with the server behind fetch.
 const page = Object.assign(new EventTarget(), { nodeType: 9, activeElement: null, defaultView: null as unknown });
@@ -94,6 +95,33 @@ test('a push that finds only changes waiting on a queued review or an undo keeps
     assert.equal(await library.push(), 0);
     assert.deepEqual(library.now().pushTrouble, NO_TROUBLE);
   } finally {
+    await library.close();
+  }
+});
+
+test('an item the server refuses counts as staying on this device until it changes, and then goes to the server again', async () => {
+  const library = await mountLibrary();
+  const edit = (item: StoredItem): StoredItem => ({ ...item, data: { ...item.data, definition: 'shorter' } as StoredItem['data'] });
+  try {
+    await library.run(({ adoptStoredLibrary }) => adoptStoredLibrary([card('big'), synced(card('fine'))], null));
+    assert.equal(library.now().refusedChanges, 0);
+    answerPush = () => new Response(JSON.stringify({ error: 'Item too large' }), { status: 400 });
+    assert.equal(await library.push(), 1);
+    assert.equal(library.now().refusedChanges, 1);
+    assert.deepEqual(library.now().pushTrouble, NO_TROUBLE, 'a refusal is an answer, not a failure');
+
+    // The same content would be refused again, so the next push leaves it on this device, still counted.
+    assert.equal(await library.push(), 0);
+    assert.equal(library.now().refusedChanges, 1);
+
+    // Edited, it's a change to send again, no longer refused, whether or not that push gets through.
+    answerPush = down;
+    await library.run(({ replaceItem }) => replaceItem('big', edit));
+    await library.push();
+    assert.equal(library.now().refusedChanges, 0);
+    assert.equal(library.now().pushTrouble.failures, 1, 'it was sent');
+  } finally {
+    answerPush = down;
     await library.close();
   }
 });

@@ -252,6 +252,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
         writeFailed={libraryWriteFailed}
         offline={offlineSettled}
         offlineChip={connectivityNotice({ offline: offlineSettled, onTab: !detailContext && !cardPopup }) === 'chip'}
+        refusedChanges={library.refusedChanges}
         aboveTabBar={!detailContext}
         holdUpdate={!!detailContext || !!cardPopup}
         liftAbovePopup={liftNoticesAbovePopup({ cardPopup, modalOpen, undoOffered: !!undoMessage, writeFailed: libraryWriteFailed })}
