@@ -22,18 +22,9 @@ if [ ! -s "$KEY_FILE" ]; then
   echo "Sentence bridge key is missing: $KEY_FILE" >&2
   exit 1
 fi
-node -e '
-const fs = require("fs");
-const source = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-if (source?.version !== 1 || !Array.isArray(source.essays) || source.essays.length === 0) {
-  throw new Error("Private essay catalog is invalid");
-}
-for (const essay of source.essays) {
-  if (essay?.collection !== "modern" || !Array.isArray(essay.paragraphs) || essay.sentenceCount < 1) {
-    throw new Error(`Invalid private essay: ${essay?.id || "unknown"}`);
-  }
-}
-' "$CATALOG_PATH"
+# The importer's own checks, so a catalog production would refuse never gets as far as a release.
+"${TSX_BIN:-$(dirname "$0")/../../server/node_modules/.bin/tsx}" \
+  "$(dirname "$0")/../../server/src/scripts/validate-private-essay-catalog.ts" "$CATALOG_PATH"
 
 STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dictprop-private-essays.XXXXXX")"
 cleanup() {

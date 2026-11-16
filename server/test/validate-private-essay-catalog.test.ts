@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { existsSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
+import { REPO_ROOT, repoPath } from './support/paths.js';
 import { lastJsonLine, spawnScript } from './support/scripts.js';
 
 const catalog = {
@@ -80,4 +82,33 @@ test('the validator names its argument when it is given none', () => {
   const run = validate();
   assert.equal(run.status, 1);
   assert.match(run.stderr, /Usage: validate-private-essay-catalog <catalog\.json>/);
+});
+
+test('the essay publisher checks the catalog with the validator before it creates a release', () => {
+  const root = mkdtempSync(join(process.env.TMPDIR!, 'essay-publisher-'));
+  const ghLog = join(root, 'gh.log');
+  // The stand-in GitHub CLI records each call and refuses it, so a publication stops at its first release.
+  writeFileSync(join(root, 'gh'), `#!/bin/sh\necho "$*" >> '${ghLog}'\nexit 1\n`, { mode: 0o700 });
+  writeFileSync(join(root, 'key'), 'test-key\n');
+  const publish = (catalogPath: string) => spawnSync('bash', [
+    repoPath('scripts', 'offline', 'publish-private-essay-catalog.sh'), catalogPath, 'test-sha',
+  ], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    timeout: 60_000,
+    env: { ...process.env, GH_BIN: join(root, 'gh'), SENTENCE_BRIDGE_KEY_FILE: join(root, 'key') },
+  });
+
+  // The publisher's own checks used to let this one through: the id belongs to a checked-in essay.
+  const reserved = structuredClone(catalog);
+  reserved.essays[0].id = 'self-reliance';
+  const refused = publish(input('publish-reserved.json', JSON.stringify(reserved)));
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /invalid essay: self-reliance/);
+  assert.equal(existsSync(ghLog), false);
+
+  const checked = publish(input('publish-modern.json', JSON.stringify(catalog)));
+  assert.equal(checked.status, 1);
+  assert.deepEqual(JSON.parse(checked.stdout.split('\n')[0]), { valid: true, essays: 1, sentences: 2 });
+  assert.match(readFileSync(ghLog, 'utf8'), /^release create private-essays-\d{8}T\d{6}Z --repo /);
 });

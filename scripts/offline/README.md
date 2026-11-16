@@ -185,7 +185,7 @@ Essays:
   `scripts/offline/run-essay-enrichment.sh <essay-id> [output-root]`
 - `build-private-essay-catalog.mjs` — Builds the reader catalog for essays that are not checked in, from a private manifest, and picks each sentence's focus word.
   `node scripts/offline/build-private-essay-catalog.mjs <manifest.json> <catalog.json>`
-- `publish-private-essay-catalog.sh` — Encrypts that catalog and publishes it with `essay-import`.
+- `publish-private-essay-catalog.sh` — Checks that catalog with the server importer's own validation (`server/src/scripts/validate-private-essay-catalog.ts`, run with tsx), then encrypts it and publishes it with `essay-import`.
   `GH_BIN=.tools/gh scripts/offline/publish-private-essay-catalog.sh <catalog.json> [required-deploy-sha] [poll-seconds]`
 
 Real Life (`content/real-life-catalog.json`):
