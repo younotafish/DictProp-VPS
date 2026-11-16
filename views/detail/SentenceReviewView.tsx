@@ -448,7 +448,7 @@ export function SentenceReviewView({
           total={sentenceItems.length}
           visible={sentencePage === 'analysis'}
           onBack={() => setSentencePage('sentence')}
-          onSearch={(term) => { setSentencePage('sentence'); onSearch(term); }}
+          onSearch={onSearch}
           onTouchStart={onContentTouchStart}
           onTouchEnd={onContentTouchEnd}
           onClick={handleSentenceSurfaceClick}
