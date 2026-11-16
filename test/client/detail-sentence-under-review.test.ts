@@ -24,7 +24,6 @@ test('an unsaved example preview is read-only until a saved sentence with its te
   const preview = sentence('sentence-preview:1', 'An example.');
   const unsaved = resolveSentenceUnderReview(preview, undefined, [], noText, false);
   assert.equal(unsaved.isSentencePreview, true);
-  assert.equal(unsaved.readOnlySentencePreview, false);
   assert.equal(unsaved.sentenceExitLabel, 'Word');
 
   const saved = sentence('s9', 'An example.', {}, 3);
@@ -38,7 +37,6 @@ test('an unsaved example preview is read-only until a saved sentence with its te
 test('a sentence the caller marks preview-only stays read-only unless it binds to a saved copy', () => {
   const listed = sentence('s1', 'Listed.');
   const result = resolveSentenceUnderReview(listed, undefined, [listed], () => listed, true);
-  assert.equal(result.readOnlySentencePreview, true);
   assert.equal(result.isSentencePreview, true, 'only preview ids look for a saved copy by text');
   assert.equal(result.sentenceExitLabel, 'Word');
 });
@@ -47,7 +45,6 @@ test('a catalog sentence binds to its progress record by id, or by catalog sente
   const listed = sentence('real-life:c1:s9', 'Catalog.', { catalogKind: 'real-life', catalogSentenceId: 's9', catalogCollectionId: 'c1' });
   const unsaved = resolveSentenceUnderReview(listed, undefined, [], noText, false);
   assert.equal(unsaved.catalogSentencePreview, true);
-  assert.equal(unsaved.readOnlySentencePreview, true);
   assert.equal(unsaved.isSentencePreview, true);
   assert.equal(unsaved.sentenceExitLabel, 'Real Life');
 
@@ -56,7 +53,6 @@ test('a catalog sentence binds to its progress record by id, or by catalog sente
   const deleted = { ...sentence('real-life:c1:s9', 'Catalog.'), isDeleted: true };
   const bound = resolveSentenceUnderReview(listed, undefined, [deleted, otherCollection, record], noText, false);
   assert.equal(bound.isSentencePreview, false);
-  assert.equal(bound.readOnlySentencePreview, false);
   assert.equal(bound.currentSentence?.data.id, 'older-record');
   assert.equal(bound.sentenceExitLabel, 'Real Life');
 });

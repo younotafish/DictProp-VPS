@@ -10,8 +10,6 @@ export interface SentenceUnderReview {
   /** A Real Life or essay sentence, reviewed under its catalog identity. */
   catalogSentencePreview: boolean;
   catalogPreviewKind: 'real-life' | 'essay' | undefined;
-  /** Read-only: an unsaved catalog sentence, or a caller-supplied preview. */
-  readOnlySentencePreview: boolean;
   /** Nothing in the library backs it yet, so reviews and deletes need a save first (catalog Got it creates one). */
   isSentencePreview: boolean;
   /** Where Back returns to. */
@@ -47,15 +45,15 @@ export function resolveSentenceUnderReview(
         ? findSavedByText(snapshotData?.text ?? '')
         : undefined
     : undefined;
-  const readOnlySentencePreview = previewOnly || (catalogSentencePreview && !savedCopy);
   const currentSentence = savedCopy && preparedSnapshot
     ? mergePreparedSentence(savedCopy, preparedSnapshot)
     : preparedSnapshot;
-  const isSentencePreview = !savedCopy && !!snapshot && (readOnlySentencePreview || isPreviewId);
+  // A caller's preview, an unsaved catalog sentence, or an example under a preview id.
+  const isSentencePreview = !savedCopy && !!snapshot && (previewOnly || catalogSentencePreview || isPreviewId);
   const sentenceExitLabel = catalogSentencePreview
     ? catalogPreviewKind === 'essay' ? 'Essays' : 'Real Life'
     : isSentencePreview
       ? 'Word'
       : 'Sentences';
-  return { currentSentence, catalogSentencePreview, catalogPreviewKind, readOnlySentencePreview, isSentencePreview, sentenceExitLabel };
+  return { currentSentence, catalogSentencePreview, catalogPreviewKind, isSentencePreview, sentenceExitLabel };
 }
