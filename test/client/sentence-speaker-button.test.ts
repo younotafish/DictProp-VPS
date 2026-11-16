@@ -14,7 +14,8 @@ const { ttsKey } = await import('../../services/api.ts');
 const { SentenceSpeakerButton } = await import('../../components/SentenceSpeakerButton.tsx');
 const { SentenceHero } = await import('../../views/detail/SentenceHero.tsx');
 
-const render = (text: string, props: { className?: string } = {}) => renderToStaticMarkup(createElement(SentenceSpeakerButton, { text, ...props }));
+type ButtonProps = Omit<Parameters<typeof SentenceSpeakerButton>[0], 'text'>;
+const render = (text: string, props: ButtonProps = {}) => renderToStaticMarkup(createElement(SentenceSpeakerButton, { text, ...props }));
 const labelOf = (markup: string) => markup.match(/aria-label="([^"]*)"/)?.[1];
 const iconOf = (markup: string) => markup.match(/<svg[^>]* class="([^"]*)"/)?.[1];
 
@@ -55,6 +56,32 @@ test('the button follows its sentence through loading, playing and paused, and i
   assert.match(markup, /class=" transition-colors text-indigo-500 h-9 w-9"/, 'a caller className replaces the default sizing');
   tts.stopCurrent();
   assert.equal(labelOf(render(SENTENCE)), 'Listen to this sentence');
+});
+
+test('the props for other owners (onToggle, allowDownload, stopOnUnmount, onPlaybackStart) leave the markup as it was', () => {
+  const plain = render(SENTENCE);
+  assert.equal(render(SENTENCE, { onToggle: () => {}, allowDownload: false, stopOnUnmount: false, onPlaybackStart: () => {} }), plain);
+  assert.equal(render(SENTENCE, { tone: 'light' }), plain, 'light is the default tone');
+});
+
+test('the dark tone draws the icon white in every state, for a dark button the caller styles', async () => {
+  const dark = (props: ButtonProps = {}) => render(SENTENCE, { tone: 'dark', iconSize: 26, className: 'w-16 h-16 rounded-full bg-slate-900', ...props });
+  let markup = dark();
+  assert.match(markup, /class=" transition-colors text-white w-16 h-16 rounded-full bg-slate-900"/);
+  assert.doesNotMatch(markup, /text-indigo/);
+  assert.match(markup, /<svg[^>]* width="26" height="26"/, 'iconSize sizes the icon');
+  assert.equal(labelOf(markup), 'Listen to this sentence');
+
+  server.clips.set(await ttsKey(PLAIN, 'Mia'), new Blob([new Uint8Array(16)], { type: 'audio/mpeg' }));
+  tts.speakNatural(PLAIN, { allowDownload: true });
+  const el = media.element();
+  await until(() => el.src.startsWith('blob:') && !el.paused, 'the clip plays');
+  el.startPlaying();
+  markup = dark();
+  assert.equal(labelOf(markup), 'Pause');
+  assert.match(markup, /class=" transition-colors text-white w-16/);
+  assert.doesNotMatch(markup, /text-indigo/);
+  tts.stopCurrent();
 });
 
 test('the sentence hero around the button marks Command-held look-up with the class the stylesheet styles', () => {
