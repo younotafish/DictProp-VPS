@@ -182,17 +182,6 @@ export const loadTimingsCached = (key: string): Promise<WordTiming[] | null> => 
   return load;
 };
 
-
-/** Word timings for the clip speakNatural plays for `text` in the current style (resolvePlayableClip: in the casual style
- *  the clear clip stands in for a missing casual one), so a seek or a highlight lines up with what's heard. Null when
- *  there's no clip or it has no timings. */
-export const getTimingsFor = async (text: string): Promise<WordTiming[] | null> => {
-  const plain = stripSentenceMarkers(text).trim();
-  if (!plain) return null;
-  const clip = await resolvePlayableClip(plain, getTtsStyle());
-  return clip ? loadTimingsCached(clip.key) : null;
-};
-
 /** Ensure word timings exist for the current style's own clip of `text`: warm them if present, else kick off background
  *  generation (whisper cold-start is ~a minute, so call this when a sentence is shown, not at click). The casual style's
  *  clear stand-in doesn't count, so a missing casual clip is still asked for. */

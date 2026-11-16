@@ -64,7 +64,7 @@ export {
 } from './audio/player';
 export { setMediaMetadata, setPlaybackStateOverride, type MediaSessionHandlers } from './audio/mediaSession';
 export { primeKeepAlive, acquireKeepAlive, releaseKeepAlive, afterGap } from './audio/keepAlive';
-export { getTimingsFor, ensureTimings, resolvePlayableClip } from './audio/clipStore';
+export { ensureTimings } from './audio/clipStore';
 export { prefetchTTS, ensureTTS, preloadAudio } from './audio/clipWarmers';
 
 // ---------------------------------------------------------------------------
