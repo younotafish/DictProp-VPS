@@ -21,8 +21,8 @@ import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { acceptListReview } from '../../services/actionGuards';
 import type { RealLifeCollection, RealLifeSentence } from '../../services/realLifeCatalog';
 import { buildRealLifeStudyItems, createRealLifeProgressItem } from '../../services/realLifeProgress';
-import { realLifeProgressItemId } from '../../services/realLifeProgressIdentity';
 import { summarizeCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress';
+import { catalogProgressItemId } from '../../services/catalogProgressIdentity';
 import { buildCatalogQueue, studyButtonLabel } from '../../services/catalogQueue';
 import type { SentenceReviewFilter } from '../../services/sentenceOrdering';
 import { sentenceReviewState, type SentenceReviewState } from '../../services/sentenceReviewState';
@@ -207,7 +207,7 @@ export function RealLifeCollectionScreen({
   const lastListReviewAt = useRef(-Infinity);
   const markReviewed = useCallback((sentence: RealLifeSentence) => {
     if (!acceptListReview(lastListReviewAt, Date.now())) return;
-    void onUpdateSRS(realLifeProgressItemId(sentence.id), 'good', { seedItem: createRealLifeProgressItem(sentence) });
+    void onUpdateSRS(catalogProgressItemId('real-life', sentence.id), 'good', { seedItem: createRealLifeProgressItem(sentence) });
   }, [onUpdateSRS]);
   const softClass = collectionStyle[collection.accent].soft;
   const renderSentence = useCallback((_index: number, sentence: RealLifeSentence) => {

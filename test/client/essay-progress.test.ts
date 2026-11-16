@@ -7,7 +7,7 @@ import {
   createEssayProgressItem,
   indexEssayProgress,
 } from '../../services/essayProgress.ts';
-import { essayProgressItemId, isEssayProgressItem } from '../../services/essayProgressIdentity.ts';
+import { catalogProgressItemId, catalogProgressKind } from '../../services/catalogProgressIdentity.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import type { SentenceData } from '../../types.ts';
 
@@ -18,11 +18,11 @@ test('Essay progress ids and provenance remain stable', () => {
   const item = createEssayProgressItem(sentence, 100);
   const data = item.data as SentenceData;
 
-  assert.equal(item.data.id, essayProgressItemId(sentence.id));
+  assert.equal(item.data.id, catalogProgressItemId('essay', sentence.id));
   assert.equal(data.catalogKind, 'essay');
   assert.equal(data.catalogCollectionId, 'self-reliance');
   assert.equal(data.catalogSentenceId, sentence.id);
-  assert.equal(isEssayProgressItem(item), true);
+  assert.equal(catalogProgressKind(item), 'essay');
 });
 
 test('each essay computes an isolated memorization score', () => {

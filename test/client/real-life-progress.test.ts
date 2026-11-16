@@ -9,7 +9,7 @@ import {
   createRealLifeProgressItem,
   indexRealLifeProgress,
 } from '../../services/realLifeProgress.ts';
-import { isRealLifeProgressItem, realLifeProgressItemId } from '../../services/realLifeProgressIdentity.ts';
+import { catalogProgressItemId, catalogProgressKind } from '../../services/catalogProgressIdentity.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import type { SentenceReviewState } from '../../services/sentenceReviewState.ts';
 import type { SentenceData } from '../../types.ts';
@@ -26,11 +26,11 @@ test('Real Life progress ids are stable and include the collection boundary', ()
   const data = item.data as SentenceData;
 
   assert.equal(item.data.id, 'real-life-sentence:career-conversations:rapport-and-small-talk:01');
-  assert.equal(item.data.id, realLifeProgressItemId(career.id));
+  assert.equal(item.data.id, catalogProgressItemId('real-life', career.id));
   assert.equal(data.catalogKind, 'real-life');
   assert.equal(data.catalogCollectionId, 'career-conversations');
   assert.equal(data.catalogSentenceId, career.id);
-  assert.equal(isRealLifeProgressItem(item), true);
+  assert.equal(catalogProgressKind(item), 'real-life');
   assert.equal(item.savedAt, 100);
   assert.equal(item.srs.id, item.data.id);
   assert.equal(item.srs.type, 'sentence');

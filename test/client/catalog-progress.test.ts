@@ -11,8 +11,6 @@ import {
   isCatalogProgressItem,
   type CatalogKind,
 } from '../../services/catalogProgressIdentity.ts';
-import { isEssayProgressItem } from '../../services/essayProgressIdentity.ts';
-import { isRealLifeProgressItem } from '../../services/realLifeProgressIdentity.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import type { SentenceData, StoredItem } from '../../types.ts';
 
@@ -58,8 +56,6 @@ test('a record keeps catalog progress only when its id, line and collection agre
   for (const [name, item, kind] of cases) {
     assert.equal(catalogProgressKind(item), kind, name);
     assert.equal(isCatalogProgressItem(item), kind !== null, name);
-    assert.equal(isRealLifeProgressItem(item), kind === 'real-life', name);
-    assert.equal(isEssayProgressItem(item), kind === 'essay', name);
   }
 });
 
