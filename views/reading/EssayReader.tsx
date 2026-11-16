@@ -1,6 +1,7 @@
 import React, { Fragment, useCallback, useMemo } from 'react';
 import { ArrowLeft, Clock3, ExternalLink, Play } from 'lucide-react';
 import type { StoredItem } from '../../types';
+import { useEscapeLayer } from '../../components/escapeStack';
 import type { Essay, EssayBodyParagraph, EssaySentence } from '../../services/essayCatalog';
 import { buildEssayStudyItems } from '../../services/essayProgress';
 import { summarizeCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress';
@@ -86,6 +87,9 @@ export function EssayReader({ essay, progressIndex, now, onBack, onOpenSentence,
   const startStudy = () => {
     onOpenSentence(buildEssayStudyItems(studyQueue.sentences, progressIndex, Date.now()), 0);
   };
+
+  // Esc goes back to the essays, unless a layer above (a lesson, a dialog, the search sheet) takes it first.
+  useEscapeLayer(onBack, 0);
 
   const style = essayStyle[essay.accent];
 

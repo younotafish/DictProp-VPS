@@ -14,6 +14,7 @@ import { Virtuoso } from 'react-virtuoso';
 import type { ReviewRating, StoredItem } from '../../types';
 import { HighlightedSentence } from '../../components/HighlightedSentence';
 import { activateOnEnterOrSpace } from '../../components/activateOnKey';
+import { useEscapeLayer } from '../../components/escapeStack';
 import { isImeKey } from '../../components/keyboardTarget';
 import { SentenceSpeakerButton } from '../../components/SentenceSpeakerButton';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
@@ -163,6 +164,13 @@ export function RealLifeCollectionScreen({
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
 
+  // Esc clears the search, then goes back to the collections, unless a layer above (a lesson, the word popup, a dialog,
+  // the search sheet) takes it. In the search box the box answers it instead, so an Esc that ends a composition in the
+  // input method (which Safari reports as keyCode 229) is the input method's.
+  const [searchFocused, setSearchFocused] = useState(false);
+  const escape = () => (query ? setQuery('') : onClose());
+  useEscapeLayer(escape, 0, !searchFocused);
+
   const progress = useMemo(
     () => summarizeCatalogProgress(collection.sentences, progressIndex, now),
     [collection, now, progressIndex],
@@ -287,9 +295,11 @@ export function RealLifeCollectionScreen({
             <input
               value={query}
               onChange={event => setQuery(event.target.value)}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
               onKeyDown={event => {
                 // Mid-composition, Escape belongs to the input method.
-                if (event.key === 'Escape' && !isImeKey(event.nativeEvent)) setQuery('');
+                if (event.key === 'Escape' && !isImeKey(event.nativeEvent)) escape();
               }}
               placeholder={`Search ${collection.title.toLocaleLowerCase('en-US')}…`}
               aria-label={`Search ${collection.title}`}
