@@ -125,6 +125,14 @@ export function imageTargetHash(target) {
     .digest('hex');
 }
 
+// An image rendered again from the prompt whose candidates were all rejected starts from new seeds: the renderer
+// (generate-krea-candidates.py) seeds a target from its seedRound, and the failure count makes each retry's round
+// differ from the last. A new or reworded prompt keeps the default seeds. The hash above ignores the field.
+export function withRetrySeedRound(target, entry) {
+  if (entry?.hash !== imageTargetHash(target)) return target;
+  return { ...target, seedRound: Math.max(0, Number(entry.failures) || 0) };
+}
+
 // Stage scripts stay strict unless the runner hands them a ledger, so other pipelines that call them
 // still fail on the first unfinished item.
 export function ledgerFromEnvironment(defaultStage, env = process.env) {
@@ -145,13 +153,15 @@ function writeOutput(path, value) {
   writeJsonAtomic(target, value);
 }
 
+// The items not waiting out a backoff in the stage, each with its ledger entry, if it has one.
 function filterList(ledgerPath, stage, items, keyOf, hashOf, label, now) {
   const entries = readLedger(ledgerPath).stages[stage] || {};
   const remaining = [];
   let deferred = 0;
   for (const item of items) {
-    if (isDeferred(entries[keyOf(item)], hashOf(item), now)) deferred++;
-    else remaining.push(item);
+    const entry = entries[keyOf(item)];
+    if (isDeferred(entry, hashOf(item), now)) deferred++;
+    else remaining.push({ item, entry });
   }
   if (deferred > 0) {
     process.stderr.write(`Skipping ${deferred} ${label} in failure backoff (${stage}); see ${ledgerPath}\n`);
@@ -176,7 +186,7 @@ function main(argv) {
     if (source?.version !== 1 || !Array.isArray(source.sentences)) throw new Error('Sentence source is invalid');
     // Every other field, including exportedAt, is kept: the dispatchers compare it with manifest ages.
     const sentences = filterList(ledgerPath, stage, source.sentences, sentence => sentence.id, sentenceHash,
-      'sentence(s)', now);
+      'sentence(s)', now).map(({ item }) => item);
     writeOutput(outputPath, { ...source, sentences });
     process.stdout.write(`${sentences.length}\n`);
     return;
@@ -189,7 +199,7 @@ function main(argv) {
     const payload = readJson(targetsPath);
     if (!Array.isArray(payload?.targets)) throw new Error('Image target manifest is invalid');
     const targets = filterList(ledgerPath, stage, payload.targets, target => target.imageId, imageTargetHash,
-      'image(s)', now);
+      'image(s)', now).map(({ item, entry }) => withRetrySeedRound(item, entry));
     writeOutput(outputPath, { ...payload, targets });
     process.stdout.write(`${targets.length}\n`);
     return;

@@ -24,6 +24,7 @@ import {
   recordFailure,
   recordSuccess,
   updateLedger,
+  withRetrySeedRound,
 } from '../../scripts/offline/failure-ledger.mjs';
 import { sha256, writeJson } from '../support/fs.ts';
 
@@ -236,6 +237,69 @@ test('image filtering treats a reworded prompt as a new image', () => {
     assert.deepEqual(readJson(outputPath), { version: 1, generatedAt: 7, targets: [targets[1]] });
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('an image rendered again from the prompt that failed gets new seeds; a new or reworded one keeps the default', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dictprop-ledger-seeds-'));
+  try {
+    const now = Date.now();
+    const ledgerPath = join(root, 'failures.json');
+    const targetsPath = join(root, 'targets.json');
+    const outputPath = join(root, 'filtered.json');
+    const learningTarget = { kind: 'word sense', text: 'harbor', sense: 'noun: a sheltered port', definition: '' };
+    const target = (imageId: string, prompt: string) => ({ imageId, filename: `${imageId}.webp`, prompt, learningTarget });
+    const targets = [
+      target('retried', 'A calm harbor at dawn.'),
+      target('reworded', 'A busy harbor at noon.'),
+      target('new', 'A fishing boat leaving the harbor.'),
+      target('waiting', 'A harbor in heavy fog.'),
+    ];
+    const failed = (prompt: string, failures: number, retryAfter: number) =>
+      ({ ...entry(imageTargetHash({ prompt, learningTarget }), retryAfter), failures });
+    writeJson(ledgerPath, {
+      version: 1,
+      updatedAt: now,
+      stages: {
+        'item-image': {
+          retried: failed('A calm harbor at dawn.', 3, now - 1_000),
+          reworded: failed('A quiet harbor at dusk.', 2, now - 1_000),
+          waiting: failed('A harbor in heavy fog.', 1, now + DAY),
+        },
+      },
+    });
+    writeJson(targetsPath, { version: 1, generatedAt: 7, targets });
+
+    const result = runLedger(['filter-image-targets', ledgerPath, 'item-image', targetsPath, outputPath]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, '3\n');
+    assert.deepEqual(readJson(outputPath), {
+      version: 1,
+      generatedAt: 7,
+      targets: [{ ...targets[0], seedRound: 3 }, targets[1], targets[2]],
+    });
+
+    // The ledger keys an image without its seed round, so the outcome of the retry counts against the same entry.
+    const images = join(root, 'images');
+    mkdirSync(images);
+    const record = runLedger(['record-image-outcomes', ledgerPath, 'item-image', outputPath, images, '0']);
+    assert.equal(record.status, 0, record.stderr);
+    const retried = readJson(ledgerPath).stages['item-image'].retried;
+    assert.equal(retried.failures, 4);
+    assert.equal(retried.hash, imageTargetHash(targets[0]));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a retry\'s seed round is its failure count, never below zero', () => {
+  const target = { imageId: 'one', filename: 'one.webp', prompt: 'A lighthouse in fog.' };
+  const hash = imageTargetHash(target);
+  assert.equal(imageTargetHash({ ...target, seedRound: 5 }), hash);
+  assert.equal(withRetrySeedRound(target, undefined), target);
+  assert.equal(withRetrySeedRound(target, { ...entry('another prompt', 0), failures: 2 }), target);
+  for (const [failures, seedRound] of [[2, 2], [-1, 0], ['3', 3], ['many', 0], [null, 0]] as const) {
+    assert.deepEqual(withRetrySeedRound(target, { hash, failures }), { ...target, seedRound }, String(failures));
   }
 });
 
