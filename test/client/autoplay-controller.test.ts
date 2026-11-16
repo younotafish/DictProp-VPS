@@ -275,6 +275,57 @@ test('the timer running out mid-read lets that read finish, then ends auto-play;
   assert.equal(gap.lastGap().cancelled, true);
 });
 
+test('the timer running out while the reading is paused ends auto-play at once, however it was paused', () => {
+  // A pause that lasts 15 minutes ends it this way too (useAutoPlay), letting go of the keep-alive and the lock screen.
+  const ending = [{ type: 'stopRead' }, { type: 'cancelWait' }, { type: 'finish' }];
+
+  // Paused mid-read (the speaker, E, a blank-space tap): the paused clip is stopped, not kept for a resume.
+  const clip = harness('sentence-review');
+  clip.card('A sentence.');
+  clip.controller.engineState('playing');
+  clip.controller.pause();
+  const pausedRead = clip.lastRead();
+  assert.equal(pausedRead.stopped, false, 'paused, not stopped');
+  assert.deepEqual(reduceAutoplay(clip.controller.getState(), { type: 'timerEnded' }).effects, ending);
+  clip.controller.timerEnded();
+  assert.equal(clip.phase(), 'ended');
+  assert.equal(pausedRead.stopped, true);
+  assert.equal(clip.log.at(-1), 'finish');
+  clip.controller.resume();
+  assert.equal(clip.log.at(-1), 'finish', 'a resume afterwards plays nothing');
+
+  // Paused by something else speaking: the cut-off read isn't read again.
+  const interrupted = harness('sentence-review');
+  interrupted.card('A sentence.');
+  interrupted.controller.engineState('playing');
+  const cutOff = interrupted.lastRead();
+  cutOff.interrupt('superseded');
+  assert.equal(interrupted.controller.getState().resume, 'read');
+  assert.deepEqual(reduceAutoplay(interrupted.controller.getState(), { type: 'timerEnded' }).effects, ending);
+  interrupted.controller.timerEnded();
+  assert.equal(interrupted.phase(), 'ended');
+  assert.equal(cutOff.stopped, true);
+  assert.equal(interrupted.log.at(-1), 'finish');
+  interrupted.controller.resume();
+  assert.deepEqual(interrupted.log.filter(line => line.startsWith('speak')), ['speak A sentence.'], 'read once only');
+
+  // Paused in a gap: the step it waited for is never taken.
+  const gap = harness('sentence-review', { repeats: 2, gapMs: 2000 });
+  gap.card('A sentence.');
+  gap.play();
+  const pausedGap = gap.lastGap();
+  gap.controller.pause();
+  assert.deepEqual(reduceAutoplay(gap.controller.getState(), { type: 'timerEnded' }).effects, ending);
+  gap.controller.timerEnded();
+  assert.equal(gap.phase(), 'ended');
+  assert.equal(pausedGap.cancelled, true);
+  assert.equal(gap.lastHold().released, true, 'nothing holds the engine');
+  assert.equal(gap.log.at(-1), 'finish');
+  pausedGap.done();
+  gap.controller.resume();
+  assert.equal(gap.log.at(-1), 'finish', 'neither the cancelled gap nor a resume reads on');
+});
+
 test('pauses it didn\'t ask for (the OS, a headset) pause the reading, and the clip playing again resumes it', () => {
   const h = harness('word-cards');
   h.card('One.');
