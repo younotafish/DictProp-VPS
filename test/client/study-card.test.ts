@@ -174,6 +174,16 @@ test('the revealed example has its speaker beside Open sentence review', () => {
   assert.match(row, /<svg[^>]* width="17" height="17"[^>]*class="lucide lucide-volume2 /);
 });
 
+test('once the answer shows, Open card sits under it, to see the whole card; there is none before', () => {
+  const item = card({ examples: ['She looked {{crestfallen}}.'] });
+  const revealed = partsOf(render({ item, session: session({ revealed: true }), onOpenCard: noop })).body;
+  const open = buttonsOf(revealed).at(-1) ?? '';
+  assert.match(open, /class="mt-2 inline-flex h-11 items-center rounded-md text-sm font-semibold text-indigo-600 /);
+  assert.match(revealed, />Open card<\/button><\/div><\/div><\/section>$/, 'the last thing in the answer');
+  assert.doesNotMatch(render({ item, onOpenCard: noop }), /Open card/, 'it would show the answer');
+  assert.doesNotMatch(render({ item, session: session({ revealed: true }) }), /Open card/, 'nothing to open it with');
+});
+
 test('the header keeps the count, the instruction and End, and no longer holds Undo', () => {
   const { header } = partsOf(render({ item: card(), canUndo: true }));
   assert.match(header, /1 \/ 2/);

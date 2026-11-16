@@ -21,6 +21,7 @@ import {
   isSessionCardLive,
   listeningPrompt,
   moveSessionTo,
+  openCardGroup,
   receiptText,
   resumeSession,
   sessionSiblingCounts,
@@ -288,6 +289,15 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     if (session && session.grades.length > 0) setSession(current => current && endSessionEarly(current));
     else closeSession();
   };
+  // Open card: the card view over the session, on this card among its senses, so ← and → reach the others. Closing it
+  // comes back to the same card, revealed; a Got it given there counts, and the session moves past the card, as it
+  // does past any card reviewed elsewhere.
+  const openCard = () => {
+    if (!currentItem || !onViewCards) return;
+    const { group, index } = openCardGroup(currentItem, items);
+    onViewCards([group], 0, index);
+  };
+
   // Taken up again, the card plays its listening prompt again.
   const resume = () => {
     playedPromptRef.current = null;
@@ -419,6 +429,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
           onFooterGrade={footerGrade}
           onTypeAnswer={typedAnswer => setSession(current => current ? { ...current, typedAnswer } : null)}
           onOpenExampleSentence={onOpenExampleSentence}
+          onOpenCard={onViewCards && openCard}
         />
       </div>
     );

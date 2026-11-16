@@ -52,6 +52,8 @@ interface StudyCardProps {
   onFooterGrade: (rating: ReviewRating) => void;
   onTypeAnswer: (text: string) => void;
   onOpenExampleSentence: (text: string, sourceWord: string, sourceSense?: string) => void;
+  /** Open card, under the answer: the card view on this card over the session. Without it there's no Open card. */
+  onOpenCard?: () => void;
 }
 
 /** One card of a study session: its prompt and the answer once revealed, over a footer with the receipt line and the grades. */
@@ -69,6 +71,7 @@ export function StudyCard({
   onFooterGrade,
   onTypeAnswer,
   onOpenExampleSentence,
+  onOpenCard,
 }: StudyCardProps) {
   // Set while the card is on screen; hiding the tab runs the cleanup too.
   useLayoutEffect(() => {
@@ -184,6 +187,16 @@ export function StudyCard({
                     <Maximize2 size={17} />
                   </button>
                 </div>
+              )}
+              {/* The card's picture, mnemonic and other senses, in the card view; closing it comes back here. */}
+              {onOpenCard && (
+                <button
+                  type="button"
+                  onClick={onOpenCard}
+                  className="mt-2 inline-flex h-11 items-center rounded-md text-sm font-semibold text-indigo-600 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                >
+                  Open card
+                </button>
               )}
             </div>
           )}
