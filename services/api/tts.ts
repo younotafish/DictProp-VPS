@@ -24,27 +24,83 @@ export const ttsKey = async (text: string, voice: string): Promise<string> =>
 const TTS_AUDIO_TIMEOUT_MS = 8000;    // audio is what we play — be patient, but never infinite
 const TTS_TIMINGS_TIMEOUT_MS = 6000;  // timings are non-essential (lead-in trim / seek) — bg-warmed
 
-/** Fetch a cached clip by key. Returns the audio Blob, or null on miss (404) / timeout / error. */
-export const fetchCachedTTS = async (key: string, timeoutMs = TTS_AUDIO_TIMEOUT_MS): Promise<Blob | null> => {
+/**
+ * What a request to the speech cache found: the value, `missing` when the server has none (only a 404 says so), or
+ * `failed` for anything else (another status, a body that isn't what was asked for, a timeout, an abort or no
+ * connection), which a later attempt may retry. A clip is worth generating only when it is missing.
+ */
+export type CachedLookup<T> = { kind: 'hit'; value: T } | { kind: 'missing' } | { kind: 'failed' };
+
+export interface CachedLookupOptions {
+  /** Aborting it ends the request, as failed. */
+  signal?: AbortSignal;
+  /** How long the headers and the body may take; past it, the request fails. */
+  timeoutMs?: number;
+}
+
+const MISSING = { kind: 'missing' } as const;
+const FAILED = { kind: 'failed' } as const;
+
+/** GET `url` from the speech cache; `read` returns the body's value, or undefined when it isn't one. Never rejects. */
+const lookUpCached = async <T>(
+  url: string,
+  { signal, timeoutMs }: CachedLookupOptions,
+  defaultTimeoutMs: number,
+  read: (response: Response) => Promise<T | undefined>,
+): Promise<CachedLookup<T>> => {
+  const init = signal ? { signal } : undefined;
   try {
-    return await fetchWithin(`/api/tts/${key}.mp3`, undefined, timeoutMs, async (res) => (res.ok ? await res.blob() : null));
+    return await fetchWithin(url, init, timeoutMs ?? defaultTimeoutMs, async (response): Promise<CachedLookup<T>> => {
+      if (response.status === 404) return MISSING;
+      if (!response.ok) return FAILED;
+      const value = await read(response);
+      return value === undefined ? FAILED : { kind: 'hit', value };
+    });
   } catch {
-    return null;
+    return FAILED;
   }
 };
 
-/** Fetch a clip's per-word timings by key. Returns the WordTiming[] or null on miss / timeout / error. */
-export const fetchCachedTTSTimings = async (key: string, timeoutMs = TTS_TIMINGS_TIMEOUT_MS): Promise<WordTiming[] | null> => {
-  try {
-    return await fetchWithin(`/api/tts/${key}/timings`, undefined, timeoutMs, async (res) => {
-      if (!res.ok) return null;
-      const data = await res.json();
-      return Array.isArray(data) ? data : null;
-    });
-  } catch {
-    return null;
-  }
+/** Clip `key`'s audio from the speech cache. */
+export const fetchCachedClipByKey = (key: string, options: CachedLookupOptions = {}): Promise<CachedLookup<Blob>> =>
+  lookUpCached(`/api/tts/${key}.mp3`, options, TTS_AUDIO_TIMEOUT_MS, response => response.blob());
+
+/** Clip `key`'s per-word timings from the speech cache. */
+export const fetchCachedTimingsByKey = (key: string, options: CachedLookupOptions = {}): Promise<CachedLookup<WordTiming[]>> =>
+  lookUpCached(`/api/tts/${key}/timings`, options, TTS_TIMINGS_TIMEOUT_MS, async (response) => {
+    const data: unknown = await response.json();
+    return Array.isArray(data) ? data as WordTiming[] : undefined;
+  });
+
+/** The cached clip of `text` (speakable, without markers) in voice token `voice`: the clip at ttsKey(text, voice). */
+export const fetchCachedClip = async (
+  text: string,
+  voice: string,
+  options: CachedLookupOptions = {},
+): Promise<CachedLookup<Blob>> => {
+  const key = await ttsKey(text, voice).catch(() => null);
+  return key ? fetchCachedClipByKey(key, options) : FAILED;
 };
+
+/** The per-word timings of the cached clip of `text` in voice token `voice` (see fetchCachedClip). */
+export const fetchCachedTimings = async (
+  text: string,
+  voice: string,
+  options: CachedLookupOptions = {},
+): Promise<CachedLookup<WordTiming[]>> => {
+  const key = await ttsKey(text, voice).catch(() => null);
+  return key ? fetchCachedTimingsByKey(key, options) : FAILED;
+};
+
+const valueOrNull = <T>(lookup: CachedLookup<T>): T | null => (lookup.kind === 'hit' ? lookup.value : null);
+
+/** Fetch a cached clip by key. Returns the audio Blob, or null on miss (404) / timeout / error. */
+export const fetchCachedTTS = async (key: string, timeoutMs = TTS_AUDIO_TIMEOUT_MS): Promise<Blob | null> =>
+  valueOrNull(await fetchCachedClipByKey(key, { timeoutMs }));
+
+/** Fetch a clip's per-word timings by key. Returns the WordTiming[] or null on miss / timeout / error. */
+export const fetchCachedTTSTimings = async (key: string, timeoutMs = TTS_TIMINGS_TIMEOUT_MS): Promise<WordTiming[] | null> =>
+  valueOrNull(await fetchCachedTimingsByKey(key, { timeoutMs }));
 
 // The server takes at most GENERATE_MAX_ITEMS clips per request and answers once their audio is stored (three
 // at a time, a few seconds each), so a full request needs well over the default 30 s.
