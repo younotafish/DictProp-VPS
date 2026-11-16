@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { useLatest } from '../hooks/useStableValue';
 import { useBackdropClick } from './backdropPress';
 import { useEscapeLayer } from './escapeStack';
 import { useOverlay } from './overlayStack';
@@ -18,14 +19,18 @@ interface ModalProps {
  * While `active`, focuses the dialog panel, keeps Tab inside it, and on close gives focus back to what had it.
  * Runs once per open: callers pass inline handlers, and re-running on each render would pull focus back to
  * the panel and away from whatever the user had focused inside it.
+ *
+ * A dialog that a higher layer can cover (the search sheet beneath a review popup) passes `yieldWhile`: while it
+ * returns true, the panel takes no focus as it opens and Tab is left to the layer on top.
  */
-export function useModalFocus(panelRef: React.RefObject<HTMLElement | null>, active = true): void {
+export function useModalFocus(panelRef: React.RefObject<HTMLElement | null>, active = true, yieldWhile?: () => boolean): void {
+  const yielding = useLatest(yieldWhile);
   useEffect(() => {
     if (!active) return;
     const prevFocus = document.activeElement as HTMLElement | null;
-    panelRef.current?.focus({ preventScroll: true });
+    if (!yielding.current?.()) panelRef.current?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Tab') return;
+      if (e.key !== 'Tab' || yielding.current?.()) return;
       const focusables = panelRef.current?.querySelectorAll<HTMLElement>(
         'a[href],button:not([disabled]),input:not([disabled]),select,textarea,[tabindex]:not([tabindex="-1"])',
       );
@@ -38,7 +43,7 @@ export function useModalFocus(panelRef: React.RefObject<HTMLElement | null>, act
     };
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); try { prevFocus?.focus?.({ preventScroll: true }); } catch { /* ignore */ } };
-  }, [active, panelRef]);
+  }, [active, panelRef, yielding]);
 }
 
 /**

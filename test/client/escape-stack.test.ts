@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { pushEscapeLayer } from '../../components/escapeStack.ts';
+import { hasEscapeLayerAbove, pushEscapeLayer } from '../../components/escapeStack.ts';
 
 // The stack only needs the window's listener API, which Node's EventTarget provides.
 const fakeWindow = new EventTarget();
@@ -70,4 +70,20 @@ test('Escape mid-composition is left to the input method', () => {
   assert.equal(closes, 0);
   assert.equal(event.defaultPrevented, false);
   pop();
+});
+
+test('a layer knows when one above it is open, but not one that opened beneath it', () => {
+  const popView = pushEscapeLayer(() => {}, 50);
+  const popSheet = pushEscapeLayer(() => {}, 55);
+  assert.equal(hasEscapeLayerAbove(55), false, 'the card view beneath and the sheet itself do not count');
+
+  const popPopup = pushEscapeLayer(() => {}, 100);
+  assert.equal(hasEscapeLayerAbove(55), true, 'a review popup over the sheet');
+  assert.equal(hasEscapeLayerAbove(100), false, 'nothing above the popup');
+  popPopup();
+  assert.equal(hasEscapeLayerAbove(55), false, 'the popup closed');
+
+  popSheet();
+  popView();
+  assert.equal(hasEscapeLayerAbove(0), false, 'no layer open');
 });

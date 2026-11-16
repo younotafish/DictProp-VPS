@@ -41,6 +41,12 @@ export function pushEscapeLayer(onEscape: () => void, z = 0): () => void {
   };
 }
 
+/**
+ * Whether a layer above z-index `z` is open. A layer at `z` (the search sheet asks with 55) then leaves its keys,
+ * not only Escape, to the one on top. A layer that opened beneath never counts.
+ */
+export const hasEscapeLayerAbove = (z: number): boolean => layers.some(layer => layer.z > z);
+
 /** While `active`, Escape calls the latest `onEscape` — unless a layer above this one is open. */
 export function useEscapeLayer(onEscape: () => void, z: number, active = true): void {
   const latest = useLatest(onEscape);
