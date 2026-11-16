@@ -58,7 +58,8 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
     );
   }
 
-  // Each essay mounts afresh, so the next reading opens at its own start rather than at the last one's scroll.
+  // Keyed by id, each essay mounts afresh: Next never carries the last reading's scroll over, and the essay opens at the
+  // sentence it was left at if it was left unfinished, or else at its title.
   return (
     <EssayReader
       key={selectedEssay.id}
