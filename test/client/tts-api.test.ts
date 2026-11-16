@@ -43,8 +43,11 @@ test('a cached clip and its timings come back by key, and a miss, an error or a 
   assert.equal(await fetchCachedTTSTimings('abc', 20), null);
 });
 
-test('a clip key is the SHA-256 of the voice, a newline and the trimmed text', async () => {
+test('a clip key is the SHA-256 of the voice, a newline and the trimmed text, as the server derives it', async () => {
   const { createHash } = await import('node:crypto');
   const expected = createHash('sha256').update('Mia\nA sentence to read.').digest('hex');
   assert.equal(await ttsKey('  A sentence to read.\n', 'Mia'), expected);
+  // The digests server/test/tts-cache.test.ts pins for the server's ttsKey: a change on either side fails one test.
+  assert.equal(await ttsKey('Hello there.', 'Mia'), '34a7fda7ef25705c6b91e942cfa7f3ee00e54fc69077e90d38e3fc19feb04474');
+  assert.equal(await ttsKey('Hello there.', 'casual'), 'd32c1ac7577ce5d329f49b606bcc9e6ccb7b4fe22541ae2fbcc95d4f4e0a12b1');
 });
