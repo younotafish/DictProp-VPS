@@ -5,7 +5,6 @@ import { MessageSquareQuote, Check, Trash2, Search, X } from 'lucide-react';
 import { HighlightedSentence } from '../components/HighlightedSentence';
 import { isImeKey } from '../components/keyboardTarget';
 import { barColorFor } from '../components/mastery';
-import { useSentenceSearch } from '../services/sentenceSearch';
 import {
   orderSentencesForReview,
   type SentenceReviewFilter,
@@ -14,6 +13,7 @@ import { needsReview, summarizeReviewStates } from '../services/sentenceReviewSt
 import { Virtuoso } from 'react-virtuoso';
 import { useLatest } from '../hooks/useStableValue';
 import { useListClock } from '../hooks/useNow';
+import { useSentenceSearch } from '../hooks/useSentenceSearch';
 import { formatDueLabel } from './reading/dueLabel';
 
 const sentenceKey = (_index: number, item: StoredItem) => item.data.id;
@@ -159,14 +159,16 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
 
   const [filter, setFilter] = useState<SentenceReviewFilter>('all');
 
-  // Fuzzy search: narrows the list live as you type; Enter runs a real AI search of the typed text.
+  // Fuzzy search: narrows the list live as you type; Enter runs a real AI search of the typed text. A query nothing
+  // matches literally waits for the fuzzy matches, which come once typing pauses: pending until then. A trailing
+  // space changes neither the search nor the clock.
   const [searchQuery, setSearchQuery] = useState('');
   const deferredQuery = useDeferredValue(searchQuery);
-  const runSentenceSearch = useSentenceSearch(items);
+  const settledQuery = deferredQuery.trim();
+  const search = useSentenceSearch(items, settledQuery);
 
   // The counts, the order and the rows' state count from this time, taken again when the filter or the settled
   // search changes and when a sentence opens over the list, not when the library changes.
-  const settledQuery = deferredQuery.trim();
   const listView = useMemo(() => ({ filter, query: settledQuery }), [filter, settledQuery]);
   const { now, noteOpened } = useListClock(listView);
 
@@ -175,12 +177,12 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
 
   // Weakest first; among equally strong sentences, the newest saved first. Listening doesn't move a sentence.
   const sorted = useMemo(() => {
-    if (!deferredQuery.trim()) return orderSentencesForReview(activeItems, filter, now);
+    if (!settledQuery) return orderSentencesForReview(activeItems, filter, now);
     // A search overrides the review-state chips so a match surfaces regardless of the active tab, and
     // keeps the search's order, so sentences with the typed word as a whole word come first.
     const activeIds = new Set(activeItems.map(s => s.data.id));
-    return runSentenceSearch(deferredQuery).filter(s => activeIds.has(s.data.id));
-  }, [activeItems, filter, now, deferredQuery, runSentenceSearch]);
+    return search.results.filter(s => activeIds.has(s.data.id));
+  }, [activeItems, filter, now, settledQuery, search.results]);
 
   // Rows open the sentence in the order on screen, read when tapped, so the row callbacks stay the same
   // while the list changes.
@@ -290,12 +292,13 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
         </div>
       </div>
 
-      {sorted.length === 0 && (
+      {/* While the fuzzy matches are pending, neither the list nor 'No sentences match'. */}
+      {sorted.length === 0 && !search.pending && (
         <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
           <MessageSquareQuote size={48} className="text-slate-200 mb-4" />
-          {deferredQuery.trim() ? (
+          {settledQuery ? (
             <>
-              <p className="text-slate-400 text-sm">No sentences match “{deferredQuery.trim()}”</p>
+              <p className="text-slate-400 text-sm">No sentences match “{settledQuery}”</p>
               <p className="text-slate-300 text-xs mt-1">Press Enter to look it up with AI instead</p>
             </>
           ) : activeItems.length === 0 ? (
