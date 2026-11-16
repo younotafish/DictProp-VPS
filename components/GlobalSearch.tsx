@@ -123,7 +123,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const {
     queue, readyItems, unseenCount, runningCount, isBusy, updateQueue, lookUp, refreshInPlace,
   } = useSearchQueue({
-    findSavedByWord, isOnline, onRefreshReplace, onCompareReady, openWhenReady: setPendingOpenId, showNotice, showStatus,
+    findSavedByWord, isOnline, onRefreshReplace, onCompareReady, onCompare, openWhenReady: setPendingOpenId, showNotice, showStatus,
   });
   const readyCount = readyItems.length;
 

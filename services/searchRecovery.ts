@@ -1,6 +1,19 @@
 import { defaultSessionStorage, parseJson, type StorageLike } from './browserStorage';
 import { HttpError } from './http';
 
+/**
+ * A request the search runs, as data: what is kept when a session expires, for running it again after signing in, and
+ * across a reload. Queries and modes only: never a result, nor the sentence a lookup came from.
+ */
+export type SearchRequest =
+  | { kind: 'scan'; query: string }
+  | { kind: 'analyze'; query: string; analyzeMode?: 'batch'; forceAI?: boolean }
+  | { kind: 'compare'; words: string[] };
+
+/**
+ * The retry builds before search requests existed kept, and components/search/runLookup.ts still writes: a lookup,
+ * run again as a refresh. Read once more after a deploy, since an OAuth redirect can straddle it.
+ */
 export interface PendingSearchRetry {
   query: string;
   analyzeMode?: 'batch';
@@ -22,26 +35,105 @@ export function isRetryableSearchError(error: unknown): boolean {
   return error.status === 401 || error.status === 408 || error.status === 429;
 }
 
-export function rememberSearchRetry(retry: PendingSearchRetry, storage: StorageLike | null = defaultSessionStorage()): void {
-  if (!storage || !retry.query.trim()) return;
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
+const isQuery = (value: unknown): value is string => typeof value === 'string' && value.trim() !== '';
+
+/** `value` as a well-formed search request, holding only a request's fields, or null. */
+function searchRequestOf(value: unknown): SearchRequest | null {
+  if (!isRecord(value)) return null;
+  if (value.kind === 'scan') return isQuery(value.query) ? { kind: 'scan', query: value.query } : null;
+  if (value.kind === 'analyze') {
+    if (!isQuery(value.query)) return null;
+    return {
+      kind: 'analyze',
+      query: value.query,
+      ...(value.analyzeMode === 'batch' ? { analyzeMode: 'batch' as const } : {}),
+      ...(value.forceAI === true ? { forceAI: true } : {}),
+    };
+  }
+  if (value.kind === 'compare') {
+    const words = Array.isArray(value.words) ? value.words.filter(isQuery) : [];
+    return words.length >= 2 ? { kind: 'compare', words } : null;
+  }
+  return null;
+}
+
+/** Keeps `request`, whose session expired, to run once the user signs in again (the OAuth redirect keeps sessionStorage). */
+export function rememberSearchRetry(request: SearchRequest | PendingSearchRetry, storage: StorageLike | null = defaultSessionStorage()): void {
+  const kept = 'kind' in request ? searchRequestOf(request) : isQuery(request.query) ? request : null;
+  if (!storage || !kept) return;
   try {
-    storage.setItem(SEARCH_RETRY_KEY, JSON.stringify(retry));
+    storage.setItem(SEARCH_RETRY_KEY, JSON.stringify(kept));
   } catch {
     // Session storage is a convenience; the failed in-memory queue remains retryable.
   }
 }
 
-export function consumeSearchRetry(storage: StorageLike | null = defaultSessionStorage()): PendingSearchRetry | null {
+/** The request kept to run after signing in again, once: a retry from an older build reads as a refresh. */
+export function consumeSearchRetry(storage: StorageLike | null = defaultSessionStorage()): SearchRequest | null {
   if (!storage) return null;
   try {
     const raw = storage.getItem(SEARCH_RETRY_KEY);
     storage.removeItem(SEARCH_RETRY_KEY);
-    if (!raw) return null;
-    const parsed = parseJson(raw) as PendingSearchRetry | null;
-    if (!parsed || typeof parsed.query !== 'string' || !parsed.query.trim()) return null;
-    return { query: parsed.query, ...(parsed.analyzeMode === 'batch' ? { analyzeMode: 'batch' as const } : {}) };
+    const parsed = parseJson(raw);
+    if (isRecord(parsed) && !('kind' in parsed)) {
+      return searchRequestOf({ kind: 'analyze', query: parsed.query, analyzeMode: parsed.analyzeMode, forceAI: true });
+    }
+    return searchRequestOf(parsed);
   } catch {
     return null;
+  }
+}
+
+/** A request still waiting on its result, or whose result hasn't been seen, and when it was asked for. */
+export interface PendingRequest {
+  request: SearchRequest;
+  at: number;
+}
+
+const PENDING_LOOKUPS_KEY = 'search_pending_v1';
+/** At most this many requests are kept across a reload, the newest. */
+const MAX_PENDING = 20;
+/** A request older than this isn't run again after a reload. */
+const PENDING_MAX_AGE_MS = 60 * 60 * 1000;
+
+/** The newest MAX_PENDING of `pending`, as search_pending_v1 keeps them. */
+export function encodePendingLookups(pending: readonly PendingRequest[]): string {
+  return JSON.stringify(pending.slice(-MAX_PENDING).flatMap(({ request, at }) => {
+    const kept = searchRequestOf(request);
+    return kept ? [{ request: kept, at }] : [];
+  }));
+}
+
+/** The requests search_pending_v1 kept, asked for within the last hour before `now`; anything malformed is skipped. */
+export function decodePendingLookups(raw: string | null, now: number): SearchRequest[] {
+  const parsed = parseJson(raw);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.slice(-MAX_PENDING).flatMap((entry: unknown) => {
+    if (!isRecord(entry) || typeof entry.at !== 'number' || !(entry.at <= now && now - entry.at < PENDING_MAX_AGE_MS)) return [];
+    const request = searchRequestOf(entry.request);
+    return request ? [request] : [];
+  });
+}
+
+/** Keeps `pending` for after a reload (sessionStorage lasts as long as the tab), or forgets the list when it's empty. */
+export function writePendingLookups(pending: readonly PendingRequest[], storage: StorageLike | null = defaultSessionStorage()): void {
+  if (!storage) return;
+  try {
+    if (pending.length === 0) storage.removeItem(PENDING_LOOKUPS_KEY);
+    else storage.setItem(PENDING_LOOKUPS_KEY, encodePendingLookups(pending));
+  } catch {
+    // Session storage is a convenience: a reload then only loses the tray, as it always did.
+  }
+}
+
+/** The requests kept from before a reload, as decodePendingLookups reads them. */
+export function readPendingLookups(now: number, storage: StorageLike | null = defaultSessionStorage()): SearchRequest[] {
+  if (!storage) return [];
+  try {
+    return decodePendingLookups(storage.getItem(PENDING_LOOKUPS_KEY), now);
+  } catch {
+    return [];
   }
 }
 

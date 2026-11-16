@@ -3,7 +3,10 @@ import { comparisonKey, type ComparisonResult, type VocabCard } from '../../type
 import { analyzeInput, compareWords, detectVocabulary } from '../../services/api/ai';
 import { ensureTTS } from '../../services/neuralTts';
 import { log, warn } from '../../services/logger';
-import { consumeSearchRetry, describeSearchError, failureOf, isAuthenticationError, rememberSearchRetry } from '../../services/searchRecovery';
+import {
+  consumeSearchRetry, describeSearchError, failureOf, isAuthenticationError, readPendingLookups, rememberSearchRetry, writePendingLookups,
+  type SearchRequest,
+} from '../../services/searchRecovery';
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
 import { looksLikeSentence } from '../../services/queryMode';
 import { useLatest } from '../../hooks/useStableValue';
@@ -12,7 +15,8 @@ import { routeLookup } from './searchRouting';
 import { runLookup, type LookupEffects } from './runLookup';
 import {
   createRefreshLog, findLiveComparison, findLiveLookup, isBusyOf, isQueued, queueUpdate, readyItemsOf, runningCountOf,
-  savedCardsResult, searchQueueReducer, unseenReadyCount, type OpenPolicy, type QueueAction, type QueueItem,
+  pendingRequestsOf, requestOf, savedCardsResult, searchQueueReducer, unseenReadyCount, type OpenPolicy, type QueueAction,
+  type QueueItem,
 } from './searchQueue';
 
 let queueIdCounter = 0;
@@ -43,6 +47,9 @@ interface Options {
   onRefreshReplace?: (word: string, vocabs: VocabCard[]) => void;
   /** A finished comparison — persist it (server + local) so it shows on each involved word's page. */
   onCompareReady?: (words: string[], result: ComparisonResult) => void;
+  /** Asks for a comparison as a Compare button does (App's handleCompare, which hands over its saved result): how a
+   *  comparison kept across a reload comes back without being generated again. */
+  onCompare?: (words: string[]) => void;
   /** Open this entry in the results sheet once it's ready: a saved word, a refresh, a saved comparison, or a word
    *  asked for again whose result is ready. */
   openWhenReady: (id: string) => void;
@@ -60,7 +67,7 @@ interface Options {
  * lookup of each expression it found.
  */
 export function useSearchQueue({
-  findSavedByWord, isOnline, onRefreshReplace, onCompareReady, openWhenReady, showNotice, showStatus,
+  findSavedByWord, isOnline, onRefreshReplace, onCompareReady, onCompare, openWhenReady, showNotice, showStatus,
 }: Options) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const processingIdsRef = useRef<Set<string>>(new Set()); // prevents a re-render from starting an item twice
@@ -134,32 +141,67 @@ export function useSearchQueue({
     return true;
   }, [queueRef, isOnlineRef, findSavedByWordRef, openWhenReady, showStatus, showNotice, scan, enqueue]);
 
-  // OAuth redirects preserve sessionStorage. Resume the exact failed query once the user signs in again.
-  useEffect(() => {
-    const retry = consumeSearchRetry();
-    if (retry) enqueue(retry.query, { forceAI: true, analyzeMode: retry.analyzeMode, openOnReady: 'any' });
-  }, [enqueue]);
+  // Comparisons a reload brings back go through App's handleCompare, which hands over a saved result, and return as a
+  // request like a Compare tap's. A request run again never opens by itself, so their keys wait here for it.
+  const resumingComparisonsRef = useRef(new Set<string>());
 
   // Add a comparison to the SAME queue as searches. With a saved result it drops in as 'ready' and opens at once;
-  // otherwise it's 'pending' and generates in the background like a search, which needs the network.
+  // otherwise it's 'pending' and generates in the background like a search, which needs the network (one a reload
+  // brings back is run anyway, to fail where Retry can reach it).
   const enqueueCompare = useCallback(({ words, cached }: CompareRequest) => {
     const clean = words.map(w => w.trim()).filter(Boolean);
     if (clean.length < 2) return;
     const key = comparisonKey(clean);
+    const resumed = resumingComparisonsRef.current.delete(key);
     const existing = findLiveComparison(queueRef.current, key);
     if (existing) {
-      if (existing.status === 'ready') openWhenReady(existing.id); // already done → just open it
+      if (existing.status === 'ready' && !resumed) openWhenReady(existing.id); // already done → just open it
       return; // already queued/generating → don't duplicate
     }
-    if (!cached && !isOnlineRef.current) {
+    if (!cached && !resumed && !isOnlineRef.current) {
       showNotice(OFFLINE_COMPARE);
       return;
     }
     const id = `q-${++queueIdCounter}`;
     log('⚖️ Queue: comparing "' + clean.join(' vs ') + '"' + (cached ? ' (saved)' : ''));
     setQueue(queueUpdate({ type: 'add-compare', id, words: clean, cached }));
-    if (cached) openWhenReady(id); // saved comparison → open instantly in the popup
+    if (cached && !resumed) openWhenReady(id); // saved comparison → open instantly in the popup
   }, [queueRef, isOnlineRef, openWhenReady, showNotice]);
+
+  // Runs a request kept from before: one whose session expired, after signing in again (the OAuth redirect keeps
+  // sessionStorage), or one a reload interrupted. It runs as it was asked for, scan, lookup or comparison, and never
+  // opens by itself: its result waits on the search button like any other.
+  const resume = useCallback((request: SearchRequest) => {
+    if (request.kind === 'scan') {
+      scan(request.query);
+    } else if (request.kind === 'analyze') {
+      enqueue(request.query, { forceAI: request.forceAI, analyzeMode: request.analyzeMode, openOnReady: 'never' });
+    } else if (onCompare) {
+      resumingComparisonsRef.current.add(comparisonKey(request.words));
+      onCompare(request.words);
+    } else {
+      resumingComparisonsRef.current.add(comparisonKey(request.words));
+      enqueueCompare({ words: request.words, cached: null });
+    }
+  }, [scan, enqueue, onCompare, enqueueCompare]);
+
+  // What a reload would lose is kept as it changes (see pendingRequestsOf), and the list from before this load is read
+  // first, so the first write can't erase it. On mount, that list and a retry kept from an expired session run once.
+  const [interrupted] = useState(() => readPendingLookups(Date.now()));
+  useEffect(() => { writePendingLookups(pendingRequestsOf(queue, Date.now())); }, [queue]);
+  const resumedRef = useRef(false);
+  useEffect(() => {
+    if (resumedRef.current) return;
+    resumedRef.current = true;
+    const retry = consumeSearchRetry();
+    const seen = new Set<string>();
+    for (const request of retry ? [retry, ...interrupted] : interrupted) {
+      const key = request.kind === 'compare' ? `compare ${comparisonKey(request.words)}` : `${request.kind} ${request.query.trim().toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      resume(request);
+    }
+  }, [interrupted, resume]);
 
   // What every AI lookup reads and changes beyond its own queue entry (see runLookup). The library is read through a
   // ref, as it is when a request settles, not as it was when the request started. The audio is generated if it
@@ -195,7 +237,7 @@ export function useSearchQueue({
       }).catch(err => {
         warn('🔍 Sentence scan failed "' + q + '":', (err as Error | undefined)?.message);
         setQueue(queueUpdate({ type: 'fail', id: itemId, failure: failureOf({ kind: 'scan', label: q }, err, Date.now()) }));
-        if (isAuthenticationError(err)) rememberSearchRetry({ query: q });
+        if (isAuthenticationError(err)) rememberSearchRetry(requestOf(item));
       }).finally(done);
       return;
     }
@@ -210,6 +252,7 @@ export function useSearchQueue({
       }).catch(err => {
         warn('⚖️ Queue: compare failed "' + item.query + '":', err?.message);
         setQueue(queueUpdate({ type: 'fail', id: itemId, failure: failureOf({ kind: 'comparison', label: item.query }, err, Date.now()) }));
+        if (isAuthenticationError(err)) rememberSearchRetry(requestOf(item));
       }).finally(done);
       return;
     }
@@ -243,7 +286,9 @@ export function useSearchQueue({
       showFailure: () => setQueue(queueUpdate({
         type: 'fail', id: itemId, failure: failureOf({ kind: 'analysis', label: item.query }, request.kept.error, Date.now()),
       })),
-      showError: () => {}, // runLookup's toast: the entry's failure is what the error toast shows
+      // runLookup words a toast here, which the entry's failure replaces; it has just kept a lookup whose session
+      // expired as a refresh, so the request it really was is kept over it, to run as itself after signing in.
+      showError: () => { if (isAuthenticationError(request.kept.error)) rememberSearchRetry(requestOf(item)); },
     }).finally(done);
   }, [findSavedByWord, lookupEffects, showStatus, enqueue, onCompareReady, openWhenReady, queueRef]);
 

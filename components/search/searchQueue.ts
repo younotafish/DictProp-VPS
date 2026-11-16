@@ -1,5 +1,5 @@
 import { comparisonKey, type ComparisonResult, type SearchResult, type VocabCard } from '../../types';
-import type { SearchFailure } from '../../services/searchRecovery';
+import type { PendingRequest, SearchFailure, SearchRequest } from '../../services/searchRecovery';
 
 /**
  * The search queue as data: every lookup, comparison and sentence scan the search button runs, and the state changes
@@ -44,8 +44,9 @@ export interface QueueItem {
 
 /**
  * When a lookup's result opens in the sheet by itself: 'saved-hit' only when the library answers it at once (a lookup
- * asked for directly), 'any' as soon as it's ready (a refresh), 'never' (an expression a scan found). Other results
- * wait for the user, on the search button.
+ * asked for directly), 'any' as soon as it's ready (a refresh), 'never' (an expression a scan found, or a request run
+ * again after signing in or a reload). Other results wait for the user, on the search button. A retry keeps the
+ * entry's policy.
  */
 export type OpenPolicy = 'saved-hit' | 'any' | 'never';
 
@@ -275,6 +276,28 @@ export function nextFailureExpiry(queue: readonly QueueItem[], now: number): num
   }
   return next;
 }
+
+/** The request an entry stands for, to run it again: its query and mode, never its result or the sentence it came from. */
+export function requestOf(item: QueueItem): SearchRequest {
+  if (item.kind === 'scan') return { kind: 'scan', query: item.query };
+  if (item.kind === 'compare') return { kind: 'compare', words: item.words || [] };
+  return {
+    kind: 'analyze',
+    query: item.query,
+    ...(item.analyzeMode ? { analyzeMode: item.analyzeMode } : {}),
+    ...(item.forceAI ? { forceAI: true } : {}),
+  };
+}
+
+/**
+ * What a reload would lose, in the order it was asked for: the lookups and comparisons still running or whose results
+ * haven't been seen, and the scans still running (a finished scan's expressions are lookups of their own). Each goes
+ * with when its request went out, or `now` for one that hasn't yet or never needed one.
+ */
+export const pendingRequestsOf = (queue: readonly QueueItem[], now: number): PendingRequest[] =>
+  queue
+    .filter(item => isRunning(item) || (item.status === 'ready' && item.kind !== 'scan' && !item.seen))
+    .map(item => ({ request: requestOf(item), at: item.startedAt ?? now }));
 
 /** The comparison of the word set `key` (a comparisonKey) that's queued, running or ready, if any. */
 export const findLiveComparison = (queue: readonly QueueItem[], key: string): QueueItem | undefined =>

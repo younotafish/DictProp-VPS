@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   PASSING_FAILURE_MS, classifyEnqueue, createRefreshLog, findLiveComparison, findLiveLookup, hasLiveDuplicate, isBusyOf, isQueued,
-  nextFailureExpiry, openIndexForResults, queueUpdate, readyItemsOf, runningCountOf, savedCardsResult, searchQueueReducer,
-  summarizeFailures, unseenReadyCount, type QueueAction, type QueueItem,
+  nextFailureExpiry, openIndexForResults, pendingRequestsOf, queueUpdate, readyItemsOf, requestOf, runningCountOf,
+  savedCardsResult, searchQueueReducer, summarizeFailures, unseenReadyCount, type QueueAction, type QueueItem,
 } from '../../components/search/searchQueue.ts';
 import { comparisonKey, type ComparisonResult, type SearchResult, type VocabCard } from '../../types.ts';
 import type { SearchFailure } from '../../services/searchRecovery.ts';
@@ -432,4 +432,42 @@ test('a failed comparison gives way to the same comparison asked for again, so a
   const queue = run([{ type: 'add-compare', id: 'q-1', words: ['fable', 'parable'], cached: null }, fail('q-1'), add('q-2', 'gamut'), fail('q-2')]);
   const again = searchQueueReducer(queue, { type: 'add-compare', id: 'q-3', words: ['Parable', 'fable'], cached: null });
   assert.deepEqual(again.map(item => [item.id, item.status]), [['q-2', 'failed'], ['q-3', 'pending']]);
+});
+
+test('each entry stands for the request that runs it again: its query and mode, never its result', () => {
+  const queue = run([
+    ...ready('q-1', 'gamut'),
+    add('q-2', 'run the gamut', { analyzeMode: 'batch', scanId: 'q-9', openOnReady: 'never' }),
+    add('q-3', 'impasse', { forceAI: true, openOnReady: 'any' }),
+    { type: 'add-compare', id: 'q-4', words: ['fable', 'parable'], cached: comparison(['fable', 'parable']) },
+    { type: 'add-scan', id: 'q-5', query: SENTENCE },
+  ]);
+  assert.deepEqual(queue.map(requestOf), [
+    { kind: 'analyze', query: 'gamut' },
+    { kind: 'analyze', query: 'run the gamut', analyzeMode: 'batch' },
+    { kind: 'analyze', query: 'impasse', forceAI: true },
+    { kind: 'compare', words: ['fable', 'parable'] },
+    { kind: 'scan', query: SENTENCE },
+  ]);
+});
+
+test('a reload would lose the requests still running and the results not seen yet, with when each went out', () => {
+  const queue = run([
+    add('q-1', 'gamut'), start('q-1', 1_000),
+    add('q-2', 'impasse'),
+    ...ready('q-3', 'rot'), { type: 'mark-seen', id: 'q-3' },
+    ...ready('q-4', 'tangent'),
+    add('q-5', 'qwxzv'), fail('q-5'),
+    { type: 'add-scan', id: 'q-6', query: SENTENCE }, start('q-6', 2_000),
+    { type: 'add-scan', id: 'q-7', query: 'A finished sentence, with its expressions queued.' }, { type: 'scan-done', id: 'q-7', found: 1, at: 3 },
+    { type: 'add-compare', id: 'q-8', words: ['fable', 'parable'], cached: comparison(['fable', 'parable']) },
+  ]);
+  assert.deepEqual(pendingRequestsOf(queue, 9_000), [
+    { request: { kind: 'analyze', query: 'gamut' }, at: 1_000 },
+    { request: { kind: 'analyze', query: 'impasse' }, at: 9_000 },
+    { request: { kind: 'analyze', query: 'tangent' }, at: 9_000 },
+    { request: { kind: 'scan', query: SENTENCE }, at: 2_000 },
+    { request: { kind: 'compare', words: ['fable', 'parable'] }, at: 9_000 },
+  ]);
+  assert.deepEqual(pendingRequestsOf([], 0), []);
 });
