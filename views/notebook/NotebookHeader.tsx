@@ -1,6 +1,6 @@
 import React from 'react';
 import { ArrowDownAZ, Filter, Layers, Scale, Sparkles, Type, WifiOff } from 'lucide-react';
-import type { AppUser } from '../../types';
+import type { AuthUser } from '../../services/auth';
 import { filterNoun, type NotebookFilter, type NotebookSort } from '../../services/notebookList';
 import { UserMenu } from '../../components/UserMenu';
 
@@ -23,9 +23,10 @@ interface NotebookHeaderProps {
   onCycleFilter: () => void;
   sortMode: NotebookSort;
   onCycleSort: () => void;
-  user: AppUser | null;
-  onSignIn: () => void;
-  onSignOut: () => void;
+  user: AuthUser;
+  /** Resolves false when the server couldn't be reached and the session was kept. */
+  onSignOut: () => Promise<boolean>;
+  onViewRefusedReviews: () => void;
   /** Under the title row: the search bar and a running batch import's progress. */
   children: React.ReactNode;
 }
@@ -33,7 +34,7 @@ interface NotebookHeaderProps {
 /** The notebook's sticky header: its title and counts, the toolbar, and the search bar below them. */
 export const NotebookHeader: React.FC<NotebookHeaderProps> = ({
   headerRef, savedCount, reviewedToday, toReviewCount, isOnline, toolsMenu, empty, compareMode, onToggleCompare,
-  filterMode, onCycleFilter, sortMode, onCycleSort, user, onSignIn, onSignOut, children,
+  filterMode, onCycleFilter, sortMode, onCycleSort, user, onSignOut, onViewRefusedReviews, children,
 }) => (
   <div ref={headerRef} className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200/50 transition-transform duration-300">
     <div className="px-4 sm:px-6 py-4 flex justify-between items-center gap-3">
@@ -85,18 +86,14 @@ export const NotebookHeader: React.FC<NotebookHeaderProps> = ({
             <WifiOff size={14} />
           </div>
         )}
-        {user && (
-          <>
-            <div className="hidden md:block h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
-            <div className="shrink-0">
-              <UserMenu
-                user={user}
-                onSignIn={onSignIn}
-                onSignOut={onSignOut}
-              />
-            </div>
-          </>
-        )}
+        <div className="hidden md:block h-4 w-[1px] bg-slate-200 mx-1 shrink-0"></div>
+        <div className="shrink-0">
+          <UserMenu
+            user={user}
+            onSignOut={onSignOut}
+            onViewRefusedReviews={onViewRefusedReviews}
+          />
+        </div>
       </div>
     </div>
     {children}

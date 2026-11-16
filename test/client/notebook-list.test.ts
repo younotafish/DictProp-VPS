@@ -419,7 +419,8 @@ test('the header line names what the filter lists, then reviewed today and to re
   const header = (savedCount: number, filterMode: NotebookFilter) => renderToStaticMarkup(createElement(NotebookHeader, {
     headerRef: null, savedCount, reviewedToday: 12, toReviewCount: 340, isOnline: true, toolsMenu: null, empty: false,
     compareMode: false, onToggleCompare: noop, filterMode, onCycleFilter: noop, sortMode: 'familiarity',
-    onCycleSort: noop, user: null, onSignIn: noop, onSignOut: noop, children: null,
+    onCycleSort: noop, user: { id: 'u1', email: 'me@example.com', displayName: null, photoUrl: null, isAdmin: false },
+    onSignOut: async () => false, onViewRefusedReviews: noop, children: null,
   }));
   const line = (text: string) => `<p class="text-xs text-slate-500 font-medium truncate">${text}</p>`;
   assert.ok(header(1532, 'vocab').includes(line('1532 words · 12 reviewed today · 340 to review')));

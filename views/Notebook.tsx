@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, startTransition } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
-import { getItemTitle, type AppUser, type ItemGroup, type StoredItem, type SyncStatus, type VocabCard } from '../types';
+import { getItemTitle, type ItemGroup, type StoredItem, type SyncStatus, type VocabCard } from '../types';
+import type { AuthUser } from '../services/auth';
 import { TextAnalyzer } from '../components/TextAnalyzer';
 import { BatchImport } from '../components/BatchImport';
 import { JSONImport } from '../components/JSONImport';
@@ -43,9 +44,11 @@ interface NotebookProps {
   onDelete: (id: string) => void;
   onSearch: (text: string) => void;
   onViewDetail: (groups: ItemGroup[], groupIndex: number, itemIndex: number) => void;
-  user: AppUser | null;
-  onSignIn: () => void;
-  onSignOut: () => void;
+  user: AuthUser;
+  /** Resolves false when the server couldn't be reached and the session was kept. */
+  onSignOut: () => Promise<boolean>;
+  /** Opens the list of reviews the server refused. */
+  onViewRefusedReviews: () => void;
   syncStatus: SyncStatus;
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
   onForceSync: () => void;
@@ -76,7 +79,7 @@ interface NotebookProps {
 
 export const NotebookView: React.FC<NotebookProps> = ({
     items, onDelete, onSearch, onViewDetail,
-    user, onSignIn, onSignOut, syncStatus, onScroll, onForceSync, isOnline,
+    user, onSignOut, onViewRefusedReviews, syncStatus, onScroll, onForceSync, isOnline,
     isVocabSaved, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
     onBatchImport, batchImportProgress, onJSONImported,
@@ -444,8 +447,8 @@ export const NotebookView: React.FC<NotebookProps> = ({
         sortMode={sortMode}
         onCycleSort={() => setSortMode(nextNotebookSort)}
         user={user}
-        onSignIn={onSignIn}
         onSignOut={onSignOut}
+        onViewRefusedReviews={onViewRefusedReviews}
       >
         {/* Search Bar - swipe right to clear. An empty notebook's box is in its invitation instead. */}
         {hasSavedItems && (

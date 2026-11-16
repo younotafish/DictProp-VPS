@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import type { ViewState } from './types';
 import { Loader2 } from 'lucide-react';
 import { lazyLoadImage } from './services/libraryImages';
@@ -143,10 +143,6 @@ function SignedInApp({ user }: { user: AuthUser }) {
   } = actions;
   const { batchImportProgress, handleBatchImport } = useBatchImport(library, overlays, actions, speech);
 
-  const notebookUser = useMemo(
-    () => ({ uid: user.id, displayName: user.displayName, photoURL: user.photoUrl, email: user.email }),
-    [user],
-  );
   const { fetchSensesForWord, saveVocabSense } = useSenseLookup(handleSave);
 
   // Search handler - triggers GlobalSearch popup (bottom-right search icon)
@@ -290,9 +286,9 @@ function SignedInApp({ user }: { user: AuthUser }) {
             onDelete={handleDelete}
             onSearch={handleRecursiveSearch}
             onViewDetail={handleViewStoredItem}
-            user={notebookUser}
-            onSignIn={loginRedirect}
+            user={user}
             onSignOut={handleSignOut}
+            onViewRefusedReviews={openRefusedReviews}
             syncStatus={syncStatus}
             onScroll={handleScroll}
             onForceSync={handleForceSync}
@@ -422,7 +418,7 @@ const App: React.FC = () => {
     const preloadRest = () => {
       for (const screen of [
         DetailView, ...Object.values(TAB_SCREENS), CardReviewPopup, ConfirmModal, DuplicatesModal, KeyboardHelpModal,
-        SignInScreen, LibraryReadFailedScreen,
+        RefusedReviewsDialog, SignInScreen, LibraryReadFailedScreen,
       ]) {
         screen.preload();
       }

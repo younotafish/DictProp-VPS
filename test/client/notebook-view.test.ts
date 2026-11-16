@@ -9,8 +9,9 @@ import { NotebookView } from '../../views/Notebook.tsx';
 const noop = () => {};
 const render = (items: StoredItem[], extra: Partial<ComponentProps<typeof NotebookView>> = {}) =>
   renderToStaticMarkup(createElement(NotebookView, {
-    items, user: { uid: 'owner', displayName: 'Ji Song' }, isOnline: true, syncStatus: 'idle', hasOverlay: false,
-    onDelete: noop, onSearch: noop, onViewDetail: noop, onSignIn: noop, onSignOut: noop, onScroll: noop,
+    items, user: { id: 'owner', email: 'owner@example.com', displayName: 'Ji Song', photoUrl: null, isAdmin: true },
+    isOnline: true, syncStatus: 'idle', hasOverlay: false, onDelete: noop, onSearch: noop, onViewDetail: noop,
+    onSignOut: async () => false, onViewRefusedReviews: noop, onScroll: noop,
     onForceSync: noop, isVocabSaved: () => false, onFindDuplicates: noop, onArchive: noop, onUnarchive: noop,
     onSave: noop, onCompare: noop, onSaveSentence: noop, isSentenceSaved: () => false, onBatchImport: noop,
     batchImportProgress: null, onJSONImported: noop, onGenerateAllSpeech: noop, ttsGenProgress: null,

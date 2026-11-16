@@ -2,64 +2,63 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ConfirmModal } from './ConfirmModal';
 import { AlertTriangle, Loader2, LogOut, User as UserIcon } from 'lucide-react';
-import { AppUser } from '../types';
+import type { AuthUser } from '../services/auth';
 import { useRefusedReviews } from './RefusedReviews';
-import { RefusedReviewsDialog } from './RefusedReviewsDialog';
 
 interface Props {
-  /** The signed-in account: the menu shows only while there is one. */
-  user: AppUser;
-  /** @deprecated Unused, since the menu shows only to someone signed in; Notebook still passes it. */
-  onSignIn?: () => void;
+  /** The signed-in account. */
+  user: AuthUser;
   /** Resolves false when the server couldn't be reached and the session was kept (services/auth logout). */
-  onSignOut: () => void | Promise<boolean | void>;
+  onSignOut: () => Promise<boolean>;
+  /** Opens the list of reviews the server refused, App's dialog. */
+  onViewRefusedReviews: () => void;
 }
 
 // Avatar with offline fallback
-const UserAvatar: React.FC<{ photoURL?: string | null; displayName?: string | null }> = ({ photoURL, displayName }) => {
+const UserAvatar: React.FC<{ photoUrl: string | null; displayName: string | null }> = ({ photoUrl, displayName }) => {
   const [imgError, setImgError] = useState(false);
-  
+
   // Show icon fallback if no photo URL or image failed to load
-  if (!photoURL || imgError) {
+  if (!photoUrl || imgError) {
     return (
       <div className="w-6 h-6 rounded-full flex items-center justify-center bg-indigo-100 text-indigo-600">
         <UserIcon size={14} />
       </div>
     );
   }
-  
+
   return (
-    <img 
-      src={photoURL} 
-      alt={displayName || 'Profile'} 
-      className="w-6 h-6 rounded-full bg-slate-100" 
+    <img
+      src={photoUrl}
+      alt={displayName || 'Profile'}
+      className="w-6 h-6 rounded-full bg-slate-100"
       onError={() => setImgError(true)}
     />
   );
 };
 
-export const UserMenu: React.FC<Props> = ({ user, onSignOut }) => {
+export const UserMenu: React.FC<Props> = ({ user, onSignOut, onViewRefusedReviews }) => {
   const [confirmingSignOut, setConfirmingSignOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
-  const refusedCount = useRefusedReviews(user.uid).entries.length;
-  const [showingRefused, setShowingRefused] = useState(false);
+  const refusedCount = useRefusedReviews(user.id).entries.length;
 
   const signOut = async () => {
     setConfirmingSignOut(false);
     setSigningOut(true);
-    let signedOut: boolean | void = false;
-    try { signedOut = await onSignOut(); } catch { /* treated as not signed out */ }
+    const signedOut = await onSignOut().catch(() => false);
     // Signing out reloads the page; if it didn't, the session was kept, so say why.
-    if (signedOut !== true) setSigningOut(false);
-    if (signedOut === false) setSignOutFailed(true);
+    if (!signedOut) {
+      setSigningOut(false);
+      setSignOutFailed(true);
+    }
   };
 
   return (
     <div className="flex items-center gap-1 flex-nowrap shrink-0">
       <div className="flex items-center gap-1.5 pl-1 pr-2 py-0.5">
-        <UserAvatar 
-          photoURL={user.photoURL} 
+        <UserAvatar
+          photoUrl={user.photoUrl}
           displayName={user.displayName}
         />
         <span className="text-xs font-medium text-slate-600 max-w-[60px] truncate hidden sm:inline">
@@ -68,7 +67,7 @@ export const UserMenu: React.FC<Props> = ({ user, onSignOut }) => {
       </div>
       {refusedCount > 0 && (
         <button
-          onClick={() => setShowingRefused(true)}
+          onClick={onViewRefusedReviews}
           className="relative w-11 h-11 shrink-0 flex items-center justify-center text-amber-500 hover:text-amber-700 hover:bg-amber-50 rounded-full transition-colors"
           title="Reviews the server refused"
           aria-label={`Reviews the server refused: ${refusedCount}`}
@@ -79,7 +78,7 @@ export const UserMenu: React.FC<Props> = ({ user, onSignOut }) => {
           </span>
         </button>
       )}
-      <button 
+      <button
         onClick={() => setConfirmingSignOut(true)}
         disabled={signingOut}
         className="w-11 h-11 shrink-0 flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors disabled:opacity-50"
@@ -98,10 +97,6 @@ export const UserMenu: React.FC<Props> = ({ user, onSignOut }) => {
           onConfirm={signOut}
           onCancel={() => setConfirmingSignOut(false)}
         />,
-        document.body,
-      )}
-      {showingRefused && createPortal(
-        <RefusedReviewsDialog userId={user.uid} onClose={() => setShowingRefused(false)} />,
         document.body,
       )}
       {signOutFailed && createPortal(
