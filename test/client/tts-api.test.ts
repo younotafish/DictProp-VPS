@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { fetchCachedTTS, fetchCachedTTSTimings, ttsKey } from '../../services/api/tts.ts';
+import { GENERATE_MAX_ITEMS } from '../../server/src/shared/ai-limits.ts';
+import { fetchCachedTTS, fetchCachedTTSTimings, requestTTSGeneration, ttsKey } from '../../services/api/tts.ts';
 
 // The cached-clip requests only need fetch; each test scripts the server's answer.
 const realFetch = globalThis.fetch;
@@ -50,4 +51,20 @@ test('a clip key is the SHA-256 of the voice, a newline and the trimmed text, as
   // The digests server/test/tts-cache.test.ts pins for the server's ttsKey: a change on either side fails one test.
   assert.equal(await ttsKey('Hello there.', 'Mia'), '34a7fda7ef25705c6b91e942cfa7f3ee00e54fc69077e90d38e3fc19feb04474');
   assert.equal(await ttsKey('Hello there.', 'casual'), 'd32c1ac7577ce5d329f49b606bcc9e6ccb7b4fe22541ae2fbcc95d4f4e0a12b1');
+});
+
+test('a generation request goes out in chunks of the most clips the server takes at once, and the counts add up', async () => {
+  const chunks: Array<Array<{ text: string; voice?: string }>> = [];
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    assert.equal(url, '/api/tts/generate');
+    assert.equal(init?.method, 'POST');
+    const { items } = JSON.parse(String(init?.body)) as { items: Array<{ text: string; voice?: string }> };
+    chunks.push(items);
+    return Response.json({ generated: items.length - 1, skipped: 1, failed: 0 });
+  }) as typeof fetch;
+
+  const items = Array.from({ length: GENERATE_MAX_ITEMS * 2 + 1 }, (_, index) => ({ text: `Sentence ${index}.`, voice: 'Mia' }));
+  assert.deepEqual(await requestTTSGeneration(items), { generated: items.length - 3, skipped: 3, failed: 0 });
+  assert.deepEqual(chunks.map(chunk => chunk.length), [GENERATE_MAX_ITEMS, GENERATE_MAX_ITEMS, 1]);
+  assert.deepEqual(chunks.flat(), items, 'every clip once, in order');
 });

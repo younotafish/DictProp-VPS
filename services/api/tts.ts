@@ -1,3 +1,4 @@
+import { GENERATE_MAX_ITEMS } from '../../server/src/shared/ai-limits';
 import { fetchWithin, jsonRequest, requestJson } from '../http';
 import { sha256Hex } from '../sha256';
 
@@ -52,9 +53,8 @@ export const fetchCachedTTSTimings = async (key: string, timeoutMs = TTS_TIMINGS
   }
 };
 
-// The server takes at most 40 clips per request and answers once their audio is stored (three at a
-// time, a few seconds each), so a full request needs well over the default 30 s.
-const TTS_GENERATE_CHUNK = 40;
+// The server takes at most GENERATE_MAX_ITEMS clips per request and answers once their audio is stored (three
+// at a time, a few seconds each), so a full request needs well over the default 30 s.
 const TTS_GENERATE_TIMEOUT_MS = 180_000;
 
 /** Ask the server to generate + cache clips (used by the live cache-miss trigger and the bulk sweep). */
@@ -62,10 +62,10 @@ export const requestTTSGeneration = async (
   items: Array<{ text: string; voice?: string }>
 ): Promise<{ generated: number; skipped: number; failed: number }> => {
   const total = { generated: 0, skipped: 0, failed: 0 };
-  for (let start = 0; start < items.length; start += TTS_GENERATE_CHUNK) {
+  for (let start = 0; start < items.length; start += GENERATE_MAX_ITEMS) {
     const result = await requestJson<{ generated?: number; skipped?: number; failed?: number }>(
       '/api/tts/generate',
-      jsonRequest('POST', { items: items.slice(start, start + TTS_GENERATE_CHUNK) }),
+      jsonRequest('POST', { items: items.slice(start, start + GENERATE_MAX_ITEMS) }),
       'Generate TTS',
       TTS_GENERATE_TIMEOUT_MS,
     );

@@ -1,3 +1,4 @@
+import { ANALYSIS_BUDGET_MS, COMPARE_BUDGET_MS, EXTRACT_BUDGET_MS, TRANSCRIBE_BUDGET_MS } from '../../server/src/shared/ai-limits';
 import type { ComparisonResult, SearchResult, VocabCard } from '../../types';
 import { bytesToBase64 } from '../dataUri';
 import { HttpError, jsonRequest, requestJson } from '../http';
@@ -9,13 +10,13 @@ import { textOrEmpty } from './json';
 
 // The AI routes: analysis, vocabulary scans, transcription and comparisons.
 
-// Each AI route has an overall time budget on the server (server/src/routes/ai.ts: analysis 300 s,
-// comparison 600 s, extraction 240 s, transcription 30 s). Wait 30 s longer, so the server's own 504
-// with its message arrives before the client gives up.
-const ANALYZE_TIMEOUT_MS = 330_000;
-const COMPARE_TIMEOUT_MS = 630_000;
-const EXTRACT_TIMEOUT_MS = 270_000;
-const TRANSCRIBE_TIMEOUT_MS = 60_000;
+// Each AI route has an overall time budget on the server (server/src/shared/ai-limits.ts). Wait 30 s longer, so
+// the server's own 504 with its message arrives before the client gives up.
+const SERVER_ANSWER_MARGIN_MS = 30_000;
+const ANALYZE_TIMEOUT_MS = ANALYSIS_BUDGET_MS + SERVER_ANSWER_MARGIN_MS;
+const COMPARE_TIMEOUT_MS = COMPARE_BUDGET_MS + SERVER_ANSWER_MARGIN_MS;
+const EXTRACT_TIMEOUT_MS = EXTRACT_BUDGET_MS + SERVER_ANSWER_MARGIN_MS;
+const TRANSCRIBE_TIMEOUT_MS = TRANSCRIBE_BUDGET_MS + SERVER_ANSWER_MARGIN_MS;
 
 // A 429 carries a machine-readable token: QUOTA_EXCEEDED (billing — callers show a quota message) or
 // RATE_LIMITED (transient). Every other failure stays an HttpError with the server's message.
