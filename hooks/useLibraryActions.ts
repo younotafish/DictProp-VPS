@@ -3,7 +3,7 @@ import { getItemSpelling, getItemTitle, isPhraseItem, isVocabItem, type SearchRe
 import { IMAGE_IDB_MARKER, attachImage, extractInlineImages, offloadImages, restoreInlineImages, unsavedImages } from '../services/libraryImages';
 import { makeVocabStoredItem, saveOverExisting } from '../services/items';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
-import { unarchiveUndo } from '../services/undoRules';
+import { planReset, unarchiveUndo } from '../services/undoRules';
 import { log, logError, warn } from '../services/logger';
 import type { DetailViewState } from './useDetailView';
 import type { Library } from './useLibrary';
@@ -220,18 +220,24 @@ export function useLibraryActions(
     });
   }, [handleSave]);
 
-  // Reset only this sense/item. Different meanings now keep independent FSRS schedules. False when the
-  // item isn't in the library.
+  // Reset only this sense/item. Different meanings now keep independent FSRS schedules. False when the item isn't
+  // in the library, and the caller saves a fresh copy instead; true when handled, which includes leaving a card
+  // deleted here or on another device deleted, and changing nothing on one never reviewed (services/undoRules).
   const resetSRS = useCallback((id: string): boolean => {
     const target = latestItemsRef.current.find(i => i.data.id === id);
-    if (!target) return false;
+    const plan = planReset(target);
+    if (plan === 'missing') return false;
+    if (plan !== 'reset' || !target) return true;
     const srs = SRSAlgorithm.reset(target.data.id, target.type);
-    handleSave({ ...target, srs });
+    const reset = replaceItem(id, item => ({ ...item, srs, updatedAt: Date.now() }));
+    if (!reset) return true;
+    // The offer first, so the reset is held on this device when the push below runs.
     offerUndo('Reset', target, item => item.srs?.lastReviewDate === srs.lastReviewDate && !item.srs.totalReviews
       ? { ...item, srs: target.srs, updatedAt: target.updatedAt }
       : item);
+    void persistChangedItems([reset], 'Reset');
     return true;
-  }, [handleSave, offerUndo]);
+  }, [latestItemsRef, replaceItem, persistChangedItems, offerUndo]);
 
   return {
     handleSave, handleAttachSentenceImage, handleDelete, handleArchive, handleRemoveVocabFromPhrase, handleUnarchive,

@@ -1,9 +1,26 @@
-import type { StoredItem } from '../types';
+import type { SRSData, StoredItem } from '../types';
 import { acceptKeyRepeat } from '../components/keyboardTarget';
 
 // The rules for what the undo pill takes back, and for its shortcut, apart from the hooks that apply them so node tests
 // can pin them. The app shell loads this module in its first chunk, so it stays small and imports nothing that isn't
 // already there.
+
+/** Whether resetting a schedule changes anything: only a card that has been reviewed has progress to lose. */
+export const shouldReset = (srs?: SRSData): boolean => (srs?.totalReviews ?? 0) > 0;
+
+/**
+ * What resetting `target`'s schedule does. 'missing': it isn't in the library, so the caller saves a fresh copy (a
+ * catalog sentence with no record yet). 'deleted': it was deleted, here or on another device, and stays deleted.
+ * 'nothing-to-reset': it has never been reviewed, so nothing changes, and an open undo offer stays open. 'reset': its
+ * schedule starts over.
+ */
+export type ResetPlan = 'missing' | 'deleted' | 'nothing-to-reset' | 'reset';
+
+export const planReset = (target: StoredItem | undefined): ResetPlan => {
+  if (!target) return 'missing';
+  if (target.isDeleted) return 'deleted';
+  return shouldReset(target.srs) ? 'reset' : 'nothing-to-reset';
+};
 
 /** Takes back an unarchive: archives the item again, as it was, unless something archived it meanwhile. */
 export const unarchiveUndo = (before: StoredItem) => (item: StoredItem): StoredItem =>
