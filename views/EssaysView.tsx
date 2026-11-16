@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import type { StoredItem } from '../types';
 import { indexEssayProgress } from '../services/essayProgress';
+import { readReadingPositions, writeReadingPosition, type ReadingPosition } from '../services/readingPosition';
 import { useListClock } from '../hooks/useNow';
 import { useEssayCatalog } from './reading/useEssayCatalog';
 import { EssayIndex } from './reading/EssayIndex';
@@ -11,10 +12,15 @@ interface EssaysViewProps {
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
   progressItems: StoredItem[];
   onScroll: (event: React.UIEvent<HTMLElement>) => void;
+  /**
+   * The signed-in user, whose reading positions this device keeps (services/readingPosition): each essay reopens where
+   * it was left, and the landing page offers to continue the last one. Without it no position is kept, as before.
+   */
+  userId?: string;
 }
 
 /** The Essays tab: the landing page, or the essay the user opened. */
-export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progressItems, onScroll }) => {
+export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progressItems, onScroll, userId }) => {
   const [selectedEssayId, setSelectedEssayId] = useState<string | null>(null);
   const { essays, status, retry } = useEssayCatalog();
   const selectedEssay = essays.find(essay => essay.id === selectedEssayId) ?? null;
@@ -28,6 +34,12 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
   }, [onOpenSentence, noteOpened]);
   // Back from an essay finds the landing page scrolled where it was left.
   const landingScroll = useRef(0);
+  // Where each essay was left, read as the tab opens (it opens for one signed-in user), so the Continue card is on the
+  // landing page from its first frame.
+  const [positions, setPositions] = useState<ReadingPosition[]>(() => (userId ? readReadingPositions(userId) : []));
+  const savePosition = useCallback((entry: ReadingPosition) => {
+    if (userId) setPositions(writeReadingPosition(userId, entry));
+  }, [userId]);
 
   if (!selectedEssay) {
     return (
@@ -40,6 +52,7 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
         onOpenEssay={setSelectedEssayId}
         onScroll={onScroll}
         scrollMemory={landingScroll}
+        readingPositions={positions}
       />
     );
   }
@@ -56,6 +69,8 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
       onScroll={onScroll}
       nextEssay={nextReading(essays, selectedEssay.id)}
       onOpenEssay={setSelectedEssayId}
+      initialPosition={positions.find(position => position.id === selectedEssay.id)}
+      onSavePosition={userId ? savePosition : undefined}
     />
   );
 };

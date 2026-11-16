@@ -1,4 +1,4 @@
-import React, { Fragment, useCallback, useMemo } from 'react';
+import React, { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { ArrowLeft, ArrowRight, Clock3, ExternalLink, Play } from 'lucide-react';
 import type { StoredItem } from '../../types';
 import { useEscapeLayer } from '../../components/escapeStack';
@@ -7,6 +7,15 @@ import { buildEssayStudyItems } from '../../services/essayProgress';
 import { summarizeCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress';
 import { buildCatalogQueue, studyButtonLabel } from '../../services/catalogQueue';
 import { sentenceReviewState, type SentenceReviewState } from '../../services/sentenceReviewState';
+import {
+  lastSentenceReached,
+  readingPosition,
+  returnTarget,
+  scrollTopToShow,
+  sentenceAtReadingLine,
+  type ReadingPosition,
+  type SentenceBox,
+} from '../../services/readingPosition';
 import { useLatest } from '../../hooks/useStableValue';
 import { essayStyle } from './essayStyle';
 
@@ -41,6 +50,7 @@ const EssayParagraph = React.memo(function EssayParagraph({
           <Fragment key={sentence.id}>
             <button
               type="button"
+              data-sentence-id={sentence.id}
               onClick={() => onOpenSentence(sentence)}
               className={`inline cursor-pointer rounded px-0.5 text-left text-inherit transition-colors hover:bg-indigo-100 hover:text-indigo-950 focus-visible:bg-indigo-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${stateClass}`}
               title={`Open sentence ${sentence.position} of ${sentenceCount}`}
@@ -66,6 +76,15 @@ interface EssayReaderProps {
   /** The next reading of the same publication (nextReading), linked at the end. */
   nextEssay?: Essay | null;
   onOpenEssay?: (essayId: string) => void;
+  /** Where this essay was left. Read as it opens: an essay not read to its end opens at that sentence. */
+  initialPosition?: ReadingPosition;
+  /** Keeps the place the reader leaves the essay at. Without it, no place is kept. */
+  onSavePosition?: (entry: ReadingPosition) => void;
+}
+
+/** A body sentence where it was measured in the reader's scrolled page. */
+interface MeasuredSentence extends SentenceBox {
+  id: string;
 }
 
 /**
@@ -81,6 +100,8 @@ export function EssayReader({
   onScroll,
   nextEssay,
   onOpenEssay,
+  initialPosition,
+  onSavePosition,
 }: EssayReaderProps) {
   const progress = useMemo(
     () => summarizeCatalogProgress(essay.sentences, progressIndex, now),
@@ -88,8 +109,9 @@ export function EssayReader({
   );
   const studyQueue = useMemo(() => buildCatalogQueue(essay.sentences, progressIndex, now), [essay, now, progressIndex]);
 
-  // Read when tapped, so the paragraphs' callback stays the same while progress changes.
-  const latest = useLatest({ essay, progressIndex, onOpenSentence });
+  // Read when a sentence is tapped and when the essay opens or is left, so the paragraphs' callback stays the same while
+  // progress changes.
+  const latest = useLatest({ essay, progressIndex, onOpenSentence, initialPosition, onSavePosition });
   const openSentence = useCallback((sentence: EssaySentence) => {
     const { essay, progressIndex, onOpenSentence } = latest.current;
     const index = essay.sentences.findIndex(candidate => candidate.id === sentence.id);
@@ -100,8 +122,78 @@ export function EssayReader({
     onOpenSentence(buildEssayStudyItems(studyQueue.sentences, progressIndex, Date.now()), 0);
   };
 
+  // Where the body sentences are in the scrolled page, measured once it is laid out and again after a resize, and where
+  // it is scrolled, so that leaving needn't measure anything (an unmounting page is already gone).
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const sentencesRef = useRef<MeasuredSentence[]>([]);
+  const viewRef = useRef({ scrollTop: 0, height: 0 });
+  // The scrollTop when the essay opened or its place was last kept: leaving from there keeps nothing new.
+  const keptAtRef = useRef(0);
+  const openedRef = useRef(false);
+  const measure = useCallback(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const contentTop = scroller.getBoundingClientRect().top - scroller.scrollTop;
+    sentencesRef.current = [...scroller.querySelectorAll<HTMLElement>('[data-sentence-id]')].map(button => {
+      const box = button.getBoundingClientRect();
+      return { id: button.dataset.sentenceId ?? '', top: box.top - contentTop, bottom: box.bottom - contentTop };
+    });
+    viewRef.current.height = scroller.clientHeight;
+  }, []);
+  // An essay not read to its end opens at the sentence it was left at, put on the reading line before the first paint;
+  // one read to its end opens at its title.
+  useLayoutEffect(() => {
+    measure();
+    const scroller = scrollerRef.current;
+    if (scroller && !openedRef.current) {
+      openedRef.current = true;
+      const { essay, initialPosition } = latest.current;
+      if (initialPosition && !initialPosition.f) {
+        const target = returnTarget({ id: initialPosition.s, position: initialPosition.p }, essay.sentences);
+        const box = sentencesRef.current.find(sentence => sentence.id === target?.id);
+        const top = box ? scrollTopToShow(box, 0, viewRef.current.height) : null;
+        if (top !== null) scroller.scrollTop = top;
+      }
+      viewRef.current.scrollTop = keptAtRef.current = scroller.scrollTop;
+    }
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [essay, latest, measure]);
+
+  // Leaving keeps the sentence on the reading line as the essay's place, if the page moved since it opened or since its
+  // place was last kept, and the reader has reached the text.
+  const keepPlace = useCallback(() => {
+    const { essay, onSavePosition } = latest.current;
+    const { scrollTop, height } = viewRef.current;
+    if (!onSavePosition || Math.abs(scrollTop - keptAtRef.current) < 1) return;
+    const sentences = sentencesRef.current;
+    const index = sentenceAtReadingLine(sentences, scrollTop, height);
+    const sentence = index < 0 ? undefined : essay.sentences.find(candidate => candidate.id === sentences[index].id);
+    if (!sentence) return;
+    keptAtRef.current = scrollTop;
+    onSavePosition(readingPosition(essay, sentence, lastSentenceReached(sentences, scrollTop, height), Date.now()));
+  }, [latest]);
+  // The app put away (closed, or another app in front) or the tab left, or the essay closed some other way.
+  useEffect(() => {
+    const keepWhenHidden = () => { if (document.visibilityState === 'hidden') keepPlace(); };
+    document.addEventListener('visibilitychange', keepWhenHidden);
+    return () => {
+      document.removeEventListener('visibilitychange', keepWhenHidden);
+      keepPlace();
+    };
+  }, [keepPlace]);
+  // Back, Esc and Next keep the place first, so the Essays page or the next reading opens with it already kept.
+  const back = () => {
+    keepPlace();
+    onBack();
+  };
+  const handleScroll = (event: React.UIEvent<HTMLElement>) => {
+    viewRef.current.scrollTop = event.currentTarget.scrollTop;
+    onScroll(event);
+  };
+
   // Esc goes back to the essays, unless a layer above (a lesson, a dialog, the search sheet) takes it first.
-  useEscapeLayer(onBack, 0);
+  useEscapeLayer(back, 0);
 
   const style = essayStyle[essay.accent];
 
@@ -111,7 +203,7 @@ export function EssayReader({
         <div className="mx-auto flex max-w-4xl items-center gap-3">
           <button
             type="button"
-            onClick={onBack}
+            onClick={back}
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-stone-100 hover:text-slate-900"
             title="Back to essays"
             aria-label="Back to essays"
@@ -135,7 +227,7 @@ export function EssayReader({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto" onScroll={onScroll}>
+      <div ref={scrollerRef} className="min-h-0 flex-1 overflow-y-auto" onScroll={handleScroll}>
         <article className={`mx-auto max-w-4xl px-5 pb-[calc(8rem+env(safe-area-inset-bottom))] pt-8 sm:px-10 sm:pt-14 ${style.reader}`}>
           <header className="mx-auto max-w-3xl border-b border-stone-300 pb-8 text-center sm:pb-10">
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-stone-500">{essay.eyebrow}</p>
@@ -186,7 +278,10 @@ export function EssayReader({
             <div className="mx-auto mt-12 max-w-3xl">
               <button
                 type="button"
-                onClick={() => onOpenEssay(nextEssay.id)}
+                onClick={() => {
+                  keepPlace();
+                  onOpenEssay(nextEssay.id);
+                }}
                 className="group flex min-h-12 w-full items-center justify-between gap-3 rounded-2xl border border-stone-200 bg-white px-4 py-3 text-left text-sm font-semibold text-stone-800 shadow-sm transition-colors hover:border-indigo-200 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 sm:text-base"
               >
                 <span className="min-w-0 truncate">Next: {nextEssay.title}</span>

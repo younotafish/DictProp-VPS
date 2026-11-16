@@ -4,9 +4,12 @@ import type { Essay } from '../../services/essayCatalog';
 import { summarizeCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress';
 import { dueNewLine } from '../../services/catalogQueue';
 import type { ReviewSummary } from '../../services/sentenceReviewState';
+import { continueCandidate, returnTarget, type ContinueReading, type ReadingPosition } from '../../services/readingPosition';
 import { essayStyle } from './essayStyle';
 import { groupModernEssays } from './essayGroups';
 import type { PrivateCatalogStatus } from './useEssayCatalog';
+
+const NO_POSITIONS: readonly ReadingPosition[] = [];
 
 const EssayTile: React.FC<{
   essay: Essay;
@@ -74,6 +77,36 @@ const EssayTile: React.FC<{
   );
 };
 
+/**
+ * The essay left most recently before its end, offered above the tiles. A private essay shows its stored title, and
+ * can't be opened, until the private catalog has loaded.
+ */
+const ContinueCard: React.FC<{ reading: ContinueReading<Essay>; onOpen: (essayId: string) => void }> = ({ reading, onOpen }) => {
+  const { entry, essay } = reading;
+  // The sentence it opens at: the one left at, or where the catalog put its place since.
+  const position = essay ? returnTarget({ id: entry.s, position: entry.p }, essay.sentences)?.position ?? entry.p : entry.p;
+  return (
+    <button
+      type="button"
+      onClick={essay ? () => onOpen(essay.id) : undefined}
+      disabled={!essay}
+      className="mb-7 flex w-full items-center gap-3 rounded-2xl border border-indigo-100 bg-white p-4 text-left shadow-sm transition hover:border-indigo-200 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60 disabled:hover:border-indigo-100 disabled:hover:shadow-sm sm:mb-9 sm:p-5"
+    >
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+        <BookOpenText size={19} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-500 sm:text-xs">Continue reading</span>
+        <span className="mt-0.5 block truncate text-sm font-semibold text-slate-900 sm:text-base">{essay?.title ?? entry.t}</span>
+        <span className="block text-xs tabular-nums text-slate-500">
+          Sentence {position} of {essay ? essay.sentences.length : entry.n}
+        </span>
+      </span>
+      <ArrowRight size={18} className="shrink-0 text-slate-400" />
+    </button>
+  );
+};
+
 interface EssayIndexProps {
   essays: readonly Essay[];
   catalogStatus: PrivateCatalogStatus;
@@ -84,6 +117,8 @@ interface EssayIndexProps {
   onScroll: (event: React.UIEvent<HTMLElement>) => void;
   /** Where the page is scrolled, kept while it's away (an essay open over it) and put back when it mounts again. */
   scrollMemory?: { current: number };
+  /** Where the essays were left, for the Continue card. */
+  readingPositions?: readonly ReadingPosition[];
 }
 
 /** The Essays landing page: the historical classics, then the private modern collection grouped by publication. */
@@ -96,6 +131,7 @@ export function EssayIndex({
   onOpenEssay,
   onScroll,
   scrollMemory,
+  readingPositions = NO_POSITIONS,
 }: EssayIndexProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -112,6 +148,10 @@ export function EssayIndex({
   const classicEssays = useMemo(() => essays.filter(essay => essay.collection === 'classic'), [essays]);
   const modernEssays = useMemo(() => essays.filter(essay => essay.collection === 'modern'), [essays]);
   const modernGroups = useMemo(() => groupModernEssays(modernEssays), [modernEssays]);
+  const continueReading = useMemo(
+    () => continueCandidate(readingPositions, essays, catalogStatus === 'ready'),
+    [readingPositions, essays, catalogStatus],
+  );
 
   return (
     <div ref={scrollerRef} className="h-full min-h-0 overflow-y-auto bg-slate-50" onScroll={handleScroll}>
@@ -128,6 +168,8 @@ export function EssayIndex({
             Historical American classics and a private modern collection, each preserved as a complete reading experience. Tap any sentence to hear it, unpack it, and memorize it in that essay’s own review queue.
           </p>
         </header>
+
+        {continueReading && <ContinueCard reading={continueReading} onOpen={onOpenEssay} />}
 
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
