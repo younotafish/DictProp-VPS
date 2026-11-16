@@ -1,4 +1,4 @@
-import { db, getItemById, hasItemImage, upsertItemImageBinary } from '../db.js';
+import { db, getItemById, hasItemImage, upsertItemImageBinary, type StoredItemRecord } from '../db.js';
 import { backupBeforeWrite, recordStale, StaleEntryError, writeOverLiveItem } from '../import-support.js';
 import {
   validateSentenceBackfillBundle,
@@ -55,7 +55,7 @@ const prepare = (entry: Entry): PreparedEntry => {
 // A savepoint per sentence, checked against its live row: the analysis is written over what is stored
 // now with the stored revision, and the image is stored only after that write went through cleanly.
 const importSentence = db.transaction(({ entry, image, mimeType, imageError }: PreparedEntry): Outcome => {
-  const live = getItemById(entry.id, owner.id, false) as any;
+  const live: StoredItemRecord | null = getItemById(entry.id, owner.id, false);
   if (!live || live.isDeleted) throw new StaleEntryError('sentence is missing or deleted');
   if (live.type !== 'sentence') throw new Error('item is no longer a sentence');
   const liveText = typeof live.data?.text === 'string' ? live.data.text : '';

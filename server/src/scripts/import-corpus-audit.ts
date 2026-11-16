@@ -1,5 +1,5 @@
 import { corpusAuditImportState, validateCorpusAuditBundle, type CorpusAuditBundle } from '../corpus-audit.js';
-import { getAllItems, upsertMany } from '../db.js';
+import { getAllItems, upsertMany, type ItemWrite } from '../db.js';
 import { backupBeforeWrite, recordStale } from '../import-support.js';
 import { isSentenceAnalysis } from '../sentence-analysis.js';
 import { validateStoredItem } from '../validation.js';
@@ -26,14 +26,15 @@ const result = {
   skipped: 0,
   errors: [] as Array<{ id: string; error: string }>,
 };
-const pending: any[] = [];
+// Each entry's whole item as the import writes it, beside the entry's id, which validation checked its data carries.
+const pending: Array<{ id: string; item: ItemWrite }> = [];
 const archivedForUsageById = new Set<string>();
 const archivedOnRequestById = new Set<string>();
 const unarchivedById = new Set<string>();
 const currentById = new Map(getAllItems(owner.id).map(item => [item.data.id, item]));
 for (const entry of bundle.entries) {
   try {
-    const current = currentById.get(entry.id) as any;
+    const current = currentById.get(entry.id);
     // An item deleted or edited since the export is skipped without failing the run; the next export has it.
     if (!current || current.isDeleted) {
       recordStale(result, entry.id);
@@ -84,7 +85,7 @@ for (const entry of bundle.entries) {
     };
     const itemError = validateStoredItem(candidate);
     if (itemError) throw new Error(itemError);
-    pending.push(candidate);
+    pending.push({ id: entry.id, item: candidate });
     if (!current.isArchived && nextArchived) {
       (entry.archiveForUsage ? archivedForUsageById : archivedOnRequestById).add(entry.id);
     }
@@ -95,8 +96,7 @@ for (const entry of bundle.entries) {
   }
 }
 
-const recordWrite = (candidate: any, conflicts: Set<string>) => {
-  const id = candidate.data.id;
+const recordWrite = (id: string, conflicts: Set<string>) => {
   if (conflicts.has(id)) {
     recordStale(result, id);
     return;
@@ -114,18 +114,18 @@ const writeOptions = { replaceServerFields: true };
 for (let index = 0; index < pending.length; index += 500) {
   const batch = pending.slice(index, index + 500);
   try {
-    const write = upsertMany(batch, owner.id, writeOptions);
+    const write = upsertMany(batch.map(({ item }) => item), owner.id, writeOptions);
     const conflicts = new Set(write.conflicts);
-    for (const candidate of batch) recordWrite(candidate, conflicts);
+    for (const { id } of batch) recordWrite(id, conflicts);
   } catch (batchError) {
     // Isolate a bad legacy record instead of losing every valid item in its transaction batch.
-    for (const candidate of batch) {
+    for (const { id, item } of batch) {
       try {
-        const write = upsertMany([candidate], owner.id, writeOptions);
-        recordWrite(candidate, new Set(write.conflicts));
+        const write = upsertMany([item], owner.id, writeOptions);
+        recordWrite(id, new Set(write.conflicts));
       } catch (error) {
         result.skipped++;
-        result.errors.push({ id: candidate.data.id, error: errorMessage(error || batchError) });
+        result.errors.push({ id, error: errorMessage(error || batchError) });
       }
     }
   }

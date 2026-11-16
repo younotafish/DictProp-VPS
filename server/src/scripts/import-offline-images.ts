@@ -1,7 +1,7 @@
 import { corpusSourceHash } from '../corpus-audit.js';
-import { db, getItemById, upsertItemImageBinary } from '../db.js';
+import { db, getItemById, upsertItemImageBinary, type StoredItemData, type StoredItemRecord } from '../db.js';
 import { backupBeforeWrite, recordStale, StaleEntryError, writeOverLiveItem } from '../import-support.js';
-import { localImageMarker } from '../incremental-enrichment.js';
+import { fieldsOf, localImageMarker } from '../incremental-enrichment.js';
 import { validateOfflineImageBundle, type OfflineImageBundle } from '../offline-image-import.js';
 import { errorMessage, readBundleImage, readBundleManifest, resolveInBundle } from './support/bundle.js';
 import { finishImport, requireOwner } from './support/run.js';
@@ -32,18 +32,22 @@ const readImage = (entry: Entry): PreparedEntry => {
   return { entry, ...readBundleImage(imagePath) };
 };
 
-const withImageMarkers = (data: any, entries: PreparedEntry[]) => {
+const withImageMarkers = (data: StoredItemData, entries: PreparedEntry[]): StoredItemData => {
   const markers = new Map<string, object>();
   for (const { entry } of entries) {
     if (!entry.promptHash) continue;
     markers.set(entry.imageId, localImageMarker(bundle.model, bundle.generatedAt, entry.promptHash));
   }
+  const markerFor = (id: unknown) => (typeof id === 'string' ? markers.get(id) : undefined);
   let next = markers.has(data.id) ? { ...data, localImageEnrichment: markers.get(data.id) } : data;
   if (Array.isArray(next.vocabs)) {
     next = {
       ...next,
-      vocabs: next.vocabs.map((vocab: any) =>
-        markers.has(vocab?.id) ? { ...vocab, localImageEnrichment: markers.get(vocab.id) } : vocab),
+      vocabs: next.vocabs.map((vocab: unknown) => {
+        const card = fieldsOf(vocab);
+        const marker = markerFor(card.id);
+        return marker ? { ...card, localImageEnrichment: marker } : vocab;
+      }),
     };
   }
   return next;
@@ -52,7 +56,7 @@ const withImageMarkers = (data: any, entries: PreparedEntry[]) => {
 // A savepoint per parent: its images are stored only together with the parent write that publishes
 // them. Image bytes live outside the item JSON, so that write also bumps the parent's revision once
 // and revision-delta clients receive the new content-hash marker and drop an older cached image.
-const publishImages = db.transaction((live: any, entries: PreparedEntry[]) => {
+const publishImages = db.transaction((live: StoredItemRecord, entries: PreparedEntry[]) => {
   writeOverLiveItem(live, owner.id, withImageMarkers(live.data, entries));
   for (const { entry, image, mimeType } of entries) {
     if (!upsertItemImageBinary(entry.imageId, image, mimeType, owner.id)) {
@@ -69,17 +73,15 @@ const applyChunk = db.transaction((parents: Array<[string, PreparedEntry[]]>) =>
   const stale: string[] = [];
   const failures: Failure[] = [];
   for (const [parentId, entries] of parents) {
-    const live = getItemById(parentId, owner.id, false) as any;
+    const live: StoredItemRecord | null = getItemById(parentId, owner.id, false);
     if (!live || live.isDeleted) {
       stale.push(...entries.map(({ entry }) => entry.imageId));
       continue;
     }
     // Every entry is checked before any marker is applied: the markers change this hash.
     const liveHash = corpusSourceHash(live.data);
-    const imageIds = new Set([
-      live.data.id,
-      ...(Array.isArray(live.data.vocabs) ? live.data.vocabs.map((vocab: any) => vocab?.id) : []),
-    ]);
+    const vocabs: readonly unknown[] = Array.isArray(live.data.vocabs) ? live.data.vocabs : [];
+    const imageIds = new Set([live.data.id, ...vocabs.map(vocab => fieldsOf(vocab).id)]);
     const ready = entries.filter(({ entry }) => {
       if (entry.parentHash !== liveHash) stale.push(entry.imageId);
       else if (!imageIds.has(entry.imageId)) failures.push({ id: entry.imageId, error: 'image id does not belong to parent item' });
