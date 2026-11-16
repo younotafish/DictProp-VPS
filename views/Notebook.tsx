@@ -119,7 +119,8 @@ export const NotebookView: React.FC<NotebookProps> = ({
   const {
     isSearching, searchResults, searchError, setSearchError, performAISearch, clearAISearch, submittedQueryRef,
   } = useNotebookAISearch(isOnline);
-  // The search box, which a drag of the list or a lookup from a phone's keyboard blurs to drop the keyboard.
+  // The search box, or an empty notebook's box in its invitation (the two never show together), which a tab reselect
+  // focuses, and a drag of the list or a lookup from a phone's keyboard blurs to drop the keyboard.
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [searchFocused, setSearchFocused] = useState(false);
 
@@ -537,7 +538,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
       ) : (
         // Typing stays on this screen, in the same box: its search opens the search sheet, where the first word
         // is saved.
-        <EmptyNotebook query={localSearchQuery} onQueryChange={changeQuery} />
+        <EmptyNotebook query={localSearchQuery} onQueryChange={changeQuery} inputRef={searchInputRef} />
       )}
 
       {/* Text Analyzer Modal */}

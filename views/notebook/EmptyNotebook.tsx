@@ -5,13 +5,15 @@ import { requestLookup } from '../../services/searchRequests';
 interface EmptyNotebookProps {
   query: string;
   onQueryChange: (query: string) => void;
+  /** The box, which a tap on the Notebook tab while it shows (or 1) focuses, as it focuses the search bar's. */
+  inputRef: React.Ref<HTMLInputElement>;
 }
 
 /**
  * The notebook with nothing saved in it, under its header: an invitation and a box to look up the first word. The
  * search looks the submitted text up as typed text, as its own box does, so a sentence is scanned for its expressions.
  */
-export const EmptyNotebook: React.FC<EmptyNotebookProps> = ({ query, onQueryChange }) => (
+export const EmptyNotebook: React.FC<EmptyNotebookProps> = ({ query, onQueryChange, inputRef }) => (
   <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8 text-center bg-slate-50">
     <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-6">
       <BookOpen size={32} className="text-indigo-300" />
@@ -28,6 +30,7 @@ export const EmptyNotebook: React.FC<EmptyNotebookProps> = ({ query, onQueryChan
         className="relative"
       >
         <input
+          ref={inputRef}
           type="text"
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createElement } from 'react';
+import { createElement, createRef, isValidElement, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HttpError, TimeoutError } from '../../services/http.ts';
 import {
@@ -62,7 +62,7 @@ test('both notebook boxes are search boxes: no capitals or autofill, and Return 
     isRecording: false, isTranscribing: false, isSearching: false, onToggleRecording: noop, onSearchWithAI: noop,
     onClear: noop, inputRef: null, onFocusChange: noop,
   }));
-  const empty = renderToStaticMarkup(createElement(EmptyNotebook, { query: '', onQueryChange: noop }));
+  const empty = renderToStaticMarkup(createElement(EmptyNotebook, { query: '', onQueryChange: noop, inputRef: null }));
   for (const html of [bar, empty]) {
     const input = html.match(/<input [^>]*>/)?.[0] ?? '';
     for (const attribute of ['autoComplete="off"', 'autoCapitalize="off"', 'enterKeyHint="search"']) {
@@ -72,4 +72,20 @@ test('both notebook boxes are search boxes: no capitals or autofill, and Return 
   // Offline, the wand still answers (with the offline banner) instead of sitting disabled.
   const wand = bar.match(/<button[^>]*aria-label="Search with AI"[^>]*>/)?.[0] ?? '';
   assert.ok(wand && !wand.includes('disabled'), wand);
+});
+
+test('the empty notebook\'s box takes the ref a tap on the Notebook tab focuses, as the search bar\'s box does', () => {
+  // EmptyNotebook uses no hooks, so calling it returns its elements; a server render would drop the ref.
+  const elements: ReactElement<Record<string, unknown>>[] = [];
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (!isValidElement<Record<string, unknown>>(node)) return;
+    elements.push(node);
+    walk(node.props.children);
+  };
+  const inputRef = createRef<HTMLInputElement>();
+  walk(EmptyNotebook({ query: '', onQueryChange: () => {}, inputRef }) as ReactNode);
+  const inputs = elements.filter(element => element.type === 'input');
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0].props.ref, inputRef);
 });
