@@ -63,7 +63,7 @@ function errorResponse(msg: string, status: number) {
 }
 
 // The request's JSON body when it is an object; null for malformed JSON or anything else (null, an array, a string).
-// server-core's http-body.ts is to export the same helper for every route.
+// A copy of readJsonObject in server-core's middleware/json-body.ts, which replaces it once the two are merged.
 async function readJsonObject(c: Context): Promise<Record<string, unknown> | null> {
   const body: unknown = await c.req.json().catch(() => null);
   return body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null;
