@@ -146,7 +146,7 @@ const SECTIONS: readonly ShortcutSection[] = [
       { keys: ['U'], label: 'Undo the last rating' },
       { keys: ['Space'], label: 'In an empty answer box: show the answer' },
       { keys: ['Mod', 'Z'], label: 'In an empty answer box: undo the last rating' },
-      { keys: ['Esc'], label: 'End the session early' },
+      { keys: ['Esc'], label: 'Leave the answer box; then end the session early, or close the summary' },
       { keys: ['R'], label: 'Resume an ended session' },
     ],
   },

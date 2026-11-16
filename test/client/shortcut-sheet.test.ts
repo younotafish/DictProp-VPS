@@ -80,7 +80,7 @@ test('each change that shipped with this release has its row', () => {
     [['Space'], 'In an empty answer box: show the answer'],
     [['⌘', 'Z'], 'In an empty answer box: undo the last rating'],
     [['Enter'], 'Start, or Done on the summary'],
-    [['Esc'], 'End the session early'],
+    [['Esc'], 'Leave the answer box; then end the session early, or close the summary'],
     [['R'], 'Resume an ended session'],
   ] as const) assert.ok(hasRow(at('study'), [...keys], label), label);
   // The search sheet's keys (UX-27), and Enter's deliberate lookup in the box (d9d042a).
