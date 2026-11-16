@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import type { StoredItem } from '../types';
 import { indexEssayProgress } from '../services/essayProgress';
 import { useListClock } from '../hooks/useNow';
@@ -25,6 +25,8 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
     onOpenSentence(ordered, index);
     noteOpened();
   }, [onOpenSentence, noteOpened]);
+  // Back from an essay finds the landing page scrolled where it was left.
+  const landingScroll = useRef(0);
 
   if (!selectedEssay) {
     return (
@@ -36,6 +38,7 @@ export const EssaysView: React.FC<EssaysViewProps> = ({ onOpenSentence, progress
         now={now}
         onOpenEssay={setSelectedEssayId}
         onScroll={onScroll}
+        scrollMemory={landingScroll}
       />
     );
   }

@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useLayoutEffect, useMemo, useRef } from 'react';
 import { ArrowRight, BookOpenText, Feather, Quote, Sparkles } from 'lucide-react';
 import type { Essay } from '../../services/essayCatalog';
 import { summarizeCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress';
@@ -82,6 +82,8 @@ interface EssayIndexProps {
   now: number;
   onOpenEssay: (essayId: string) => void;
   onScroll: (event: React.UIEvent<HTMLElement>) => void;
+  /** Where the page is scrolled, kept while it's away (an essay open over it) and put back when it mounts again. */
+  scrollMemory?: { current: number };
 }
 
 /** The Essays landing page: the historical classics, then the private modern collection grouped by publication. */
@@ -93,7 +95,16 @@ export function EssayIndex({
   now,
   onOpenEssay,
   onScroll,
+  scrollMemory,
 }: EssayIndexProps) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (scrollMemory && scrollerRef.current) scrollerRef.current.scrollTop = scrollMemory.current;
+  }, [scrollMemory]);
+  const handleScroll = (event: React.UIEvent<HTMLElement>) => {
+    if (scrollMemory) scrollMemory.current = event.currentTarget.scrollTop;
+    onScroll(event);
+  };
   const progressByEssay = useMemo(
     () => new Map(essays.map(essay => [essay.id, summarizeCatalogProgress(essay.sentences, progressIndex, now)])),
     [essays, now, progressIndex],
@@ -103,7 +114,7 @@ export function EssayIndex({
   const modernGroups = useMemo(() => groupModernEssays(modernEssays), [modernEssays]);
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto bg-slate-50" onScroll={onScroll}>
+    <div ref={scrollerRef} className="h-full min-h-0 overflow-y-auto bg-slate-50" onScroll={handleScroll}>
       <div className="mx-auto w-full max-w-5xl px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-6 sm:px-6 sm:pt-10">
         <header className="mb-7 sm:mb-10">
           <div className="flex items-center gap-2 text-indigo-600">

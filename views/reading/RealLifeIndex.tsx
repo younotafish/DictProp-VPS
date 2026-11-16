@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useLayoutEffect, useMemo, useRef } from 'react';
 import { ArrowRight, Compass, Sparkles } from 'lucide-react';
 import { REAL_LIFE_COLLECTIONS, type RealLifeCollection } from '../../services/realLifeCatalog';
 import { summarizeCatalogProgress, type CatalogProgressIndex } from '../../services/catalogProgress';
@@ -93,10 +93,20 @@ interface RealLifeIndexProps {
   now: number;
   onOpenCollection: (collectionId: string) => void;
   onScroll: (event: React.UIEvent<HTMLElement>) => void;
+  /** Where the page is scrolled, kept while it's away (a collection open over it) and put back when it mounts again. */
+  scrollMemory?: { current: number };
 }
 
 /** The Real Life landing page: a tile for each collection, with its progress. */
-export function RealLifeIndex({ progressIndex, now, onOpenCollection, onScroll }: RealLifeIndexProps) {
+export function RealLifeIndex({ progressIndex, now, onOpenCollection, onScroll, scrollMemory }: RealLifeIndexProps) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (scrollMemory && scrollerRef.current) scrollerRef.current.scrollTop = scrollMemory.current;
+  }, [scrollMemory]);
+  const handleScroll = (event: React.UIEvent<HTMLElement>) => {
+    if (scrollMemory) scrollMemory.current = event.currentTarget.scrollTop;
+    onScroll(event);
+  };
   const collectionProgress = useMemo(
     () => new Map(REAL_LIFE_COLLECTIONS.map(collection => [
       collection.id,
@@ -106,7 +116,7 @@ export function RealLifeIndex({ progressIndex, now, onOpenCollection, onScroll }
   );
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto bg-slate-50" onScroll={onScroll}>
+    <div ref={scrollerRef} className="h-full min-h-0 overflow-y-auto bg-slate-50" onScroll={handleScroll}>
       <div className="mx-auto w-full max-w-5xl px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-6 sm:px-6 sm:pt-10">
         <header className="mb-6 sm:mb-9">
           <div className="flex items-center gap-2 text-indigo-600">

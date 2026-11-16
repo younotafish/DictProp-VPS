@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import type { ReviewRating, StoredItem } from '../types';
 import { REAL_LIFE_COLLECTIONS } from '../services/realLifeCatalog';
 import { indexRealLifeProgress } from '../services/realLifeProgress';
@@ -37,6 +37,8 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
     onOpenSentence(ordered, index);
     noteOpened();
   }, [onOpenSentence, noteOpened]);
+  // Back from a collection finds the landing page scrolled where it was left.
+  const landingScroll = useRef(0);
 
   if (!selectedCollection) {
     return (
@@ -45,6 +47,7 @@ export const RealLifeView: React.FC<RealLifeViewProps> = ({
         now={now}
         onOpenCollection={setSelectedCollectionId}
         onScroll={onScroll}
+        scrollMemory={landingScroll}
       />
     );
   }
