@@ -94,7 +94,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
     toggleSentenceAutoPlay,
   } = useAutoPlay();
   const speechStyle = useSpeechStyle();
-  const { showSuccessAnim, rememberInfo, rememberingRef, showRemembered } = useRememberToast();
+  const { toast, tryRemember, showRemembered } = useRememberToast();
 
   // Keep a ref to savedItems so callbacks always see fresh data without re-creating
   const savedItemsRef = useLatest(savedItems);
@@ -165,7 +165,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
     handleResetSRS, handleRemember,
   } = useWordActions({
     data, type, title, savedItemMatch, isSaved, savedItemsRef, isVocabSaved, onSave, onDelete, onArchive, onUnarchive,
-    onResetSRS, onUpdateSRS, setShowActionMenu, rememberingRef, showRemembered,
+    onResetSRS, onUpdateSRS, setShowActionMenu, tryRemember, showRemembered,
   });
 
   // Navigation handlers for keyboard
@@ -434,8 +434,8 @@ export function WordDetailView(props: DetailViewBodyProps) {
         onCycleGap={cycleGap}
         onToggleExamples={toggleSentenceAutoPlay}
       />
-      {/* Success Animation Overlay */}
-      {showSuccessAnim && <RememberToast intervalDays={rememberInfo?.intervalDays ?? null} />}
+      {/* The Remembered! confirmation, shown only while the card it confirms is on screen */}
+      {toast && toast.id === data.id && <RememberToast intervalDays={toast.intervalDays} />}
 
       {/* Action menu dropdown - positioned fixed to escape overflow */}
       {showActionMenu && (

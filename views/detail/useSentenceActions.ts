@@ -16,14 +16,16 @@ interface SentenceActionsOptions {
   onDelete: (id: string) => void;
   onResetSRS?: DetailViewProps['onResetSRS'];
   onUpdateSRS?: (itemId: string, rating?: ReviewRating, context?: { seedItem?: StoredItem }) => void | Promise<boolean>;
-  rememberingRef: RefObject<boolean>;
-  showRemembered: (next: SRSData, now: number) => void;
+  /** Whether a remember of the item `id` counts now (useRememberToast): once per item and gesture. */
+  tryRemember: (id: string) => boolean;
+  /** Confirms a review with the interval it scheduled, for the sentence `id`. */
+  showRemembered: (next: SRSData, now: number, id: string) => void;
 }
 
 /** Remember, Reset and Delete for the sentence under review. A preview has none of them, except a catalog sentence's Remember. */
 export function useSentenceActions({
   currentSentence, currentSentenceRef, isSentencePreview, catalogSentencePreview, onSave, onDelete, onResetSRS,
-  onUpdateSRS, rememberingRef, showRemembered,
+  onUpdateSRS, tryRemember, showRemembered,
 }: SentenceActionsOptions) {
   // Delete the SENTENCE (App removes its group + advances/closes the flow).
   const handleDeleteItem = () => {
@@ -42,15 +44,11 @@ export function useSentenceActions({
   }, [onSave, onResetSRS, isSentencePreview, currentSentenceRef]);
 
   const handleRemember = useCallback(() => {
-    // Ignore re-entry while a remember is mid-animation — a touch double-tap and the synthesized
-    // dblclick can both land, and we must not advance/score the same sentence twice.
-    if (rememberingRef.current) return;
-    rememberingRef.current = true;
     const s = currentSentenceRef.current;
-    if ((isSentencePreview && !catalogSentencePreview) || !s) {
-      rememberingRef.current = false;
-      return;
-    }
+    if ((isSentencePreview && !catalogSentencePreview) || !s) return;
+    // A touch double-tap and the dblclick it synthesizes both land, so the same sentence within 1.5 s counts once;
+    // the next sentence counts at once.
+    if (!tryRemember(s.data.id)) return;
     // Remember THIS sentence (its own SRS) and show the success overlay. The card STAYS put afterwards —
     // same as word-item review — so you can keep looking at it; switch sentences manually (swipe ↑/↓, arrow
     // keys, or the next-sentence gesture) when you're ready. The live SRS refresh means the banner now
@@ -62,8 +60,8 @@ export function useSentenceActions({
       'good',
       catalogSentencePreview ? { seedItem: s } : undefined,
     );
-    showRemembered(previewSRS, now);
-  }, [catalogSentencePreview, onUpdateSRS, isSentencePreview, currentSentenceRef, rememberingRef, showRemembered]);
+    showRemembered(previewSRS, now, s.data.id);
+  }, [catalogSentencePreview, onUpdateSRS, isSentencePreview, currentSentenceRef, tryRemember, showRemembered]);
 
   return { handleDeleteItem, handleResetSRS, handleRemember };
 }

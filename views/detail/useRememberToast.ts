@@ -1,29 +1,31 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef } from 'react';
 import type { SRSData } from '../../types';
+import { useTimedMessage } from '../../hooks/useTimedMessage';
+import { reviewIntervalDays } from '../../services/reviewTime';
+import { acceptRemember } from '../../services/reviewGestures';
 
 /**
- * The "Remembered!" confirmation a review shows for 1.5 s, with the interval the review really schedules, and the
- * guard that keeps one gesture from reviewing twice (a touch double-tap and its synthesized dblclick both land).
+ * The "Remembered!" confirmation a review shows for 1.5 s, with the interval the review really schedules and the id
+ * of the card it confirms, so the view shows it only while that card is on screen and moving on takes it away; and
+ * the guard that keeps one gesture from reviewing an item twice (acceptRemember).
  */
 export function useRememberToast() {
-  const [showSuccessAnim, setShowSuccessAnim] = useState(false);
-  const [rememberInfo, setRememberInfo] = useState<{ intervalDays: number } | null>(null);
-  const successAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (successAnimTimerRef.current) clearTimeout(successAnimTimerRef.current); }, []);
-  // Guard so a remember can't fire twice from one gesture (touch double-tap + a synthesized dblclick).
-  const rememberingRef = useRef(false);
+  const { message: toast, show } = useTimedMessage<{ id: string; intervalDays: number }>(1500);
+  const lastRememberRef = useRef<{ id: string; at: number } | null>(null);
 
-  // The overlay shows the interval the review really schedules (FSRS handles a late review itself).
-  const showRemembered = useCallback((next: SRSData, now: number) => {
-    setRememberInfo({ intervalDays: Math.max(1, Math.round((next.nextReview - now) / 86400000)) });
-    setShowSuccessAnim(true);
-    if (successAnimTimerRef.current) clearTimeout(successAnimTimerRef.current);
-    successAnimTimerRef.current = setTimeout(() => {
-      setShowSuccessAnim(false);
-      setRememberInfo(null);
-      rememberingRef.current = false;
-    }, 1500);
+  // Whether a remember of the item `id` counts now. One that does is recorded, so the same item's next one within
+  // 1.5 s doesn't, while another item's always does.
+  const tryRemember = useCallback((id: string) => {
+    const now = performance.now();
+    if (!acceptRemember(lastRememberRef.current, id, now)) return false;
+    lastRememberRef.current = { id, at: now };
+    return true;
   }, []);
 
-  return { showSuccessAnim, rememberInfo, rememberingRef, showRemembered };
+  // Confirms the review of the card `id` with the interval it scheduled (FSRS handles a late review itself).
+  const showRemembered = useCallback((next: SRSData, now: number, id: string) => {
+    show({ id, intervalDays: reviewIntervalDays(next.nextReview, now) });
+  }, [show]);
+
+  return { toast, tryRemember, showRemembered };
 }

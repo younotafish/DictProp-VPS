@@ -25,14 +25,16 @@ interface WordActionsOptions {
   onResetSRS?: DetailViewProps['onResetSRS'];
   onUpdateSRS?: (itemId: string, rating?: ReviewRating, context?: { seedItem?: StoredItem }) => void | Promise<boolean>;
   setShowActionMenu: Dispatch<SetStateAction<boolean>>;
-  rememberingRef: RefObject<boolean>;
-  showRemembered: (next: SRSData, now: number) => void;
+  /** Whether a remember of the item `id` counts now (useRememberToast): once per item and gesture. */
+  tryRemember: (id: string) => boolean;
+  /** Confirms a review with the interval it scheduled, for the card on screen, `id`. */
+  showRemembered: (next: SRSData, now: number, id: string) => void;
 }
 
 /** What the word card does to the library: save, delete, archive and unarchive, reset, remember, and a phrase's key-vocab saves. */
 export function useWordActions({
   data, type, title, savedItemMatch, isSaved, savedItemsRef, isVocabSaved, onSave, onDelete, onArchive, onUnarchive,
-  onResetSRS, onUpdateSRS, setShowActionMenu, rememberingRef, showRemembered,
+  onResetSRS, onUpdateSRS, setShowActionMenu, tryRemember, showRemembered,
 }: WordActionsOptions) {
   // A phrase's key-vocab cards save and unsave themselves, by the same word-and-sense rule their bookmark shows
   // (a missing sense is the empty one, and only words count). This handler goes to the memoized word cards, so it
@@ -138,25 +140,24 @@ export function useWordActions({
   }, [data, title, type, onSave, onResetSRS, savedItemsRef, setShowActionMenu]);
 
   const handleRemember = useCallback(() => {
-    // Ignore re-entry while a remember is mid-animation — a touch double-tap and the synthesized
-    // dblclick can both land, and we must not score the same card twice.
-    if (rememberingRef.current) return;
-    rememberingRef.current = true;
-
-    log('🧠 DetailView: Marking as remembered via shortcut/gesture');
-
     const targetTitle = (title || '').toLowerCase().trim();
     const saved = savedItemsRef.current.find(item => item.data.id === data.id) ??
       savedItemsRef.current.find(item =>
         !item.isDeleted && getItemTitle(item).toLowerCase().trim() === targetTitle &&
         getItemSense(item) === (type === 'vocab' ? (data as VocabCard).sense || '' : '')
       );
+    // One gesture reviews a card once: the same card's second remember within 1.5 s is dropped, while the next card's
+    // counts at once.
+    const id = saved?.data.id ?? data.id;
+    if (!id || !tryRemember(id)) return;
+
+    log('🧠 DetailView: Marking as remembered via shortcut/gesture');
 
     const now = Date.now();
     if (saved) {
       // Compute preview SRS to show next review date in the animation
       const previewSRS = updateAfterRating(SRSAlgorithm.ensure(saved.srs, saved.data.id, saved.type), 'good', now);
-      showRemembered(previewSRS, now);
+      showRemembered(previewSRS, now, data.id);
 
       if (onUpdateSRS) {
         log('🧠 DetailView: applying FSRS review to this sense');
@@ -167,10 +168,8 @@ export function useWordActions({
       }
     } else {
       // Create new item and immediately mark as remembered
-      if (!data.id) { rememberingRef.current = false; return; }
-
       const newSRS = updateAfterRating(SRSAlgorithm.createNew(data.id, type), 'good', now);
-      showRemembered(newSRS, now);
+      showRemembered(newSRS, now, data.id);
 
       onSave({
         data: data,
@@ -179,7 +178,7 @@ export function useWordActions({
         srs: newSRS
       });
     }
-  }, [data, type, onSave, onUpdateSRS, title, savedItemsRef, rememberingRef, showRemembered]);
+  }, [data, type, onSave, onUpdateSRS, title, savedItemsRef, tryRemember, showRemembered]);
 
   return {
     handleSaveVocab, handleToggleSave, handleSaveShortcut, handleDeleteItem, handleArchiveItem, handleUnarchiveItem,

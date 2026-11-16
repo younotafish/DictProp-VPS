@@ -89,7 +89,7 @@ export function SentenceReviewView({
   } = useAutoPlay();
   const [showSentenceAutoPlayPanel, setShowSentenceAutoPlayPanel] = useState(false);
   const speechStyle = useSpeechStyle();
-  const { showSuccessAnim, rememberInfo, rememberingRef, showRemembered } = useRememberToast();
+  const { toast, tryRemember, showRemembered } = useRememberToast();
 
   const savedSentenceItemsRef = useLatest(savedSentenceItems);
   // Preview lookups run on every render, so index saved sentences once instead of re-normalizing all of them.
@@ -123,8 +123,8 @@ export function SentenceReviewView({
   const sentenceImageUrl = currentSentence ? getItemImageUrl(currentSentence) : undefined;
   const hasSentenceImage = !!sentenceImageUrl;
 
-  // Refs so the post-remember timer and key handlers read fresh sentence state without re-subscribing. A review
-  // or a listen writes its updated sentence to currentSentenceRef at once, so the next one builds on it.
+  // Refs so the key and gesture handlers read fresh sentence state without re-subscribing. A review or a listen
+  // writes its updated sentence to currentSentenceRef at once, so the next one builds on it.
   const currentSentenceRef = useRef(currentSentence);
   useEffect(() => { currentSentenceRef.current = currentSentence; });
   const sentenceItemsRef = useLatest<StoredItem[] | undefined>(sentenceItems);
@@ -317,7 +317,7 @@ export function SentenceReviewView({
 
   const { handleDeleteItem, handleResetSRS, handleRemember } = useSentenceActions({
     currentSentence, currentSentenceRef, isSentencePreview, catalogSentencePreview, onSave, onDelete, onResetSRS,
-    onUpdateSRS, rememberingRef, showRemembered,
+    onUpdateSRS, tryRemember, showRemembered,
   });
 
   const {
@@ -474,8 +474,8 @@ export function SentenceReviewView({
         onCycleGap={cycleGap}
         onStop={() => { stopSentenceAutoPlay(); setShowSentenceAutoPlayPanel(false); }}
       />
-      {/* Success Animation Overlay */}
-      {showSuccessAnim && <RememberToast intervalDays={rememberInfo?.intervalDays ?? null} />}
+      {/* The Remembered! confirmation, shown only while the sentence it confirms is on screen */}
+      {toast && toast.id === currentSentence?.data.id && <RememberToast intervalDays={toast.intervalDays} />}
 
       {/* Attach-image FAB (sentence mode only). Sits above the global AI-search FAB in the right rail
           (bottom-40 clears its bottom-24; z-[57] is above the search FAB's z-[55], below the autoplay
