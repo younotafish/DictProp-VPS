@@ -16,12 +16,12 @@
     "build:all": "npm run build && npm run build:server",
     "typecheck": "tsc --noEmit",
     "typecheck:server": "cd server && npm run typecheck",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings 0",
     "test": "tsx --import ./test/support/isolated-env.ts --test --test-timeout=120000 'test/**/*.test.ts'",
     "test:server": "cd server && npm test",
     "check:bundle": "node scripts/check-bundle-budget.mjs",
     "check:sw": "node --check public/sw.js && node --check dist/sw.js",
-    "check": "npm run typecheck && npm run typecheck:server && npm test && npm run test:server && npm run build:all && npm run check:bundle && npm run check:sw"
+    "check": "npm run typecheck && npm run typecheck:server && npm run lint && npm test && npm run test:server && npm run build:all && npm run check:bundle && npm run check:sw"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.5.1",

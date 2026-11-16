@@ -30,7 +30,7 @@ DictProp is an AI-powered vocabulary learning web app for English learners. User
 - NEVER attempt `ssh`, `scp`, or `rsync` to the VPS — it will always fail with EPERM
 
 ### Automated verification
-- `npm run check` runs strict client/server type checks, Node tests, both builds, the bundle budget, and service-worker syntax validation
+- `npm run check` runs strict client/server type checks, ESLint with no warnings allowed, Node tests, both builds, the bundle budget, and service-worker syntax validation
 - Keep curl-based production-server smoke tests for route/header behavior (see Local Verification below)
 - Browser-driven testing isn't viable here anyway: Chromium headless shell segfaults (SIGSEGV) on this macOS machine
 
@@ -102,8 +102,8 @@ curl -X POST http://localhost:3001/api/analyze ...       # AI search works
 npm run dev              # Vite dev server (port 3000)
 npm run build            # Production build to dist/
 npm test                 # Tests in test/: client, contract, offline-script and workflow tests
-npm run lint             # ESLint over client, server, scripts and tests (not in check yet; don't add warnings)
-npm run check            # Full release gate: both type checks, both test suites, both builds, bundle budget
+npm run lint             # ESLint over client, server, scripts and tests; any warning fails it (part of check)
+npm run check            # Full release gate: both type checks, lint, both test suites, both builds, bundle budget
 
 # Server (run from server/ directory)
 npm run dev              # Hono dev server with hot reload (port 3001)
