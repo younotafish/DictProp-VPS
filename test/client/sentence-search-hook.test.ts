@@ -179,6 +179,22 @@ test('a new sentence list keeps the answer on screen while one fuzzy scan refres
   await search.unmount();
 });
 
+test('the search covers only the sentences it is given, so a list that leaves some out gets its typo-tolerant matches', async (t) => {
+  // The Sentences tab leaves archived sentences out. Searching them too, an archived sentence in British spelling
+  // matches 'colour' literally, so the fuzzy tier never runs, and the tab, leaving it out, would say "No sentences
+  // match"; searching only what the tab shows finds 'color'.
+  const archived: StoredItem = { ...sentence('archived', 'She described the colour of the evening sky.'), isArchived: true };
+  const shown = sentence('shown', 'Money has no color.');
+  const search = await mountSearch(t, { items: [archived, shown], query: 'colour' });
+  assert.deepEqual(search.latest(), { results: [archived], pending: false });
+
+  await search.render({ items: [shown] });
+  assert.deepEqual(search.latest(), { results: [], pending: true });
+  await search.wait(FUZZY_DELAY_MS);
+  assert.deepEqual(search.latest(), { results: [shown], pending: false });
+  await search.unmount();
+});
+
 test('a scan still waiting when the search goes away never runs', async (t) => {
   const search = await mountSearch(t, { items: APPLES, query: 'appke' });
   assert.equal(search.latest().pending, true);

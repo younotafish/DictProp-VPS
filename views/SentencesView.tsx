@@ -182,7 +182,9 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const deferredQuery = useDeferredValue(searchQuery);
   const settledQuery = deferredQuery.trim();
-  const search = useSentenceSearch(items, settledQuery);
+  // Over the sentences the list shows: an archived one that matched literally would keep the typo-tolerant matches
+  // from running, and then be left out, leaving "No sentences match".
+  const search = useSentenceSearch(activeItems, settledQuery);
 
   // A tap on this tab while it shows, with the list already at its top, puts the caret in the search box. The focus
   // runs inside the tap, so a phone's keyboard opens. (The tab bar scrolls the list to its top on the tap before.)
@@ -204,8 +206,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
     if (!settledQuery) return orderSentencesForReview(activeItems, filter, now);
     // A search overrides the review-state chips so a match surfaces regardless of the active tab, and
     // keeps the search's order, so sentences with the typed word as a whole word come first.
-    const activeIds = new Set(activeItems.map(s => s.data.id));
-    return search.results.filter(s => activeIds.has(s.data.id));
+    return search.results;
   }, [activeItems, filter, now, settledQuery, search.results]);
 
   // One Reviewed per press across the list: a reviewed row moves away, and the row taking its place mustn't take a

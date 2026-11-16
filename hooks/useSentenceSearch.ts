@@ -50,8 +50,10 @@ const sameItems = (a: readonly StoredItem[], b: readonly StoredItem[]): boolean 
  * `limit` matches. The literal tiers run on every keystroke. When they find nothing, the fuzzy tier runs once typing
  * has paused for FUZZY_DELAY_MS, not on every keystroke, and the search is pending until it answers.
  *
- * Pass the same `items` array while the sentences don't change (a memo): the index is built over it, on the first
- * search, and a new array runs the search again.
+ * Pass only the sentences the list shows, and the same `items` array while they don't change (a memo): the index is
+ * built over it, on the first search, and a new array runs the search again. The fuzzy tier runs only when nothing in
+ * `items` matches literally, so a literal match among sentences the list then leaves out would hold back its
+ * typo-tolerant matches.
  */
 export function useSentenceSearch(items: readonly StoredItem[], query: string, limit?: number): SentenceSearch {
   const index = useMemo(() => buildSentenceIndex(items), [items]);
