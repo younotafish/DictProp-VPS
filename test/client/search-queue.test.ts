@@ -26,13 +26,13 @@ const add = (id: string, query: string, extra: Partial<Extract<QueueAction, { ty
 
 test('a lookup joins the queue as pending, keeping its refresh flag and analysis mode', () => {
   assert.deepEqual(run([add('q-1', 'gamut', { analyzeMode: 'batch' })]), [
-    { id: 'q-1', kind: 'search', query: 'gamut', status: 'pending', results: null, forceAI: false, analyzeMode: 'batch' },
+    { id: 'q-1', kind: 'lookup', query: 'gamut', status: 'pending', results: null, forceAI: false, analyzeMode: 'batch' },
   ]);
 });
 
 test('a lookup that repeats a running or ready one leaves the queue untouched, whatever its case', () => {
   for (const status of ['pending', 'searching', 'ready'] as const) {
-    const queue: QueueItem[] = [{ id: 'q-1', kind: 'search', query: 'Gamut', status, results: null }];
+    const queue: QueueItem[] = [{ id: 'q-1', kind: 'lookup', query: 'Gamut', status, results: null }];
     assert.equal(searchQueueReducer(queue, add('q-2', 'gamut')), queue, status);
     assert.equal(hasLiveDuplicate(queue, 'GAMUT'), true, status);
   }
@@ -95,7 +95,7 @@ test('an in-place refresh keeps the old result showing until the fresh one repla
   const refreshed = searchQueueReducer(queue, { type: 'refresh-ready', id: 'q-1', query: 'run out', results: fresh });
   assert.deepEqual(
     { ...refreshed[0], results: refreshed[0].results?.query },
-    { id: 'q-1', kind: 'search', query: 'run out', status: 'ready', results: 'run out', forceAI: false, analyzeMode: 'batch', refreshing: false },
+    { id: 'q-1', kind: 'lookup', query: 'run out', status: 'ready', results: 'run out', forceAI: false, analyzeMode: 'batch', refreshing: false },
   );
 
   const failed = searchQueueReducer(queue, { type: 'refresh-fail', id: 'q-1' });

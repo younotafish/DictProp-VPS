@@ -10,7 +10,7 @@ import { comparisonKey, type ComparisonResult, type SearchResult, type VocabCard
 /** One entry of the search queue: a lookup or a comparison, from the moment it's asked for until it's dismissed. */
 export interface QueueItem {
   id: string;
-  kind: 'search' | 'compare';            // 'search' = analyze a word; 'compare' = compare 2+ words
+  kind: 'lookup' | 'compare';            // 'lookup' = analyze a word; 'compare' = compare 2+ words
   query: string;                         // search: the query; compare: "a vs b" for display
   status: 'pending' | 'searching' | 'ready' | 'failed';
   results: SearchResult | null;          // search result
@@ -58,7 +58,7 @@ export function searchQueueReducer(queue: QueueItem[], action: QueueAction): Que
       const { id, query, forceAI, analyzeMode } = action;
       if (!forceAI && hasLiveDuplicate(queue, query)) return queue;
       const base = forceAI ? queue.filter(item => !sameQuery(item.query, query)) : queue;
-      return [...base, { id, kind: 'search', query, status: 'pending', results: null, forceAI, analyzeMode }];
+      return [...base, { id, kind: 'lookup', query, status: 'pending', results: null, forceAI, analyzeMode }];
     }
     case 'add-compare': {
       const { id, words, cached } = action;

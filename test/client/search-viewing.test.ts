@@ -29,7 +29,7 @@ test('a meaning index past the end steps as the arrow keys always have', () => {
   assert.equal(stepMeaning(5, 3, 1, true), 0);
 });
 
-const item = (id: string, status: QueueItem['status']): QueueItem => ({ id, kind: 'search', query: id, status, results: null });
+const item = (id: string, status: QueueItem['status']): QueueItem => ({ id, kind: 'lookup', query: id, status, results: null });
 
 test('dismissing a result keeps the open position, or the last ready result when the position is gone', () => {
   const queue = [item('a', 'ready'), item('b', 'searching'), item('c', 'ready'), item('d', 'ready')];
