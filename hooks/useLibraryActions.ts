@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
-import { getItemSpelling, getItemTitle, isPhraseItem, isVocabItem, type SearchResult, type SentenceData, type StoredItem, type VocabCard } from '../types';
+import { getItemTitle, isPhraseItem, type SearchResult, type SentenceData, type StoredItem, type VocabCard } from '../types';
 import { IMAGE_IDB_MARKER, attachImage, extractInlineImages, offloadImages, restoreInlineImages, unsavedImages } from '../services/libraryImages';
-import { findSavedCopyIndex, makeSentenceStoredItem, makeVocabStoredItem, patchLiveCopy, saveOverExisting } from '../services/items';
+import { findSavedCopyIndex, makeSentenceStoredItem, patchLiveCopy, saveOverExisting } from '../services/items';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { planReset, unarchiveUndo } from '../services/undoRules';
 import { log, logError, warn } from '../services/logger';
@@ -177,30 +177,24 @@ export function useLibraryActions(
     handleSave(makeSentenceStoredItem(text, sourceWord, sourceSense, prepared));
   }, [handleSave]);
 
-  // Refresh-replace: a real re-run of the AI for an already-saved word replaces its saved card(s).
-  // A meaning present in both old and new updates IN PLACE (handleSave matches by word+sense and we pass
-  // its existing SRS), so spaced-repetition progress survives the refresh; brand-new meanings are added.
-  // Unmatched saved senses remain: model sense coverage varies between calls, so omission is not evidence
-  // that a valid stored meaning should be deleted.
-  const handleRefreshReplace = useCallback((word: string, vocabs: VocabCard[]) => {
+  /**
+   * Refresh-replace: a real re-run of the AI for an already-saved word replaces its saved cards. A meaning the word
+   * has a card for updates that card in place, keeping its schedule, and a new meaning gets a card of its own
+   * (services/refreshReplace, loaded when a refresh lands). The fresh result shows in the search sheet either way,
+   * so should that code fail to load, only the saving is lost, and the error is logged.
+   */
+  const handleRefreshReplace = useCallback(async (word: string, vocabs: VocabCard[]): Promise<void> => {
     if (!vocabs?.length) return;
-    const spelling = word.toLowerCase().trim();
-    const oldItems = latestItemsRef.current.filter(i =>
-      !i.isDeleted && isVocabItem(i) && getItemSpelling(i) === spelling
-    );
-    vocabs.forEach(vocab => {
-      const match = oldItems.find(o => ((o.data as VocabCard).sense || '') === (vocab.sense || ''));
-      if (match) {
-        // Update IN PLACE: keep the saved item's id/SRS/savedAt, swap in the fresh content. The card keeps
-        // its picture unless the fresh analysis brings one, which the search never does: pictures come from
-        // the Mac's enrichment cycle.
-        const prevImage = (match.data as VocabCard).imageUrl;
-        handleSave({ ...match, data: { ...vocab, id: match.data.id, imageUrl: vocab.imageUrl ?? prevImage }, srs: match.srs, savedAt: match.savedAt });
-      } else {
-        handleSave(makeVocabStoredItem(vocab));
-      }
-    });
-  }, [handleSave]);
+    try {
+      const { planRefreshReplace } = await import('../services/refreshReplace');
+      const { updates, created } = planRefreshReplace(latestItemsRef.current, word, vocabs);
+      // Updates replace their cards where they are and new cards go first in the result's order, so saving the
+      // updates before the new cards leaves the library as saving them in the result's order would.
+      for (const item of [...updates, ...created]) handleSave(item);
+    } catch (error) {
+      logError(`Refresh: the fresh result for "${word}" was not saved`, error);
+    }
+  }, [latestItemsRef, handleSave]);
 
   // Reset only this sense/item. Different meanings now keep independent FSRS schedules. False when the item isn't
   // in the library, and the caller saves a fresh copy instead; true when handled, which includes leaving a card

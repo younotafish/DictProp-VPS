@@ -133,3 +133,25 @@ test('an automatic write never brings a deleted card back, and its patch is not 
   assert.equal(items()[0], deleted);
   assert.equal(asked, 0);
 });
+
+test('a refresh saves the fresh result over the word: its cards updated in place on their schedules, new senses first', async () => {
+  const river = saved(vocab('w1', 'bank', 'noun: river'), { srs: schedule('w1', 4) });
+  const other = saved(vocab('x1', 'gamut', undefined));
+  const { actions, items } = renderActions([river, other]);
+  await actions.handleRefreshReplace('bank', [
+    vocab('ai-1', 'bank', 'noun: money'),
+    vocab('ai-2', 'bank', 'noun: river', 'the land beside a river'),
+    vocab('ai-3', 'bank', 'verb: tilt'),
+  ]);
+  assert.deepEqual(items().map(item => item.data.id), ['ai-3', 'ai-1', 'w1', 'x1']);
+  assert.equal((items()[2].data as VocabCard).definition, 'the land beside a river');
+  assert.equal(items()[2].srs.totalReviews, 4, 'the refreshed card keeps its schedule');
+  assert.equal(items()[3], other);
+});
+
+test('a refresh that brings no senses saves nothing', async () => {
+  const { actions, items } = renderActions([saved(vocab('w1', 'bank', 'noun: river'))]);
+  const library = items();
+  await actions.handleRefreshReplace('bank', []);
+  assert.equal(items(), library);
+});
