@@ -27,6 +27,7 @@ import { SrsStats } from './review/SrsStats';
 import { usePopupPlayback } from './review/usePopupPlayback';
 import { useSensePages } from './review/useSensePages';
 import { ZoneGuides } from './review/ZoneGuides';
+import { swipeDirection } from './swipeDirection';
 
 interface CardReviewPopupProps {
   /** Every saved sense of the tapped word (≥1). */
@@ -159,10 +160,10 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
     if (!s) return;
     const t = e.changedTouches[0];
     if (!t) return;
-    const dx = t.clientX - s.x, dy = t.clientY - s.y;
-    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-      if (count > 1) { if (dx < 0) goNext(); else goPrev(); } // switch meaning (goTo also pronounces)
-      else if (word) speakPopupWord(word);                     // single meaning → re-pronounce the word
+    const direction = swipeDirection(t.clientX - s.x, t.clientY - s.y, 60);
+    if (direction) {
+      if (count > 1) { if (direction === 'left') goNext(); else goPrev(); } // switch meaning (goTo also pronounces)
+      else if (word) speakPopupWord(word);                                  // single meaning → re-pronounce the word
     }
   }, [count, goNext, goPrev, word, speakPopupWord]);
 

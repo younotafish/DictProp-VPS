@@ -4,9 +4,8 @@ import type { VocabCard } from '../../types';
 import { VocabCardDisplay } from '../VocabCard';
 import { EyesFreeZones, eyesFreeZoneAt, type ZoneFlash } from '../EyesFreeZones';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
+import { swipeDirection } from '../swipeDirection';
 import { contextLine, stepMeaning } from './searchViewing';
-
-const SWIPE_THRESHOLD = 50;
 
 interface Props {
   /** The open result's meanings, and the one on screen. */
@@ -64,15 +63,16 @@ export const SearchVocabPane: React.FC<Props> = ({
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (!touchStart.current) return;
-    const diffX = e.changedTouches[0].clientX - touchStart.current.x;
-    const diffY = e.changedTouches[0].clientY - touchStart.current.y;
+    const direction = swipeDirection(
+      e.changedTouches[0].clientX - touchStart.current.x,
+      e.changedTouches[0].clientY - touchStart.current.y,
+    );
     touchStart.current = null;
-
-    if (Math.abs(diffX) <= Math.abs(diffY) * 1.5 || Math.abs(diffX) <= SWIPE_THRESHOLD) return;
+    if (!direction) return;
 
     // A swipe left goes to the next meaning, round to the first after the last; a swipe right goes back, and
     // stops at the first.
-    step(diffX < 0 ? 1 : -1);
+    step(direction === 'left' ? 1 : -1);
   };
 
   // Eyes-free zone read: a click/tap in the popup body's top quarter plays the 1st example sentence, the

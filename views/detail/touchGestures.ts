@@ -3,6 +3,7 @@
  * it moved; these functions decide, so the thresholds and edge rules are pinned by tests rather than by reading.
  */
 import { eyesFreeZoneAt } from '../../components/eyesFreeBands';
+import { swipeDirection } from '../../components/swipeDirection';
 
 /** A finger that moved no more than this either way is a tap, not a swipe or a scroll. */
 export const TAP_MOVE_MAX = 10;
@@ -72,7 +73,7 @@ export function touchFacts(dx: number, dy: number, scroller: ScrollPosition | nu
     isVerticalSwipe: absY > absX * 1.5 && absY > SWIPE_MIN,
     isShortSwipe: absY >= SWIPE_MIN && absY < SHORT_SWIPE_MAX,
     isLongSwipe: absY >= LONG_SWIPE_MIN,
-    isHorizontalSwipe: absX > absY * 1.5 && absX > HORIZONTAL_SWIPE_MIN,
+    isHorizontalSwipe: swipeDirection(dx, dy, HORIZONTAL_SWIPE_MIN) !== null,
     atTop,
     atBottom,
     fits,
