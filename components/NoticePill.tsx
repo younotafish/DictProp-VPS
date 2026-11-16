@@ -28,7 +28,7 @@ export interface NoticePillProps {
   icon?: React.ReactNode;
   /** How far the work has got, from 0 to 1, drawn as a small bar after the text. */
   progress?: number;
-  /** The text may take a second line instead of truncating. */
+  /** The text may take up to three lines instead of truncating. */
   wrap?: boolean;
   title?: string;
   /** The notice's accessible name, when its text shortens a longer sentence. */
@@ -39,8 +39,8 @@ export interface NoticePillProps {
 
 /**
  * One notice in the app's notice stack (components/AppStatus). It never grows wider than the screen less 9rem, so
- * the search button's column beside the centred stack stays clear: a longer text truncates, or with `wrap` takes a
- * second line.
+ * the search button's column beside the centred stack stays clear: a longer text truncates, or with `wrap` takes up
+ * to three lines.
  */
 export const NoticePill: React.FC<NoticePillProps> = ({
   tone, role = 'status', spinner, icon, progress, wrap, title, label, children, actions = [],
@@ -56,7 +56,7 @@ export const NoticePill: React.FC<NoticePillProps> = ({
     >
       {spinner && <Loader2 size={16} className="animate-spin shrink-0" />}
       {icon}
-      <span className={`min-w-0 ${wrap ? 'line-clamp-2' : 'truncate'}`}>{children}</span>
+      <span className={`min-w-0 ${wrap ? 'line-clamp-3' : 'truncate'}`}>{children}</span>
       {progress !== undefined && (
         <span className="w-10 h-1.5 shrink-0 rounded-full overflow-hidden bg-white/30">
           <span className="block h-full bg-white transition-all duration-300" style={{ width: `${Math.round(progress * 100)}%` }} />

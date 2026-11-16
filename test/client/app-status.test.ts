@@ -65,6 +65,9 @@ test('the stack is a fixed, centred column that lets taps through between its pi
   for (const name of ['fixed', 'left-1/2', '-translate-x-1/2', 'flex', 'flex-col', 'items-center', 'gap-2', 'pointer-events-none']) {
     assert.ok(classes.includes(name), name);
   }
+  // As wide as its widest pill, up to the pill's own cap: centred by its left edge alone, the column would shrink to the
+  // 50vw right of that edge, and on a phone a pill that wraps would get half the screen.
+  assert.ok(classes.includes('w-max'), 'w-max');
 });
 
 test('the stack rises above the card popup only when told to, and otherwise stays beneath every dialog', () => {
@@ -107,8 +110,8 @@ test('a failed save on this device is an alert in the long-lived group, whose ad
   refuseOneReview();
   t.after(() => clearRefusedReviews('u1'));
   const online = renderStack({ writeFailed: true, imagePrefetchProgress: downloading(3, 40) });
-  const alert = online.match(/<div role="alert" class="([^"]*)"><span class="min-w-0 line-clamp-2">Couldn’t save on this device\. Your changes still sync\.<\/span><\/div>/);
-  assert.ok(alert, 'a rose alert of up to two lines');
+  const alert = online.match(/<div role="alert" class="([^"]*)"><span class="min-w-0 line-clamp-3">Couldn’t save on this device\. Your changes still sync\.<\/span><\/div>/);
+  assert.ok(alert, 'a rose alert of up to three lines, which the offline advice takes on a phone');
   for (const name of ['bg-rose-600', 'rounded-2xl']) assert.ok(alert[1].split(/\s+/).includes(name), name);
   const order = ['Offline images · 3/40', 'role="alert"', '1 review wasn’t accepted'].map(text => online.indexOf(text));
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'below the progress pills, above refused reviews');
@@ -222,9 +225,9 @@ test('the offline-image download spins with its stop button while it runs', () =
 test('the offline-image download then says what it saved, what failed, or that there was nothing to do', () => {
   const ended = (progress: Partial<ImagePrefetchProgress>) =>
     renderStack({ imagePrefetchProgress: { phase: 'done', done: 0, total: 0, saved: 0, failed: 0, ...progress } });
-  // On a phone the text takes a second line rather than lose the count that failed.
+  // On a phone the text takes more lines rather than lose the count that failed.
   const pill = (tone: string, text: string) =>
-    new RegExp(`<div role="status" class="[^"]*rounded-2xl bg-${tone}-600[^"]*"><span class="min-w-0 line-clamp-2">${text}</span></div>`);
+    new RegExp(`<div role="status" class="[^"]*rounded-2xl bg-${tone}-600[^"]*"><span class="min-w-0 line-clamp-3">${text}</span></div>`);
   assert.match(ended({ done: 340, total: 340, saved: 340 }), pill('emerald', 'Saved 340 images for offline use'));
   assert.match(ended({ done: 1, total: 1, saved: 1 }), pill('emerald', 'Saved 1 image for offline use'));
   assert.match(ended({ done: 340, total: 340, saved: 300, failed: 40 }), pill('rose', 'Saved 300 of 340 images · 40 couldn’t download'));
@@ -360,5 +363,5 @@ test('a notice pill draws its spinner, progress, actions and second line only wh
 
   const wrapped = renderPill({ wrap: true, title: 'All of it', label: 'All of it, said in full' });
   assert.match(wrapped, /^<div role="status" title="All of it" aria-label="All of it, said in full" class="[^"]*rounded-2xl/);
-  assert.match(wrapped, /<span class="min-w-0 line-clamp-2">Saved<\/span>/);
+  assert.match(wrapped, /<span class="min-w-0 line-clamp-3">Saved<\/span>/);
 });

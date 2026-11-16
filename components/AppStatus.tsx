@@ -69,13 +69,15 @@ interface AppStatusPillsProps {
  * the bottom (the couldn't-save alert, changes that won't sync, the Offline chip, refused reviews, then the update).
  * Both slots are always rendered, under the same parent: the notices that portal into them would vanish with a slot
  * rendered conditionally or moved. On the tabs the stack floats above the tab bar, so it never covers a tab; over a card
- * it starts where the card's floating controls end.
+ * it starts where the card's floating controls end. The column is as wide as its widest pill (w-max), so each pill's
+ * own cap decides where its text wraps; centred by its left edge alone, it would shrink to the half of the screen right
+ * of that edge.
  */
 export const AppStatusPills: React.FC<AppStatusPillsProps> = ({
   userId, onViewRefusedReviews, imagePrefetchProgress, onStopImageDownload, imageRestoreProgress, jobPills, undoMessage,
   onUndo, stuckSyncPill, writeFailed, offline, offlineChip, aboveTabBar, holdUpdate, liftAbovePopup,
 }) => (
-  <div className={`fixed ${aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+0.5rem)]' : 'bottom-[var(--card-float-bottom)]'} left-1/2 -translate-x-1/2 ${liftAbovePopup ? 'z-[110]' : 'z-[80]'} flex flex-col items-center gap-2 pointer-events-none`}>
+  <div className={`fixed ${aboveTabBar ? 'bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+0.5rem)]' : 'bottom-[var(--card-float-bottom)]'} left-1/2 -translate-x-1/2 w-max ${liftAbovePopup ? 'z-[110]' : 'z-[80]'} flex flex-col items-center gap-2 pointer-events-none`}>
     {undoMessage && (
       <NoticePill tone="dark" actions={[{ label: 'Undo', onClick: onUndo, keyShortcuts: 'Meta+Z Control+Z' }]}>{undoMessage}</NoticePill>
     )}
