@@ -316,7 +316,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
         aria-label={`Review card: ${vocab.word}`}
       >
         {/* Sticky top bar: title + action row */}
-        <div className="shrink-0 border-b border-slate-200 bg-white px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] sm:pt-3 pb-2">
+        <div className="relative shrink-0 border-b border-slate-200 bg-white px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] sm:pt-3 pb-2">
           {/* Title row */}
           <div className="flex items-center justify-between gap-2 mb-2">
             <div className="min-w-0 flex items-baseline gap-2">
@@ -371,8 +371,10 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
               </button>
             </div>
           )}
+          {/* The confirmation hangs as a pill just below the bar, over the card, so neither moves when it shows. Taps
+              pass through it to the card. */}
           {flash && (
-            <div className="mt-1.5 text-center text-[11px] font-semibold text-emerald-600 fade-in">
+            <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 z-10 pointer-events-none whitespace-nowrap rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 shadow-sm text-[11px] font-semibold text-emerald-600 fade-in">
               {flash}
             </div>
           )}
