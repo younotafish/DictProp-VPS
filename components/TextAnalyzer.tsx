@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { StoredItem } from '../types';
 import { X, ScanText, Loader2, Check, CheckCheck, ClipboardPaste, Trash2, CircleDot, Circle, Sparkles } from 'lucide-react';
 import { detectVocabulary, DetectedWord, analyzeInput } from '../services/api/ai';
@@ -6,7 +6,10 @@ import { ensureTTS } from '../services/neuralTts';
 import { modifierKeyLabel } from '../services/platform';
 import { saveNewSenses, savedSenseKeys } from '../services/senseSaving';
 import { describeSearchError, isRetryableSearchError } from '../services/searchRecovery';
+import { buildVariantIndex, type VariantIndex } from '../services/wordMatch';
+import { useLatest } from '../hooks/useStableValue';
 import { Sheet, type SheetButton } from './Sheet';
+import { foundHeader, markSavedWords } from './textAnalyzerMarks';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -52,11 +55,13 @@ const getLevelColor = (level: string) => {
 
 // ─── Word Checklist Item ────────────────────────────────────────────────────
 
-const WordCheckItem: React.FC<{
+export const WordCheckItem: React.FC<{
   word: DetectedWord;
   isSelected: boolean;
+  /** The notebook has the word already, in some form: it says so, and starts unselected. */
+  saved: boolean;
   onToggle: () => void;
-}> = ({ word, isSelected, onToggle }) => (
+}> = ({ word, isSelected, saved, onToggle }) => (
   <button
     onClick={onToggle}
     className={`w-full text-left p-3 rounded-xl border transition-all active:scale-[0.99] ${
@@ -82,6 +87,12 @@ const WordCheckItem: React.FC<{
           <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${getLevelColor(word.level)}`}>
             {word.level}
           </span>
+          {saved && (
+            <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border bg-emerald-50 text-emerald-600 border-emerald-200">
+              <Check size={10} strokeWidth={3} />
+              In notebook
+            </span>
+          )}
         </div>
         <p className="text-xs text-slate-400 mt-0.5 italic leading-relaxed line-clamp-2">
           "...{word.context}..."
@@ -132,6 +143,9 @@ export const AnalyzeBar: React.FC<{ count: number; isOnline: boolean; onAnalyze:
 
 // ─── Main Component ─────────────────────────────────────────────────────────
 
+/** The index while the analyzer is closed: it marks nothing. */
+const NO_INDEX: VariantIndex = new Map();
+
 interface TextAnalyzerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -171,6 +185,13 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // The notebook's words in every form, as the search knows them ('running' finds 'run'), indexed only while the
+  // analyzer is open: it stays mounted while closed, and the library changes with every review.
+  const variantIndex = useMemo(() => (isOpen ? buildVariantIndex(savedItems) : null), [isOpen, savedItems]);
+  // The words found that the notebook has already.
+  const marks = useMemo(() => markSavedWords(detectedWords, variantIndex ?? NO_INDEX), [detectedWords, variantIndex]);
+  const latest = useLatest({ variantIndex, savedItems });
+
   // Focus textarea on open
   useEffect(() => {
     if (isOpen && step === 'input' && textareaRef.current) {
@@ -199,15 +220,18 @@ export const TextAnalyzer: React.FC<TextAnalyzerProps> = ({
       }
       setDetectedWords(words);
       setTranslation(sourceLang === 'zh' ? translation : '');
-      // All selected by default
-      setSelectedWords(new Set(words.map(w => w.word)));
+      // Every word the notebook doesn't have yet starts selected; the ones it has start unselected, still selectable.
+      // The notebook is read as it is now, indexed afresh if the analyzer was closed during the scan.
+      const { variantIndex: index, savedItems: notebook } = latest.current;
+      const { saved } = markSavedWords(words, index ?? buildVariantIndex(notebook));
+      setSelectedWords(new Set(words.filter(w => !saved.has(w.word)).map(w => w.word)));
       setStep('selecting');
     } catch (err) {
       setScanError({ message: describeSearchError({ kind: 'scan', label: inputText }, err), retryable: isRetryableSearchError(err) });
     } finally {
       setIsScanning(false);
     }
-  }, [inputText, isScanning, isOnline]);
+  }, [inputText, isScanning, isOnline, latest]);
 
   // ── Selection Helpers ─────────────────────────────────────────────────────
 
@@ -474,7 +498,7 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
             {/* Select All toggle */}
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                {detectedWords.length} {detectedWords.length === 1 ? 'word' : 'words'} detected
+                {foundHeader(marks.found, marks.alreadySaved)}
               </span>
               <button
                 onClick={toggleAll}
@@ -492,6 +516,7 @@ The AI will identify rare vocabulary, idioms, and advanced expressions for you t
                   key={word.word}
                   word={word}
                   isSelected={selectedWords.has(word.word)}
+                  saved={marks.saved.has(word.word)}
                   onToggle={() => toggleWord(word.word)}
                 />
               ))}
