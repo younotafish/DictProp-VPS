@@ -73,8 +73,8 @@ export type CardPronunciation = 'say' | 'handled' | 'skip';
 /**
  * The word card says its word once as each card shows: never while example auto-play reads the card (which counts as
  * the card's turn), and not again for the same card, so stopping auto-play doesn't say the word it was reading over.
- * `cardKey` names the card on screen (its word's place, its meaning's place and its word); `lastKey` the last card whose
- * word was said or that auto-play read.
+ * `cardKey` names the card on screen (its id, which stays when a card before it leaves the view and it moves up);
+ * `lastKey` the last card whose word was said or that auto-play read.
  */
 export const pronounceOnCardChange = ({ cardKey, lastKey, examplesPlaying }: {
   cardKey: string;

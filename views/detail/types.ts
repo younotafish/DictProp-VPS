@@ -17,8 +17,8 @@ export interface DetailViewProps {
    */
   onPatchItem: (id: string, patch: (item: StoredItem) => StoredItem | null) => void;
   /**
-   * Takes an item the library no longer holds, as when another device deleted it, out of the open view: the view
-   * moves to the next card or sentence, or closes after the last.
+   * Takes an item the library no longer holds, as when another device deleted it, out of the open view. The card or
+   * sentence on screen stays; when it's the one taken out, the next takes its place, and the view closes after the last.
    */
   onRemoveFromView: (id: string) => void;
   onDelete: (id: string) => void;

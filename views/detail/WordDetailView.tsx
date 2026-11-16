@@ -139,25 +139,26 @@ export function WordDetailView(props: DetailViewBodyProps) {
   const wordComparisons = comparisonsInvolving(comparisons, title);
 
   // Auto-pronounce the word when the card changes — but NOT during sentence auto-play, which reads the example
-  // sentence instead (we don't want the word spoken over it), nor when auto-play stops on a card it read.
+  // sentence instead (we don't want the word spoken over it), nor when auto-play stops on a card it read. The card
+  // goes by its id, so one that only moves, as when a card before it leaves the view, isn't said again.
   const pronouncedCardRef = useRef<string | null>(null);
+  const cardId = currentItem.data.id;
   useEffect(() => {
     if (!title) return;
-    const cardKey = `${currentGroupIndex}:${currentItemIndex}:${title}`;
-    switch (pronounceOnCardChange({ cardKey, lastKey: pronouncedCardRef.current, examplesPlaying: isSentenceAutoPlaying })) {
-      case 'handled': pronouncedCardRef.current = cardKey; return;
+    switch (pronounceOnCardChange({ cardKey: cardId, lastKey: pronouncedCardRef.current, examplesPlaying: isSentenceAutoPlaying })) {
+      case 'handled': pronouncedCardRef.current = cardId; return;
       case 'skip': return;
       case 'say': break;
     }
 
     // Small delay to let animation settle before pronouncing; a card left within it isn't counted as said.
     const timer = setTimeout(() => {
-      pronouncedCardRef.current = cardKey;
+      pronouncedCardRef.current = cardId;
       speakWord(title);
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [title, currentGroupIndex, currentItemIndex, isSentenceAutoPlaying]);
+  }, [title, cardId, isSentenceAutoPlaying]);
 
   // The cards the learner can move to next: this word's other meanings and the words either side. Their
   // pictures are decoded ahead, so each paints on its first frame.

@@ -91,11 +91,13 @@ export function SentenceReviewView({
   // The sentence page's scroller: a long sentence with a picture scrolls in it, and each new sentence starts at its top.
   const heroScrollRef = useRef<HTMLDivElement>(null);
 
-  // State for navigation between sentences (a group each)
+  // State for navigation between sentences (a group each). Sentences of one word share its source card, so the view
+  // follows the sentence on screen by its id when the run changes.
+  const sentenceIds = useMemo(() => sentenceItems.map(item => item.data.id), [sentenceItems]);
   const {
     currentGroupIndex, setCurrentGroupIndex, currentItemIndex, setCurrentItemIndex, currentItem,
   } = useCardNavigation(groups, {
-    initialGroupIndex, initialItemIndex, navigationKey, scrollContainerRef: heroScrollRef, sentenceReview: true,
+    initialGroupIndex, initialItemIndex, navigationKey, scrollContainerRef: heroScrollRef, sentenceReview: true, sentenceIds,
   });
 
   const [sentencePage, setSentencePage] = useState<'sentence' | 'analysis'>('sentence');
