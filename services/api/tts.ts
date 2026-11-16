@@ -18,7 +18,8 @@ export interface WordTiming { start: number; end: number; text: string }
 
 /**
  * Cache key for a clip — sha256(voice + "\n" + text.trim()), hex.
- * MUST match the server's ttsKey (server/src/tts/cache.ts).
+ * MUST match the server's ttsKey (server/src/tts/cache.ts); server/test/tts-cache.test.ts and
+ * test/client/tts-api.test.ts pin the same digests, so a change on either side fails a test.
  */
 export const ttsKey = async (text: string, voice: string): Promise<string> =>
   sha256Hex(new TextEncoder().encode(`${voice}\n${text.trim()}`));
