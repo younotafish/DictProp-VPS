@@ -26,5 +26,10 @@ process.env.XDG_CONFIG_HOME = join(scratch, 'config');
 process.env.SENTENCE_BRIDGE_KEY_FILE = join(scratch, 'no-key');
 delete process.env.SENTENCE_BRIDGE_KEY;
 
+// Each test file's process sends its results to the test runner on stdout, and on a loaded machine other lines there,
+// such as the client logger's console.log output, can garble that stream ('Unable to deserialize cloned data') after
+// every test has passed. Logging goes to stderr instead, which the runner passes through untouched.
+console.log = console.info = console.debug = console.error;
+
 // proxy-fetch.ts picks its transport from these when it loads; CI has none, so neither do the tests here.
 for (const name of ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']) delete process.env[name];

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test, { mock } from 'node:test';
+import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useLibraryActions } from '../../hooks/useLibraryActions.ts';
@@ -15,9 +15,6 @@ import type { SRSData, StoredItem, VocabCard } from '../../types.ts';
   setTimeout: (callback: () => void, ms: number) => setTimeout(callback, ms),
   clearTimeout: (handle: ReturnType<typeof setTimeout>) => clearTimeout(handle),
 };
-// handleSave logs each save (services/logger logs outside production builds), and this process's stdout also carries
-// the test runner's results, which those lines can garble ('Unable to deserialize cloned data'), so they go nowhere.
-mock.method(console, 'log', () => {});
 
 const schedule = (id: string, totalReviews = 0): SRSData => ({
   id, type: 'vocab', nextReview: 0, interval: 0, memoryStrength: 0, lastReviewDate: 0, totalReviews, correctStreak: 0, stability: 0.5,

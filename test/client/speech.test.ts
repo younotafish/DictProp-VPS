@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, mock, test } from 'node:test';
 
-// services/speech.ts logs each voice event through logger.log; on a loaded machine those stdout lines can garble the
-// test runner's stream ('Unable to deserialize cloned data') after every subtest has passed. Mute them for the file.
-mock.method(console, 'log', () => {});
-
 // services/speech.ts, the system voice: its reset when the page comes back into view. The module reads the page and
 // the speech engine when it loads, so each test installs its own and imports a fresh copy.
 
