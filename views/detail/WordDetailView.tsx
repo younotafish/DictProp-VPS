@@ -505,24 +505,28 @@ export function WordDetailView(props: DetailViewBodyProps) {
       {/* Auto-play's preload; its progress shows in the notice stack. */}
       <SessionPreload active={isSentenceAutoPlaying} plan={preloadPlan} onLazyLoadImage={onLazyLoadImage} />
 
-      {/* Playback controls: the word slideshow and the examples' auto-play. */}
-      <WordPlaybackControls
-        countdownStartedAt={countdownStartedAt}
-        countdownFrozenMs={countdownFrozenMs}
-        timerMinutes={autoPlayTimerMinutes}
-        onCycleTimer={cycleTimerDuration}
-        slideshowPlaying={isAutoPlaying}
-        slideSpeed={autoPlaySpeed}
-        onCycleSpeed={cycleSpeed}
-        onToggleSlideshow={toggleAutoPlay}
-        examplesPlaying={isSentenceAutoPlaying}
-        repeats={sentenceRepeats}
-        onCycleRepeats={cycleRepeats}
-        gap={sentenceGap}
-        onCycleGap={cycleGap}
-        onToggleExamples={toggleSentenceAutoPlay}
-        onStyleClicked={handleStyleClicked}
-      />
+      {/* Playback controls: the word slideshow and the examples' auto-play. They float above everything in the view,
+          so they leave while an example is open over the card, whose bottom row and own controls sit where they do;
+          opening one stops auto-play, so there's nothing for them to show. */}
+      {!exampleSentencePreview && (
+        <WordPlaybackControls
+          countdownStartedAt={countdownStartedAt}
+          countdownFrozenMs={countdownFrozenMs}
+          timerMinutes={autoPlayTimerMinutes}
+          onCycleTimer={cycleTimerDuration}
+          slideshowPlaying={isAutoPlaying}
+          slideSpeed={autoPlaySpeed}
+          onCycleSpeed={cycleSpeed}
+          onToggleSlideshow={toggleAutoPlay}
+          examplesPlaying={isSentenceAutoPlaying}
+          repeats={sentenceRepeats}
+          onCycleRepeats={cycleRepeats}
+          gap={sentenceGap}
+          onCycleGap={cycleGap}
+          onToggleExamples={toggleSentenceAutoPlay}
+          onStyleClicked={handleStyleClicked}
+        />
+      )}
       {/* The Remembered! confirmation, shown only while the card it confirms is on screen */}
       {toast && toast.id === data.id && <RememberToast intervalDays={toast.intervalDays} />}
 
