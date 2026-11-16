@@ -1,11 +1,9 @@
 import { useCallback, type RefObject } from 'react';
 import type { StoredItem } from '../../types';
 import { getPlaybackProgress, getPlaybackState, pauseCurrent, resumeCurrent, speakNatural, type SpeakHandle } from '../../services/neuralTts';
+import { toggleActionFor } from '../../services/audio/playbackToggle';
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { exampleAt, readableExamples } from './cardReading';
-
-/** A second press once the clip is this far in restarts it, as the sentence speaker button does. */
-const RESTART_NEAR_END = 0.85;
 
 /**
  * Reads sentences one after another with a short breath between, or pauses and resumes them when one of them is
@@ -66,12 +64,11 @@ export function useExampleSpeech({ currentItemRef, isSentenceAutoPlayingRef, sen
   const toggleSpeak = useCallback((raw: string) => {
     const sentence = stripSentenceMarkers(raw || '').trim();
     if (!sentence) return;
-    const pb = getPlaybackState();
-    if (pb.text === sentence) {
-      if (pb.status === 'loading') return;                          // already starting this very sentence
-      if (pb.status === 'paused') { resumeCurrent(); return; }
-      // Mid-clip → pause; almost done → fall through and restart from the top.
-      if (pb.status === 'playing' && getPlaybackProgress() < RESTART_NEAR_END) { pauseCurrent(); return; }
+    switch (toggleActionFor(getPlaybackState(), sentence, getPlaybackProgress(), { onLoading: 'ignore', restartNearEnd: true })) {
+      case 'ignore': case 'cancel': return; // already starting this very sentence
+      case 'resume': resumeCurrent(); return;
+      case 'pause': pauseCurrent(); return; // mid-clip; almost done restarts from the top instead
+      case 'restart': case 'start': break;
     }
     if (sentenceReview && isSentenceAutoPlayingRef.current) return;
     stopAutoPlay();
