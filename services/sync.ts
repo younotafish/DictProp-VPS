@@ -1,3 +1,4 @@
+import { keepServerOwnedData } from '../server/src/shared/server-owned-data';
 import { getItemTitle, type StoredItem } from '../types';
 import { SRSAlgorithm } from './srsAlgorithm';
 import { warn } from './logger';
@@ -5,46 +6,6 @@ import { getItemContentHash, isItemDirty } from './itemHash';
 import { getServerImageVersion } from './libraryImages';
 import { isSameJson } from './sameJson';
 import type { SaveItemsResult } from './api/library';
-
-// MIRRORS keepServerOwnedData in server/src/db.ts. Only server-side jobs write these fields, and the server
-// keeps them when a save leaves them out (a fresh AI result saved over the card, say).
-const SERVER_OWNED_FIELDS = ['usageAudit', 'advancedEnrichment', 'localImageEnrichment'] as const;
-
-const withServerOwnedFields = (target: any, server: any): any => {
-  if (!target || typeof target !== 'object' || !server || typeof server !== 'object') return target;
-  let result = target;
-  for (const field of SERVER_OWNED_FIELDS) {
-    if (result[field] === undefined && server[field] !== undefined) {
-      if (result === target) result = { ...target };
-      result[field] = server[field];
-    }
-  }
-  return result;
-};
-
-/**
- * `data` with the server-owned fields it lacks taken from `server`, the server's copy of the item: the item's
- * own, each phrase vocab's by id, and a sentence's analysis while its text is unchanged.
- */
-const withServerOwnedData = (data: any, server: any, type: StoredItem['type']): any => {
-  let result = withServerOwnedFields(data, server);
-  if (type === 'sentence' && result.analysis === undefined && server.analysis !== undefined && result.text === server.text) {
-    result = { ...result, analysis: server.analysis, analysisGeneratedAt: server.analysisGeneratedAt };
-  }
-  if (type === 'phrase' && Array.isArray(result.vocabs) && Array.isArray(server.vocabs)) {
-    const serverVocabs = new Map<string, any>();
-    for (const vocab of server.vocabs) if (typeof vocab?.id === 'string') serverVocabs.set(vocab.id, vocab);
-    let changed = false;
-    const vocabs = result.vocabs.map((vocab: any) => {
-      if (typeof vocab?.id !== 'string') return vocab;
-      const kept = withServerOwnedFields(vocab, serverVocabs.get(vocab.id));
-      if (kept !== vocab) changed = true;
-      return kept;
-    });
-    if (changed) result = { ...result, vocabs };
-  }
-  return result;
-};
 
 /** The flags this device last synced, found when the local copy differs from that sync only in its flags. */
 const lastSyncedFlags = (item: StoredItem): { isDeleted?: true; isArchived?: true } | undefined => {
@@ -185,9 +146,10 @@ const mergeContent = (
     if (localHasContent || !remoteHasContent) {
       const remoteData = mergedItem.data;
       mergedItem.data = structuredClone(localItem.data);
-      // The server's copy of the same base kept the server-owned fields a save here left out.
-      if (!localWinsRevision && remoteRevision > 0 && localItem.type === remoteItem.type) {
-        mergedItem.data = withServerOwnedData(mergedItem.data, remoteData, remoteItem.type);
+      // The server's copy of the same base kept the server-owned fields a save here left out (only server-side jobs
+      // write them), by the rule the server's own writes follow.
+      if (!localWinsRevision && remoteRevision > 0) {
+        mergedItem.data = keepServerOwnedData(mergedItem.data, localItem.type, remoteData, remoteItem.type);
       }
     }
     // Otherwise the local copy is stripped (see hasFullContent) and the server's content stays.
