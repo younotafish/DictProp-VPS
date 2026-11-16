@@ -6,7 +6,11 @@ interface CardNavigationOptions {
   initialItemIndex: number;
   /** A new value moves the view to initialGroupIndex/initialItemIndex (see DetailViewProps). */
   navigationKey: number | undefined;
-  /** The card's scroller, put back at its top whenever the view arrives at another card. Sentence review has none. */
+  /**
+   * The card's scroller, put back at its top whenever another card shows: after a move to another word, or when a
+   * delete or archive slides the next card into place. Moving between a word's meanings keeps the place. Sentence
+   * review has none.
+   */
   scrollContainerRef?: RefObject<HTMLElement | null>;
   /** Sentence review keeps its analysis page open between sentences, scrolled back to the top. */
   sentenceReview: boolean;
@@ -75,30 +79,34 @@ export function useCardNavigation(
     setCurrentItemIndex(initialItemIndex);
   }, [navigationKey, initialGroupIndex, initialItemIndex, currentGroupIndex, scrollContainerRef]);
 
+  // A delete or archive slides the next card into the place on screen without a move; it opens at its top too.
+  const cardId = currentItem.data.id;
+  const placeRef = useRef<CardInPlace>({ groupIndex: currentGroupIndex, itemIndex: currentItemIndex, cardId });
+  useLayoutEffect(() => {
+    const place = { groupIndex: currentGroupIndex, itemIndex: currentItemIndex, cardId };
+    if (isNewCardInPlace(placeRef.current, place) && scrollContainerRef?.current) scrollContainerRef.current.scrollTop = 0;
+    placeRef.current = place;
+  }, [currentGroupIndex, currentItemIndex, cardId, scrollContainerRef]);
+
   return {
     currentGroupIndex, setCurrentGroupIndex, currentItemIndex, setCurrentItemIndex,
     safeGroupIndex, currentGroup, currentItem, hasNextGroup, hasPrevGroup, hasPrevItem,
   };
 }
 
+/** Where the view is, by its state's indices, and the card shown there. */
+export interface CardInPlace {
+  groupIndex: number;
+  itemIndex: number;
+  cardId: string;
+}
+
 /**
- * Puts the card's pages back at their tops when another card takes the slot on screen without a move, as when a
- * delete or archive slides the next card into place. `cardKey` names what fills the slot: a word card's group
- * title, so moving between its meanings keeps the place, or the listed sentence's id in sentence review, so a
- * preview binding to its saved copy keeps it too. A move between cards resets the pages already (above).
+ * Whether another card took the place on screen without a move, as when a delete or archive slides the next card
+ * into it. The indices are the state's rather than the clamped ones: deleting the last meaning leaves the state's
+ * index past the end, so the clamped index drops by one although nothing moved, and the clamp that follows changes
+ * the state's index but not the card.
  */
-export function useScrollTopOnNewCard(
-  cardKey: string | undefined,
-  { scrollContainerRef, sentenceReview }: Pick<CardNavigationOptions, 'scrollContainerRef' | 'sentenceReview'>,
-) {
-  const prevCardKeyRef = useRef(cardKey);
-  useLayoutEffect(() => {
-    if (prevCardKeyRef.current === cardKey) return;
-    prevCardKeyRef.current = cardKey;
-    if (scrollContainerRef?.current) scrollContainerRef.current.scrollTop = 0;
-    if (sentenceReview) {
-      const analysisScroller = document.querySelector<HTMLElement>('[data-sentence-analysis]');
-      if (analysisScroller) analysisScroller.scrollTop = 0;
-    }
-  }, [cardKey, scrollContainerRef, sentenceReview]);
+export function isNewCardInPlace(previous: CardInPlace, next: CardInPlace): boolean {
+  return previous.groupIndex === next.groupIndex && previous.itemIndex === next.itemIndex && previous.cardId !== next.cardId;
 }
