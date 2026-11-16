@@ -7,7 +7,6 @@ import { png, sha256 } from './support/fs.js';
 import { addItemImage, createOwner, OWNER_EMAIL, saveItem } from './support/library.js';
 import { runServerScript } from './support/scripts.js';
 
-const DATA_DIR = process.env.DATA_DIR!;
 const { getItemById, getItemImage } = await import('../src/db.js');
 
 const owner = createOwner();
@@ -36,7 +35,7 @@ function bundle(entries: object[], images: Record<string, Buffer | string> = {})
 }
 
 const runImport = (manifest: string) =>
-  runServerScript('import-sentence-backfill', [manifest], { DATA_DIR, OWNER_GOOGLE_EMAIL: OWNER_EMAIL });
+  runServerScript('import-sentence-backfill', [manifest], { OWNER_GOOGLE_EMAIL: OWNER_EMAIL });
 
 test('a sentence whose bundle image is bad still gets its analysis, and the image is reported as an error', () => {
   const good = sentence('bi-good', 'The lucid report settled the question.', { imageFile: 'images/good.png' });

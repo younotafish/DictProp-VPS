@@ -50,11 +50,6 @@ function bundle(files: string[], manifest: object): string {
   return join(dir, 'manifest.json');
 }
 
-// The scripts run as they do in production: their own process and connection on the same database.
-function runScript(name: string, ...args: string[]) {
-  return runServerScript(name, args, { DATA_DIR, OWNER_GOOGLE_EMAIL: OWNER_EMAIL });
-}
-
 test('the sentence backfill skips sentences edited or deleted after export without failing the run', () => {
   const texts: Record<string, string> = {
     'bf-ok': 'The lucid report settled the question.',
@@ -74,7 +69,7 @@ test('the sentence backfill skips sentences edited or deleted after export witho
   save('bf-changed', 'sentence', { text: 'Her lucid answer surprised everyone.', sourceWord: 'lucid' }, 2_000);
   softDeleteItem('bf-deleted', owner.id);
 
-  const run = runScript('import-sentence-backfill', manifest);
+  const run = runServerScript('import-sentence-backfill', [manifest]);
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.output.analysesUpdated, 1);
   assert.equal(run.output.imagesAdded, 1);
@@ -96,9 +91,9 @@ test('the sentence backfill skips sentences edited or deleted after export witho
 
   // An exported id that now holds another kind of item is an error, not a stale entry.
   save('bf-vocab', 'vocab', { word: 'lucid' });
-  const typeChanged = runScript('import-sentence-backfill', bundle(['bf-vocab'], {
+  const typeChanged = runServerScript('import-sentence-backfill', [bundle(['bf-vocab'], {
     version: 1, generatedAt: 100, entries: [entry('bf-vocab', 'Lucid.')],
-  }));
+  })]);
   assert.equal(typeChanged.status, 1, typeChanged.stderr);
   assert.equal(typeChanged.output.stale, 0);
   assert.deepEqual(typeChanged.output.errors, [{ id: 'bf-vocab', error: 'item is no longer a sentence' }]);
@@ -138,7 +133,7 @@ test('the offline image import publishes images with their parent and skips pare
   softDeleteItem('oi-deleted', owner.id);
   const revisionBefore = stored('oi-phrase').serverRevision;
 
-  const run = runScript('import-offline-images', manifest);
+  const run = runServerScript('import-offline-images', [manifest]);
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.output.replaced, 3);
   assert.equal(run.output.stale, 2);
@@ -165,7 +160,7 @@ test('the offline image import publishes images with their parent and skips pare
 
   // An image id that is neither the parent nor one of its vocabs is a malformed entry: an error.
   save('oi-other', 'vocab', { word: 'clear' });
-  const stray = runScript('import-offline-images', bundle(['oi-stray'], {
+  const stray = runServerScript('import-offline-images', [bundle(['oi-stray'], {
     version: 1,
     generatedAt: 200,
     model: 'test-image-model',
@@ -175,7 +170,7 @@ test('the offline image import publishes images with their parent and skips pare
       parentHash: corpusSourceHash(stored('oi-other').data),
       imageFile: 'images/oi-stray.png',
     }],
-  }));
+  })]);
   assert.equal(stray.status, 1, stray.stderr);
   assert.equal(stray.output.stale, 0);
   assert.deepEqual(stray.output.errors, [{ id: 'oi-stray', error: 'image id does not belong to parent item' }]);
@@ -198,7 +193,7 @@ test('the corpus audit import skips items edited or deleted after export without
   save('ca-changed', 'vocab', { word: 'frank', definition: 'edited' }, 2_000);
   softDeleteItem('ca-deleted', owner.id);
 
-  const run = runScript('import-corpus-audit', manifest);
+  const run = runServerScript('import-corpus-audit', [manifest]);
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.output.updated, 1);
   assert.equal(run.output.stale, 2);
@@ -212,10 +207,10 @@ test('the corpus audit import skips items edited or deleted after export without
 
   // An exported id that now holds another kind of item is an error, not a stale entry.
   save('ca-sentence', 'sentence', { text: 'Be candid with me.', sourceWord: 'candid' });
-  const typeChanged = runScript('import-corpus-audit', auditBundle([
+  const typeChanged = runServerScript('import-corpus-audit', [auditBundle([
     entry('ca-ok', 'vocab'),
     { ...entry('ca-sentence', 'sentence'), type: 'vocab', data: { id: 'ca-sentence', word: 'candid', usageAudit } },
-  ]));
+  ])]);
   assert.equal(typeChanged.status, 1, typeChanged.stderr);
   assert.equal(typeChanged.output.alreadyApplied, 1);
   assert.equal(typeChanged.output.stale, 0);
@@ -231,10 +226,10 @@ test('the corpus audit import writes a row stored before revisions existed like 
   const before = stored('ca-revision-zero');
   assert.equal(before.serverRevision ?? 0, 0);
 
-  const run = runScript('import-corpus-audit', auditBundle([{
+  const run = runServerScript('import-corpus-audit', [auditBundle([{
     id: 'ca-revision-zero', type: 'vocab', sourceHash: corpusSourceHash(before.data),
     data: { ...before.data, usageAudit }, wasArchived: false, archiveForUsage: false,
-  }]));
+  }])]);
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.output.updated, 1);
   assert.equal(run.output.stale, 0);
@@ -257,11 +252,11 @@ test('the corpus audit import applies explicit archive states and accepts unaudi
     };
   };
 
-  const run = runScript('import-corpus-audit', auditBundle([
+  const run = runServerScript('import-corpus-audit', [auditBundle([
     entry('sa-duplicate', 'vocab', {}, true),
     entry('sa-restored', 'vocab', { definition: 'indeed; truly' }, false),
     entry('sa-sentence', 'sentence', { sourceWord: 'candor' }),
-  ]));
+  ])]);
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.output.updated, 3);
   assert.equal(run.output.archivedOnRequest, 1);
@@ -276,7 +271,7 @@ test('the corpus audit import applies explicit archive states and accepts unaudi
 
   // An entry may leave out a usage audit only when the item has none.
   const { usageAudit: _dropped, ...unaudited } = stored('sa-audited').data;
-  const dropping = runScript('import-corpus-audit', auditBundle([{ ...entry('sa-audited', 'sentence', {}), data: unaudited }]));
+  const dropping = runServerScript('import-corpus-audit', [auditBundle([{ ...entry('sa-audited', 'sentence', {}), data: unaudited }])]);
   assert.equal(dropping.status, 1, dropping.stderr);
   assert.deepEqual(dropping.output.errors, [{ id: 'sa-audited', error: "entry would drop the item's usage audit" }]);
   assert.deepEqual(stored('sa-audited').data.usageAudit, usageAudit);
@@ -305,7 +300,7 @@ test('the repair only previews by default, and on --apply backs up first and kee
   const blobs = count('image_blobs');
   const references = count('item_images');
 
-  const preview = runScript('repair-production-data');
+  const preview = runServerScript('repair-production-data', []);
   assert.equal(preview.status, 0, preview.stderr);
   assert.equal(preview.output.mode, 'dry-run');
   assert.deepEqual(preview.output.staleImageReferenceIds, ['repair-orphan']);
@@ -313,7 +308,7 @@ test('the repair only previews by default, and on --apply backs up first and kee
   assert.equal(count('image_blobs'), blobs);
   assert.equal(count('item_images'), references);
 
-  const applied = runScript('repair-production-data', '--apply');
+  const applied = runServerScript('repair-production-data', ['--apply']);
   assert.equal(applied.status, 0, applied.stderr);
   assert.equal(applied.output.mode, 'applied');
   assert.equal(applied.output.deletedBlobCount, 2);

@@ -6,8 +6,6 @@ import test from 'node:test';
 import { png, sha256 } from './support/fs.js';
 import { runServerScript } from './support/scripts.js';
 
-const DATA_DIR = process.env.DATA_DIR!;
-
 const { getSentenceEnrichmentForText, getSentenceEnrichmentImage, upsertSentenceEnrichment } = await import('../src/db.js');
 const { exampleSentenceId, sentenceLookupHash } = await import('../src/sentence-lookup.js');
 
@@ -26,7 +24,7 @@ const entry = (text: string, generatedAt: number, imageFile?: string) => {
 };
 
 function runImport(manifest: string) {
-  return runServerScript('import-sentence-enrichments', [manifest], { DATA_DIR });
+  return runServerScript('import-sentence-enrichments', [manifest]);
 }
 
 test('a bad image is skipped and counted while the rest of the bundle imports', () => {

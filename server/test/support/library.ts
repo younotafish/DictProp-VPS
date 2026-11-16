@@ -1,10 +1,11 @@
 // A library in the test process's database, for the tests that run the exporters and audits against it. Each
 // script opens the same file in a process of its own, as production runs them inside the app container.
-import { spawnSync } from 'node:child_process';
 import type { SentenceAnalysis } from '../../src/sentence-analysis.js';
 import { srs } from './fixtures.js';
 import { png, sha256 } from './fs.js';
-import { SERVER_DIR } from './paths.js';
+import { spawnScript } from './scripts.js';
+
+export { lastJsonLine } from './scripts.js';
 
 const { createUserAndClaimItems, db, upsertItem, upsertItemImageBinary, upsertSentenceEnrichment } =
   await import('../../src/db.js');
@@ -70,20 +71,7 @@ export function storeRawBlob(data: Buffer): string {
   return contentHash;
 }
 
-/**
- * Runs server/src/scripts/<name>.ts in its own process against this database and returns its exit status and raw
- * output. NODE_TEST_CONTEXT stays out, or the child would report to the test runner instead of running.
- */
+/** spawnScript against this library: the script is given the owner's email, which it needs to find the owner. */
 export function runScript(name: string, args: readonly string[] = [], env: NodeJS.ProcessEnv = {}) {
-  const { NODE_TEST_CONTEXT: _testContext, ...parentEnv } = process.env;
-  const child = spawnSync(process.execPath, ['--import', 'tsx', `src/scripts/${name}.ts`, ...args], {
-    cwd: SERVER_DIR,
-    env: { ...parentEnv, DATA_DIR: process.env.DATA_DIR, OWNER_GOOGLE_EMAIL: OWNER_EMAIL, ...env },
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  return { status: child.status, stdout: child.stdout, stderr: child.stderr };
+  return spawnScript(name, args, { OWNER_GOOGLE_EMAIL: OWNER_EMAIL, ...env });
 }
-
-/** The script's report: its last line of output, parsed. */
-export const lastJsonLine = (stdout: string) => JSON.parse(stdout.trim().split('\n').at(-1) || 'null');
