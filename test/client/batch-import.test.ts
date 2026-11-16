@@ -48,7 +48,23 @@ test('words already saved are skipped, a word listed twice is analyzed once, and
   if (outcome.kind !== 'done') return;
   assert.equal(outcome.skipped, 1);
   assert.equal(outcome.saved, 2);
+  assert.equal(outcome.added, 2);
   assert.deepEqual(outcome.failedWords, []);
+});
+
+test('a word counts as added once, however many meanings it brings, and not at all when they were all saved', async () => {
+  const run = job([saved(vocab('lead', 'metal'))], {
+    bank: [vocab('bank', 'river edge', 'ai-1'), vocab('bank', 'money', 'ai-2')],
+    leads: [vocab('lead', 'metal', 'ai-3')],
+  });
+  const outcome = await runBatchImport(['bank', 'leads'], run.config);
+  assert.equal(outcome.kind, 'done');
+  if (outcome.kind !== 'done') return;
+  assert.deepEqual(run.analyzed.sort(), ['bank', 'leads']);
+  assert.equal(outcome.failed, 0);
+  assert.equal(outcome.saved, 2, 'two cards');
+  assert.equal(outcome.added, 1, 'one word: leads brought only the meaning lead already had');
+  assert.equal(outcome.skipped, 0, 'leads itself was not a saved word');
 });
 
 test('each new meaning is saved once as a fresh card, even when two words produce it', async () => {
@@ -100,9 +116,9 @@ test('a failing word is tried twice, with a longer wait when rate limited, then 
 test('progress is reported before the first word and after each one', async () => {
   const run = job([saved(vocab('known'))], { a: [vocab('a')], b: [] });
   await runBatchImport(['known', 'a', 'b'], run.config);
-  assert.deepEqual(run.reports[0], { current: 0, total: 2, skipped: 1, failed: 0, saved: 0, isRunning: true });
+  assert.deepEqual(run.reports[0], { current: 0, total: 2, skipped: 1, failed: 0, saved: 0 });
   assert.equal(run.reports.length, 3);
-  assert.deepEqual(run.reports.at(-1), { current: 2, total: 2, skipped: 1, failed: 0, saved: 1, isRunning: true });
+  assert.deepEqual(run.reports.at(-1), { current: 2, total: 2, skipped: 1, failed: 0, saved: 1 });
 });
 
 test('at most five words are analyzed at once', async () => {
@@ -120,4 +136,39 @@ test('at most five words are analyzed at once', async () => {
   const outcome = await runBatchImport(words, run.config);
   assert.equal(outcome.kind === 'done' && outcome.saved, 12);
   assert.equal(most, 5);
+});
+
+test('Stop lets the words under way finish and starts no other, and the import ends as stopped', async () => {
+  const stop = new AbortController();
+  const words = Array.from({ length: 8 }, (_, index) => `word${index}`);
+  // Each analysis answers a moment later and presses Stop; by then five words, one per worker, are under way.
+  const senses = Object.fromEntries(words.map(word => [word, async () => {
+    await Promise.resolve();
+    stop.abort();
+    return [vocab(word)];
+  }]));
+  const run = job([], senses);
+  const outcome = await runBatchImport(words, { ...run.config, signal: stop.signal });
+  assert.equal(outcome.kind, 'stopped');
+  if (outcome.kind !== 'stopped') return;
+  assert.deepEqual(run.analyzed, words.slice(0, 5), 'no word starts after Stop');
+  assert.equal(outcome.added, 5);
+  assert.equal(outcome.saved, 5);
+  assert.deepEqual(run.reports.at(-1), { current: 5, total: 8, skipped: 0, failed: 0, saved: 5 });
+  assert.deepEqual(run.waits, [], 'a stopped worker does not pause before a word it will not start');
+});
+
+test('an import stopped before it starts analyzes nothing, and a stop once every word has started still ends as done', async () => {
+  const before = new AbortController();
+  before.abort();
+  const idle = job([], { a: [vocab('a')] });
+  const stoppedFirst = await runBatchImport(['a'], { ...idle.config, signal: before.signal });
+  assert.equal(stoppedFirst.kind, 'stopped');
+  assert.deepEqual(idle.analyzed, []);
+
+  const late = new AbortController();
+  const run = job([], { a: async () => { await Promise.resolve(); late.abort(); return [vocab('a')]; }, b: [vocab('b')] });
+  const outcome = await runBatchImport(['a', 'b'], { ...run.config, signal: late.signal });
+  assert.equal(outcome.kind, 'done', 'both words had started');
+  assert.equal(outcome.kind === 'done' && outcome.added, 2);
 });

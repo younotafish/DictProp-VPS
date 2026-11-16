@@ -10,6 +10,7 @@ import { useOverlay, useOverlayFocusReturn } from './components/overlayStack';
 import { AppStatusPills } from './components/AppStatus';
 import { connectivityNotice } from './services/connectivityNotice';
 import { requestLookup } from './services/searchRequests';
+import type { JobNotice } from './services/jobNotices';
 import { useFrozenWhile } from './hooks/useStableValue';
 import { warn } from './services/logger';
 import { installDebugItems } from './services/debugItems';
@@ -23,6 +24,7 @@ import { useDetailView } from './hooks/useDetailView';
 import { useUndoOffer } from './hooks/useUndoOffer';
 import { useNavBar } from './hooks/useNavBar';
 import { useOverlays } from './hooks/useOverlays';
+import { useJobNotice } from './hooks/useJobNotice';
 import { useAppShortcuts } from './hooks/useAppShortcuts';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { useOfflineImages } from './hooks/useOfflineImages';
@@ -115,6 +117,9 @@ function SignedInApp({ user }: { user: AuthUser }) {
     cardPopup, openCardPopup, closeCardPopup, popupItems, duplicateClusters, setDuplicateClusters, confirmModal, setConfirmModal,
     showKeyboardHelp, setShowKeyboardHelp, openKeyboardHelp, showRefusedReviews, setShowRefusedReviews, openRefusedReviews, dialogOpen, modalOpen,
   } = overlays;
+  // The background jobs' result pill (services/jobNotices).
+  const jobs = useJobNotice();
+  const { jobNotice, dismissJobNotice } = jobs;
 
   // The tabs sit under DetailView and the card popup, so their lists skip the reviews made there as they happen.
   // They catch up a second after the reviews stop, while hidden, so closing them doesn't have to.
@@ -149,7 +154,12 @@ function SignedInApp({ user }: { user: AuthUser }) {
     handleSave, handleAttachSentenceImage, handleDelete, handleArchive, handleRemoveVocabFromPhrase, handleUnarchive,
     patchLiveItem, handleSaveSentence, handleRefreshReplace, resetSRS,
   } = actions;
-  const { batchImportProgress, handleBatchImport } = useBatchImport(library, overlays, actions, speech);
+  const { batchImportProgress, batchImportRunning, handleBatchImport, stopBatchImport } = useBatchImport(library, jobs, actions, speech);
+  // A job result's Retry: a batch import's failed words, imported again.
+  const retryJob = useCallback((notice: JobNotice) => {
+    dismissJobNotice();
+    if (notice.retryWords) void handleBatchImport(notice.retryWords);
+  }, [dismissJobNotice, handleBatchImport]);
 
   const { fetchSensesForWord, saveVocabSense } = useSenseLookup(handleSave);
 
@@ -214,10 +224,18 @@ function SignedInApp({ user }: { user: AuthUser }) {
         imagePrefetchProgress={imagePrefetchProgress}
         onStopImageDownload={stopImageDownload}
         imageRestoreProgress={imageRestoreProgress}
-        jobPills={ttsGenProgress?.isRunning && (
+        jobPills={(ttsGenProgress?.isRunning || batchImportProgress || jobNotice) && (
           <Suspense fallback={null}>
             <ErrorBoundary variant="overlay">
-              <JobPills ttsGenProgress={ttsGenProgress} onStopSpeechGeneration={() => { ttsGenAbortRef.current = true; }} />
+              <JobPills
+                ttsGenProgress={ttsGenProgress}
+                onStopSpeechGeneration={() => { ttsGenAbortRef.current = true; }}
+                batchImportProgress={batchImportProgress}
+                onStopBatchImport={stopBatchImport}
+                jobNotice={jobNotice}
+                onRetryJob={retryJob}
+                onDismissJobNotice={dismissJobNotice}
+              />
             </ErrorBoundary>
           </Suspense>
         )}
@@ -331,7 +349,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
             hasOverlay={overlayOpen}
             onBatchImport={handleBatchImport}
             onJSONImported={handleForceSync}
-            batchImportProgress={batchImportProgress}
+            batchImportRunning={batchImportRunning}
             onGenerateAllSpeech={handleGenerateAllSpeech}
             speechGenerationRunning={!!ttsGenProgress?.isRunning}
             onRestoreImagesToServer={handleRestoreImagesToServer}

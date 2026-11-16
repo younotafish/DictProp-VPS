@@ -7,6 +7,7 @@ import { AppStatusPills } from '../../components/AppStatus.tsx';
 import { JobPills } from '../../components/JobPills.tsx';
 import { NoticePill, type NoticeTone } from '../../components/NoticePill.tsx';
 import { announceUpdate, dismissUpdate } from '../../services/appUpdate.ts';
+import type { JobNotice } from '../../services/jobNotices.ts';
 import { clearRefusedReviews, recordRefusedReview } from '../../services/refusedReviews.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 
@@ -38,6 +39,11 @@ type JobProps = ComponentProps<typeof JobPills>;
 const noJobs: JobProps = {
   ttsGenProgress: null,
   onStopSpeechGeneration: () => {},
+  batchImportProgress: null,
+  onStopBatchImport: () => {},
+  jobNotice: null,
+  onRetryJob: () => {},
+  onDismissJobNotice: () => {},
 };
 /** The job pills as App renders them into the stack. */
 const jobPills = (props: Partial<JobProps>) => createElement(JobPills, { ...noJobs, ...props });
@@ -169,6 +175,54 @@ test('the jobs keep their texts and their stop buttons', () => {
   assert.match(renderJobs({ ttsGenProgress: { isRunning: true, current: 0, total: 100 } }), / · ~2m left</);
   assert.match(renderStack({ imageRestoreProgress: { phase: 'failed', done: 0, total: 0, failed: 0 } }), /bg-rose-600/);
   assert.match(renderStack({ imageRestoreProgress: { phase: 'done', done: 4, total: 4, failed: 0 } }), /bg-emerald-600[^>]*><span class="min-w-0 truncate">Restored 4 images to the server ✓/);
+});
+
+const importing = (current: number, total: number, stopping = false) =>
+  ({ current, total, skipped: 0, failed: 0, saved: current, stopping });
+
+test('a batch import shows how far it has got, on every tab, with a × that stops it', () => {
+  const html = renderJobs({ batchImportProgress: importing(12, 40) });
+  assert.match(html, /<span class="min-w-0 truncate">Adding words · 12\/40<\/span>/);
+  assert.match(html, /style="width:30%"/, 'the bar');
+  assert.match(html, /animate-spin/);
+  assert.match(html, /<button type="button" title="Stop adding" aria-label="Stop adding words" class="shrink-0 w-8 h-8 rounded-full/);
+  assert.match(renderJobs({ batchImportProgress: importing(1_200, 7_000) }), />Adding words · 1,200\/7,000</);
+});
+
+test('once Stop is pressed the pill says so, with nothing left to press, until the words under way are done', () => {
+  const html = renderJobs({ batchImportProgress: importing(12, 40, true) });
+  assert.match(html, />Stopping · 12\/40</);
+  assert.doesNotMatch(html, /Stop adding words|<button/);
+});
+
+test('a job\'s result is a pill with a × that dismisses it, and Retry only when it offers one', () => {
+  const done = renderJobs({ jobNotice: { text: 'Added 18 words · 2 already saved', tone: 'emerald', timeoutMs: 4_000 } });
+  assert.match(done, /<div role="status" class="[^"]*bg-emerald-600[^"]*"><span class="min-w-0 truncate">Added 18 words · 2 already saved<\/span>/);
+  assert.match(done, /<button type="button" title="Dismiss" aria-label="Dismiss this notice"/);
+  assert.doesNotMatch(done, />Retry</);
+
+  const failed: JobNotice = { text: 'Couldn’t add 3 words', tone: 'rose', timeoutMs: null, retryWords: ['qwxz', 'zzyzx', 'blorp'] };
+  const alert = renderJobs({ jobNotice: failed });
+  assert.match(alert, /<div role="alert" class="[^"]*bg-rose-600[^"]*"><span class="min-w-0 truncate">Couldn’t add 3 words<\/span><button type="button" class="[^"]*">Retry<\/button><button type="button" title="Dismiss"/);
+  const whileImporting = renderJobs({ jobNotice: failed, batchImportProgress: importing(1, 5) });
+  assert.match(whileImporting, /<button type="button" disabled="" class="[^"]*">Retry<\/button>/, 'Retry waits for the import under way');
+});
+
+test('the jobs come after the progress slot, and the last result just above the long-lived notices', t => {
+  refuseOneReview();
+  t.after(() => clearRefusedReviews('u1'));
+  const html = renderStack({
+    imagePrefetchProgress: { done: 3, total: 40 },
+    jobPills: jobPills({
+      ttsGenProgress: { isRunning: true, current: 10, total: 100 },
+      batchImportProgress: importing(12, 40),
+      jobNotice: { text: 'No duplicates found', tone: 'emerald', timeoutMs: 3_000 },
+    }),
+  });
+  const order = ['data-notice-slot="progress"', 'Offline images · 3/40', 'Generating sentence audio', 'Adding words · 12/40',
+    'No duplicates found', '1 review wasn’t accepted'].map(text => html.indexOf(text));
+  assert.ok(order.every(index => index >= 0), `every notice renders: ${order}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order);
 });
 
 const renderPill = (props: Partial<ComponentProps<typeof NoticePill>>) =>

@@ -52,8 +52,8 @@ interface AppStatusPillsProps {
  * visible across tabs and views, so a notice arriving or leaving never moves the page. The stack grows upward and
  * keeps its pills in order of how long they stay, so one coming or going moves only the shorter-lived ones above
  * it: short-lived on top (the undo offer, then the search status line's slot), then progress (a session's preload
- * slot, then the background jobs), then the long-lived notices at the bottom (the couldn't-save alert, the Offline
- * chip, refused reviews, then the update).
+ * slot, the background jobs, then the result of the last one to end), then the long-lived notices at the bottom
+ * (the couldn't-save alert, the Offline chip, refused reviews, then the update).
  * Both slots are always rendered, under the same parent: the notices that portal into them would vanish with a slot
  * rendered conditionally or moved. On the tabs the stack floats above the tab bar, so it never covers a tab; over a card
  * it starts where the card's floating controls end.

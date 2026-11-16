@@ -9,7 +9,8 @@ import { NotebookToolsPanel } from '../../views/notebook/NotebookToolsMenu.tsx';
 const noop = () => {};
 type PanelProps = ComponentProps<typeof NotebookToolsPanel>;
 const renderPanel = (props: Partial<PanelProps> = {}) => renderToStaticMarkup(createElement(NotebookToolsPanel, {
-  offline: false, onAnalyzeText: noop, onBatchImport: noop, onImportJSON: noop, onDownloadOfflineImages: noop, onForceSync: noop,
+  offline: false, onAnalyzeText: noop, onBatchImport: noop, batchImportRunning: false, onImportJSON: noop, onDownloadOfflineImages: noop,
+  onForceSync: noop,
   syncStatus: 'idle', onGenerateAllSpeech: noop, speechGenerationRunning: false, onRestoreImagesToServer: noop,
   imageRestoreRunning: false, onFindDuplicates: noop, onShowShortcuts: noop, onChosen: noop, ...props,
 }));
@@ -53,4 +54,13 @@ test('offline, the tools that need the server stay in place, disabled with the r
   // Online nothing is disabled but a running job.
   assert.ok(menuRows(renderPanel()).every(row => !row.disabled));
   assert.deepEqual(menuRows(renderPanel({ syncStatus: 'syncing' })).filter(row => row.disabled).map(row => row.label), ['Sync now']);
+});
+
+test('while a batch import runs, its row is busy and disabled, so a second import can\'t start', () => {
+  const html = renderPanel({ batchImportRunning: true });
+  assert.deepEqual(menuRows(html).filter(row => row.disabled).map(row => row.label), ['Batch import']);
+  const row = html.match(/<button disabled=""[^>]*>(.*?)<\/button>/)?.[1] ?? '';
+  assert.match(row, /animate-spin/, 'the spinner takes the icon\'s place');
+  assert.doesNotMatch(row, /lucide-list-plus/);
+  assert.match(renderPanel(), /lucide-list-plus/, 'the row\'s own icon, while no import runs');
 });

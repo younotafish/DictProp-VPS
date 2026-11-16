@@ -7,7 +7,6 @@ import { BatchImport } from '../components/BatchImport';
 import { JSONImport } from '../components/JSONImport';
 import { makeVocabStoredItem } from '../services/items';
 import { useLatest } from '../hooks/useStableValue';
-import type { BatchImportProgress } from '../hooks/useBatchImport';
 import {
   buildNotebookRows, listNoteFor, nextNotebookFilter, nextNotebookSort, notebookStats,
   type NotebookFilter, type NotebookRow, type NotebookSection, type NotebookSort,
@@ -26,7 +25,6 @@ import { NotebookSearchBar } from './notebook/NotebookSearchBar';
 import { ArchivedMatchesHeader, ArchivedToggle, DueHeader, ListNote } from './notebook/ListRows';
 import { CompareBanner, CompareRow, CompareSelectedButton } from './notebook/CompareMode';
 import { EmptyNotebook } from './notebook/EmptyNotebook';
-import { BatchImportBanner } from './notebook/BatchImportBanner';
 import { SearchErrorBanner } from './notebook/SearchErrorBanner';
 import { useAutoHidingHeader } from './notebook/useAutoHidingHeader';
 import { useNotebookAISearch } from './notebook/useNotebookAISearch';
@@ -78,7 +76,8 @@ interface NotebookProps {
    */
   hasOverlay: boolean;
   onBatchImport: (words: string[]) => void;
-  batchImportProgress: BatchImportProgress | null;
+  /** A batch import is running, so its tool shows busy; its progress is a pill in the notice stack. */
+  batchImportRunning: boolean;
   onJSONImported: () => void;
   onGenerateAllSpeech: () => void;
   /** The speech sweep is running, so its tool shows busy. */
@@ -95,7 +94,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
     user, onSignOut, onViewRefusedReviews, syncStatus, onScroll, onForceSync, isOnline, offline,
     isVocabSaved, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
     onSaveSentence, isSentenceSaved, hasOverlay,
-    onBatchImport, batchImportProgress, onJSONImported,
+    onBatchImport, batchImportRunning, onJSONImported,
     onGenerateAllSpeech, speechGenerationRunning,
     onRestoreImagesToServer, imageRestoreRunning, onDownloadOfflineImages, matchSavedBases, onSyncScroll, onShowShortcuts,
 }) => {
@@ -446,6 +445,7 @@ export const NotebookView: React.FC<NotebookProps> = ({
             offline={offline}
             onAnalyzeText={() => setShowTextAnalyzer(true)}
             onBatchImport={() => setShowBatchImport(true)}
+            batchImportRunning={batchImportRunning}
             onImportJSON={() => setShowJSONImport(true)}
             onDownloadOfflineImages={onDownloadOfflineImages}
             onForceSync={onForceSync}
@@ -491,8 +491,6 @@ export const NotebookView: React.FC<NotebookProps> = ({
             onFocusChange={setSearchFocused}
           />
         )}
-        {/* Batch Import Progress Banner, part of the header so it hides and shows with it */}
-        {batchImportProgress?.isRunning && <BatchImportBanner progress={batchImportProgress} />}
       </NotebookHeader>
 
       {hasSavedItems ? (

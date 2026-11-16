@@ -10,6 +10,8 @@ interface NotebookToolsMenuProps {
   offline: boolean;
   onAnalyzeText: () => void;
   onBatchImport: () => void;
+  /** A batch import is running: its tool shows busy until it ends. */
+  batchImportRunning: boolean;
   onImportJSON: () => void;
   onDownloadOfflineImages: () => void;
   onForceSync: () => void;
@@ -59,9 +61,9 @@ type NotebookToolsPanelProps = NotebookToolsMenuProps & {
  * Offline, the tools that need the server stay in place, disabled with the reason (services/connectivityNotice).
  */
 export const NotebookToolsPanel: React.FC<NotebookToolsPanelProps> = ({
-  offline, onAnalyzeText, onBatchImport, onImportJSON, onDownloadOfflineImages, onForceSync, syncStatus,
-  onGenerateAllSpeech, speechGenerationRunning, onRestoreImagesToServer, imageRestoreRunning, onFindDuplicates,
-  onShowShortcuts, onChosen,
+  offline, onAnalyzeText, onBatchImport, batchImportRunning, onImportJSON, onDownloadOfflineImages, onForceSync,
+  syncStatus, onGenerateAllSpeech, speechGenerationRunning, onRestoreImagesToServer, imageRestoreRunning,
+  onFindDuplicates, onShowShortcuts, onChosen,
 }) => {
   // Choosing a tool closes the menu first.
   const choose = (tool: () => void) => () => {
@@ -80,7 +82,7 @@ export const NotebookToolsPanel: React.FC<NotebookToolsPanelProps> = ({
         </div>
       </div>
       <MenuItem icon={<ScanText size={17} />} label="Analyze text" onSelect={choose(onAnalyzeText)} disabledReason={reason('analyze')} />
-      <MenuItem icon={<ListPlus size={17} />} label="Batch import" onSelect={choose(onBatchImport)} disabledReason={reason('batch')} />
+      <MenuItem icon={<ListPlus size={17} />} label="Batch import" onSelect={choose(onBatchImport)} busy={batchImportRunning} disabledReason={reason('batch')} />
       <MenuItem icon={<FileJson size={17} />} label="Import JSON" onSelect={choose(onImportJSON)} disabledReason={reason('json')} />
       <MenuItem icon={<Download size={17} />} label="Download image pack" onSelect={choose(onDownloadOfflineImages)} disabledReason={reason('images')} />
       <MenuItem icon={<RefreshCw size={17} />} label="Sync now" onSelect={choose(onForceSync)} busy={syncStatus === 'syncing'} disabledReason={reason('sync')} />

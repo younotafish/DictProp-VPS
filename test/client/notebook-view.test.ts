@@ -14,7 +14,7 @@ const render = (items: StoredItem[], extra: Partial<ComponentProps<typeof Notebo
     onSignOut: async () => false, onViewRefusedReviews: noop, onScroll: noop,
     onForceSync: noop, isVocabSaved: () => false, onFindDuplicates: noop, onArchive: noop, onUnarchive: noop,
     onSave: noop, onCompare: noop, onSaveSentence: noop, isSentenceSaved: () => false, onBatchImport: noop,
-    batchImportProgress: null, onJSONImported: noop, onGenerateAllSpeech: noop, speechGenerationRunning: false,
+    batchImportRunning: false, onJSONImported: noop, onGenerateAllSpeech: noop, speechGenerationRunning: false,
     onRestoreImagesToServer: noop, imageRestoreRunning: false, onDownloadOfflineImages: noop,
     ...extra,
   }));
@@ -42,9 +42,10 @@ test('an empty notebook keeps its header, with the tools and Sign out, over its 
   }
 });
 
-test('a batch import started from an empty notebook shows its progress under the header', () => {
-  const progress = { current: 2, total: 5, skipped: 0, failed: 0, saved: 2, isRunning: true };
-  assert.match(render([], { batchImportProgress: progress }), /Importing words\.\.\..*2\/5 done · 2 saved/);
+test('a batch import under way adds nothing to the notebook: its progress is a pill in the notice stack', () => {
+  for (const items of [[], [word('ubiquitous')]]) {
+    assert.doesNotMatch(render(items, { batchImportRunning: true }), /Importing words|Adding words/);
+  }
 });
 
 test('a notebook with a word in it has the search bar and the list controls, and no invitation', () => {
