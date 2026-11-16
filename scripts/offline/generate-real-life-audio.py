@@ -79,10 +79,14 @@ def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+# server/src/tts/cache.ts's ttsKey, sha256 of the voice, a newline and the trimmed text: the importer refuses a clip
+# whose key differs, and the app asks the speech cache for clips by it. Change the two together.
 def cache_key(text: str, voice: str) -> str:
     return hashlib.sha256(f"{voice}\n{text.strip()}".encode("utf-8")).hexdigest()
 
 
+# Drops the {{studied item}} and [[uncommon term]] markers as server/src/shared/sentence-markers.ts's
+# stripSentenceMarkers does, so each clip speaks the text the app asks the speech cache for. Change the two together.
 def strip_markers(text: str) -> str:
     return re.sub(r"\[\[(.+?)\]\]", r"\1", re.sub(r"\{\{(.+?)\}\}", r"\1", text or "")).strip()
 
