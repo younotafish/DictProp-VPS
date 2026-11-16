@@ -248,11 +248,13 @@ const candidatePattern = (candidate: string, wordEnd = true): RegExp => new RegE
 );
 
 // A multi-word target the model split ('{{turned}} it {{down}}', '{{run}} {{down}}') becomes one target over the span,
-// the form the prompt asks for ('{{turned it down}}'): consecutive targets made only of one multi-word candidate's
-// words, naming all of them between them, at most three words more than the candidate apart and no lookup between.
-function mergeSplitTarget(s: string, candidates: string[]): string {
+// the form the prompt asks for ('{{turned it down}}'): consecutive targets that spell one multi-word candidate, each of
+// its words once and in order, at most three words more than the candidate apart and no lookup between. A target that
+// already holds the whole candidate is never merged with a neighbor that repeats one of its words. Also says which of
+// the example's targets is the joined one.
+function mergeSplitTarget(s: string, candidates: string[]): { text: string; joined?: number } {
   const targets = [...s.matchAll(/\{\{([^{}]+)\}\}/g)];
-  if (targets.length < 2) return s;
+  if (targets.length < 2) return { text: s };
   for (const candidate of candidates) {
     const candidateWords = wordsOf(candidate);
     if (candidateWords.length < 2) continue;
@@ -268,15 +270,15 @@ function mergeSplitTarget(s: string, candidates: string[]): string {
       const end = (targets[last].index ?? 0) + targets[last][0].length;
       const span = s.slice(start, end);
       const plain = span.replace(/\{\{|\}\}/g, '');
-      const named = new Set(targets.slice(first, last + 1).flatMap(target => wordsOf(target[1])));
+      const spelled = targets.slice(first, last + 1).flatMap(target => wordsOf(target[1])).join(' ');
       if (last > first && !span.includes('[[') && wordsOf(plain).length <= candidateWords.length + 3 &&
-          candidateWords.every(word => named.has(word))) {
-        return `${s.slice(0, start)}{{${plain}}}${s.slice(end)}`;
+          spelled === candidateWords.join(' ')) {
+        return { text: `${s.slice(0, start)}{{${plain}}}${s.slice(end)}`, joined: first };
       }
       first = last + 1;
     }
   }
-  return s;
+  return { text: s };
 }
 
 // Which of several targets is the studied item: one equal to a candidate; else one holding a candidate as whole words;
@@ -300,8 +302,8 @@ function chooseTarget(targets: string[], candidates: string[]): number {
 
 /**
  * Fix the example markup slips the model makes most often, before validation: a lookup nested in the
- * target, stray brackets, a phrase split over two targets (joined into one), two targets (the one that
- * is not the headword becomes a lookup), no target (a lookup naming the headword is promoted, else the
+ * target, stray brackets, a phrase split over two targets (joined into one, which stays the target), two targets (the
+ * one that is not the headword becomes a lookup), no target (a lookup naming the headword is promoted, else the
  * headword or a listed form is marked), and more than four lookups (the extras are unwrapped). Wording
  * is never changed.
  */
@@ -318,10 +320,12 @@ export function repairGeneratedExample(example: string, word: string, forms: str
 
   const candidates = [word, ...forms].map(form => form.trim()).filter(Boolean);
   const lowerCandidates = candidates.map(form => form.toLowerCase());
-  s = mergeSplitTarget(s, lowerCandidates);
+  const merged = mergeSplitTarget(s, lowerCandidates);
+  s = merged.text;
   const targets = [...s.matchAll(/\{\{([^{}]+)\}\}/g)];
   if (targets.length > 1) {
-    const keep = chooseTarget(targets.map(target => target[1]), lowerCandidates);
+    // A target just joined from the item's own words is the item; otherwise the tiers decide.
+    const keep = merged.joined ?? chooseTarget(targets.map(target => target[1]), lowerCandidates);
     let index = -1;
     s = s.replace(/\{\{([^{}]+)\}\}/g, (_match, inner: string) => (++index === keep ? `{{${inner}}}` : `[[${inner}]]`));
   } else if (targets.length === 0) {

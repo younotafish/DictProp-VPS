@@ -206,6 +206,10 @@ test('example markup slips are repaired without changing the wording', () => {
     ['She was totally {{run}} {{down}} after that trip.', 'run down', [], 'She was totally {{run down}} after that trip.'],
     ['He {{turned}} it {{down}} without a second thought.', 'turn down', ['turns down', 'turned down'], 'He {{turned it down}} without a second thought.'],
     ['I {{turned}} the offer {{down}} flat, honestly.', 'turn down', ['turned down'], 'I {{turned the offer down}} flat, honestly.'],
+    // The joined phrase stays the target even when another word was marked too.
+    ['My {{friend}} kept {{turning}} the offer {{down}} all week.', 'turn down', ['turning down'], 'My [[friend]] kept {{turning the offer down}} all week.'],
+    // A target that already holds the whole phrase keeps it; a neighbor repeating one of its words becomes a lookup.
+    ['{{In the end}}, {{in}} my view, it all worked out fine.', 'in the end', [], '{{In the end}}, [[in]] my view, it all worked out fine.'],
     // Too far apart to be one phrase: the target stays on the verb.
     ['I {{turned}} that whole crazy job offer {{down}} last week.', 'turn down', ['turned down'], 'I {{turned}} that whole crazy job offer [[down]] last week.'],
     // An inflection the forms don't list still beats another marked word.
