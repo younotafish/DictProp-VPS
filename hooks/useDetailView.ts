@@ -3,8 +3,7 @@ import { getItemTitle, isSentenceItem, type ItemGroup, type SentenceData, type S
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { sentenceSourceResolver } from '../services/sentenceSource';
 import { normalizeSentenceIdentity } from '../services/sentenceIdentity';
-import { isRealLifeProgressItem } from '../services/realLifeProgressIdentity';
-import { isEssayProgressItem } from '../services/essayProgressIdentity';
+import { isCatalogProgressItem } from '../services/catalogProgressIdentity';
 import { useStableArray } from './useStableValue';
 import type { Library } from './useLibrary';
 import type { LibraryViews } from './useLibraryViews';
@@ -203,7 +202,7 @@ export function useDetailView(
     if (!identity) return null;
 
     const existing = latestItemsRef.current.find(item =>
-      !item.isDeleted && isSentenceItem(item) && !isRealLifeProgressItem(item) && !isEssayProgressItem(item) &&
+      !item.isDeleted && isSentenceItem(item) && !isCatalogProgressItem(item) &&
       normalizeSentenceIdentity((item.data as SentenceData).text) === identity
     );
     if (existing) return existing;

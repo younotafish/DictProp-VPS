@@ -3,9 +3,10 @@ import { getItemSense, getItemSpelling, getItemTitle, type ItemGroup, type Sente
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { stopCurrent } from '../../services/lazyTts';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
+import { isCatalogProgressItem } from '../../services/catalogProgressIdentity';
 import { syntheticSourceItem } from '../../hooks/useDetailView';
 import { SENTENCE_PREVIEW_ID_PREFIX } from './sentenceUnderReview';
-import { isCatalogProgressItem, type SavedSentenceIndex } from './useSavedSentenceIndex';
+import type { SavedSentenceIndex } from './useSavedSentenceIndex';
 import type { DetailViewProps } from './types';
 
 interface ExampleSentencePreviewOptions {

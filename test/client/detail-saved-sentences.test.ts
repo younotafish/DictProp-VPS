@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { indexSavedSentences, isCatalogProgressItem } from '../../views/detail/useSavedSentenceIndex.ts';
+import { indexSavedSentences } from '../../views/detail/useSavedSentenceIndex.ts';
 import { resolveSentenceUnderReview } from '../../views/detail/sentenceUnderReview.ts';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity.ts';
 import type { SentenceData, StoredItem } from '../../types.ts';
@@ -15,12 +15,6 @@ const TEXT = 'The meeting ran long.';
 const ordinary = sentence('s1', TEXT);
 const realLife = sentence('real-life-sentence:rl-7', 'the meeting ran long', { catalogSentenceId: 'rl-7', catalogCollectionId: 'office' });
 const essay = sentence('essay-sentence:es-3', TEXT, { catalogKind: 'essay', catalogSentenceId: 'es-3', catalogCollectionId: 'essay-1' });
-
-test('catalog progress records are told apart from ordinary sentences', () => {
-  assert.equal(isCatalogProgressItem(realLife), true);
-  assert.equal(isCatalogProgressItem(essay), true);
-  assert.equal(isCatalogProgressItem(ordinary), false);
-});
 
 test('the text lookup finds only ordinary sentences; the id lookup finds every live sentence', () => {
   const deleted = sentence('s0', TEXT, {}, true);

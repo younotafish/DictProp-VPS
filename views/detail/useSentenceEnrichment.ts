@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } fro
 import type { SentenceData, StoredItem } from '../../types';
 import { warn } from '../../services/logger';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
+import { isCatalogProgressItem } from '../../services/catalogProgressIdentity';
 import { hasDetailedSentenceAnalysis, mergePreparedSentence, SENTENCE_PREFETCH_AHEAD } from './detailUtils';
-import { isCatalogProgressItem } from './useSavedSentenceIndex';
 
 interface SentenceEnrichmentOptions {
   sentenceItems: StoredItem[];

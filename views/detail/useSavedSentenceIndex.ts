@@ -1,11 +1,7 @@
 import { useMemo } from 'react';
 import type { SentenceData, StoredItem } from '../../types';
 import { normalizeSentenceIdentity } from '../../services/sentenceIdentity';
-import { isRealLifeProgressItem } from '../../services/realLifeProgressIdentity';
-import { isEssayProgressItem } from '../../services/essayProgressIdentity';
-
-/** A Real Life or Essay sentence's progress record, which belongs to its catalog sentence rather than to its text. */
-export const isCatalogProgressItem = (item: StoredItem): boolean => isRealLifeProgressItem(item) || isEssayProgressItem(item);
+import { isCatalogProgressItem } from '../../services/catalogProgressIdentity';
 
 /**
  * The library's saved sentences by id, and by normalized text for the lookups that bind a preview to its saved
