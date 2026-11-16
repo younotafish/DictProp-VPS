@@ -1,6 +1,8 @@
 import { serve } from '@hono/node-server';
 import { env } from './env.js';
 import { createApp } from './app.js';
+import { db } from './db.js';
+import { createShutdown } from './shutdown.js';
 
 const app = createApp();
 
@@ -14,20 +16,11 @@ const server = serve({
 
 console.log(`Server running at http://localhost:${env.PORT}${env.DEV_AUTH_BYPASS ? ' (auth bypass, loopback only)' : ''}`);
 
-let shuttingDown = false;
-function shutdown(reason: string, exitCode = 0) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  console.log(`${reason}, closing HTTP server...`);
-  server.close((error) => {
-    if (error) {
-      console.error('Failed to close HTTP server:', error);
-      exitCode = 1;
-    }
-    process.exit(exitCode);
-  });
-  setTimeout(() => process.exit(1), 10_000).unref();
-}
+const shutdown = createShutdown({
+  closeServer: done => server.close(done),
+  closeDatabase: () => db.close(),
+  exit: code => process.exit(code),
+});
 
 process.once('SIGTERM', () => shutdown('SIGTERM received'));
 process.once('SIGINT', () => shutdown('SIGINT received'));
@@ -41,4 +34,4 @@ process.once('unhandledRejection', error => {
 });
 
 // Full-corpus TTS backfill remains available through POST /api/tts/backfill. Do not start it on boot:
-// model calls, alignment, and ffmpeg work can monopolize the 1-vCPU VPS immediately after a deploy.
+// model calls, alignment, and ffmpeg work can monopolize the 2-vCPU VPS immediately after a deploy.
