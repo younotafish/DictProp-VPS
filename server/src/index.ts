@@ -1,23 +1,25 @@
+import type { Server } from 'node:http';
 import { serve } from '@hono/node-server';
 import { env } from './env.js';
 import { createApp } from './app.js';
 import { db } from './db.js';
-import { createShutdown } from './shutdown.js';
+import { createShutdown, drainHttpServer } from './shutdown.js';
 
 const app = createApp();
 
 console.log(`DictProp server starting on port ${env.PORT}...`);
 
+// Without a createServer option, serve() makes a node:http server.
 const server = serve({
   fetch: app.fetch,
   port: env.PORT,
   ...(env.DEV_AUTH_BYPASS ? { hostname: '127.0.0.1' } : {}),
-});
+}) as Server;
 
 console.log(`Server running at http://localhost:${env.PORT}${env.DEV_AUTH_BYPASS ? ' (auth bypass, loopback only)' : ''}`);
 
 const shutdown = createShutdown({
-  closeServer: done => server.close(done),
+  closeServer: done => drainHttpServer(server, done),
   closeDatabase: () => db.close(),
   exit: code => process.exit(code),
 });

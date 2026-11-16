@@ -1,4 +1,26 @@
 // How the server process ends: index.ts calls the shutdown it builds here on a signal or a fatal error.
+import type { IncomingMessage, Server, ServerResponse } from 'node:http';
+
+/** How often a drain closes the kept-alive connections that have gone idle. */
+const IDLE_SWEEP_MS = 100;
+
+/**
+ * Stop `server` taking connections and call `done` once every open one has ended. server.close() ends only the
+ * connections idle when it is called, and Caddy keeps its connections to the app open between requests, so one whose
+ * request was in flight would stay open for keepAliveTimeout, past the deadline. During the drain a response tells
+ * its client the connection closes after it, and a connection still kept alive is closed once it goes idle.
+ */
+export function drainHttpServer(server: Server, done: (error?: Error) => void, sweepMs = IDLE_SWEEP_MS): void {
+  server.prependListener('request', (_request: IncomingMessage, response: ServerResponse) => {
+    response.setHeader('Connection', 'close');
+  });
+  const sweep = setInterval(() => server.closeIdleConnections(), sweepMs);
+  sweep.unref();
+  server.close(error => {
+    clearInterval(sweep);
+    done(error);
+  });
+}
 
 /**
  * Docker sends SIGKILL 3 s after SIGTERM (docker-compose.yml's stop_grace_period), so a drain still running at
