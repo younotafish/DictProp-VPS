@@ -321,6 +321,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
 
         <TabScreen shown={currentView === 'study'}>
           <StudyEnhanced
+            userId={user.id}
             items={studyItems}
             reviewHistory={reviewHistory}
             onReview={updateSRS}
