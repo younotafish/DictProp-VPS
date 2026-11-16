@@ -1,4 +1,4 @@
-import { readyItemsOf, type QueueItem } from './searchQueue';
+import { isRunning, readyItemsOf, type QueueItem } from './searchQueue';
 
 /**
  * The search's one status line in the app's notice stack (components/search/SearchStatusPill), worked out from the
@@ -26,8 +26,6 @@ interface MomentLine {
   until: number;
   status: SearchStatus;
 }
-
-const isRunning = (item: QueueItem): boolean => item.status === 'pending' || item.status === 'searching';
 
 const scanDoneText = ({ found = 0, translation }: QueueItem): string => {
   if (found === 0) return 'No advanced expressions in this sentence';

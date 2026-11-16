@@ -100,7 +100,7 @@ const patch = (queue: QueueItem[], id: string, fields: Partial<QueueItem>): Queu
   queue.map(item => item.id === id ? { ...item, ...fields } : item);
 
 /** Queued, or waiting on its answer. */
-const isRunning = (item: QueueItem): boolean => item.status === 'pending' || item.status === 'searching';
+export const isRunning = (item: QueueItem): boolean => item.status === 'pending' || item.status === 'searching';
 
 /** Whether two entries stand for the same request: the same kind, and the same query, or the same words compared. */
 const sameAsk = (a: QueueItem, b: QueueItem): boolean => a.kind === b.kind && (a.kind === 'compare'
