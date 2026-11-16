@@ -86,7 +86,7 @@ export function useOfflineImages({ latestItemsRef }: Pick<Library, 'latestItemsR
       if (prefetchRunRef.current !== run) return;
       const batch = missing.slice(i, i + BATCH_SIZE);
       try {
-        const images = await loadItemImagesBatch(batch, imageVersions);
+        const { images } = await loadItemImagesBatch(batch, imageVersions);
         const toSave = [...images].map(([id, image]) => ({ id, image, version: imageVersions.get(id) }));
         if (toSave.length > 0) await saveImagesBatch(toSave, { remember: false });
       } catch (e) {

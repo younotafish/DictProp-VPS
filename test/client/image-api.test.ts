@@ -50,11 +50,28 @@ test('a stalled picture download fails after a minute, so the card retries inste
   t.mock.timers.tick(1);
   await assert.rejects(download, { name: 'TimeoutError' });
 
-  // The batch download counts such a picture as missing and goes on with the rest.
+  // The batch download lists such a picture as failed and goes on with the rest.
   stall();
   const batch = loadItemImagesBatch(['a']);
   t.mock.timers.tick(60_000);
-  assert.equal((await batch).size, 0);
+  assert.deepEqual(await batch, { images: new Map(), failed: ['a'] });
+});
+
+test('a batch download returns the pictures it got and the ids that failed, and a picture the server lacks is neither', async () => {
+  const calls = serve(url => {
+    const id = decodeURIComponent(url.split('/')[3]);
+    if (id === 'gone') return new Response('', { status: 404 });
+    if (id === 'broken') return new Response('', { status: 503 });
+    if (id === 'offline') throw new TypeError('Failed to fetch');
+    return new Response(new Blob([`picture ${id}`], { type: 'image/webp' }));
+  });
+  const { images, failed } = await loadItemImagesBatch(['a', 'gone', 'broken', 'offline', 'b'], new Map([['a', 'v2']]));
+  assert.deepEqual([...images.keys()].sort(), ['a', 'b']);
+  assert.equal(await images.get('b')!.text(), 'picture b');
+  assert.deepEqual(failed.sort(), ['broken', 'offline'], 'only downloads that threw count as failed');
+  assert.ok(calls.some(call => call.url === '/api/items/a/image?v=v2'), 'each picture is asked for at its version');
+
+  assert.deepEqual(await loadItemImagesBatch([]), { images: new Map(), failed: [] });
 });
 
 test('uploads send each picture as its own file, in order, and a stalled one fails after two minutes', async (t) => {

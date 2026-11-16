@@ -26,24 +26,31 @@ export const loadItemImage = async (itemId: string, imageVersion?: string): Prom
   });
 };
 
-/** Fetch the image files of several items, four at a time. Items without one are omitted. */
+/**
+ * Fetch the image files of several items, four at a time: `images` has the files downloaded, and `failed` the ids
+ * whose download threw (no connection, a server error, a stall), which a later attempt may retry. An item the server
+ * has no picture for (404) is in neither.
+ */
 export const loadItemImagesBatch = async (
   ids: string[],
   imageVersions?: ReadonlyMap<string, string>,
-): Promise<Map<string, Blob>> => {
-  const result = new Map<string, Blob>();
+): Promise<{ images: Map<string, Blob>; failed: string[] }> => {
+  const images = new Map<string, Blob>();
+  const failed: string[] = [];
   let cursor = 0;
   const worker = async () => {
     while (cursor < ids.length) {
       const id = ids[cursor++];
       try {
         const image = await loadItemImage(id, imageVersions?.get(id));
-        if (image) result.set(id, image);
-      } catch { /* a later prefetch can retry transient failures */ }
+        if (image) images.set(id, image);
+      } catch {
+        failed.push(id);
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(4, ids.length) }, worker));
-  return result;
+  return { images, failed };
 };
 
 /**
