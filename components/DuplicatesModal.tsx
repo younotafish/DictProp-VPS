@@ -61,16 +61,22 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
           </button>
         </div>
 
-        {/* Intro + caution */}
+        {/* What merging does, and a caution while the ticked merges remove cards */}
         <div className="px-5 pt-4 shrink-0">
           <p className="text-sm text-slate-600 leading-relaxed">
-            These look like the same word saved under different forms. Pick the headword to keep —
-            the others fold into it (their forms are preserved, review progress is merged).
+            These look like the same word saved under different forms. Pick the headword to keep: the other forms’
+            cards are relabeled to it, and every form is kept. Review progress isn’t merged: each card keeps its own,
+            and a sense saved twice keeps only its more-reviewed card.
           </p>
-          <div className="mt-3 flex items-start gap-2 text-[12px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-            <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-            <span>Merging removes the folded-in cards. Close other open tabs/devices first so the deletions aren’t resurrected on sync.</span>
-          </div>
+          {effect.removed > 0 && (
+            <div className="mt-3 flex items-start gap-2 text-[12px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+              <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+              <span>
+                Merging removes {effect.removed} duplicate {effect.removed === 1 ? 'card' : 'cards'} of the same sense.
+                Close other open tabs and devices first, so sync doesn’t bring {effect.removed === 1 ? 'it' : 'them'} back.
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Cluster list */}
