@@ -16,12 +16,19 @@ interface Props {
 
 export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge }) => {
   // Per-cluster selection: whether to merge it, and which headword to keep. It covers every cluster, since the
-  // clusters can't change while the modal is open (the notebook behind it is inert).
+  // clusters can't change while the modal is open (the notebook behind it is inert). Only a cluster with evidence
+  // both ways that it's one word starts ticked.
   const [sel, setSel] = useState<Record<string, { include: boolean; canonical: string }>>(() =>
-    Object.fromEntries(clusters.map(c => [c.id, { include: true, canonical: c.suggestedCanonical }]))
+    Object.fromEntries(clusters.map(c => [c.id, { include: c.defaultInclude, canonical: c.suggestedCanonical }]))
   );
 
-  const includedCount = useMemo(() => clusters.filter(c => sel[c.id].include).length, [clusters, sel]);
+  const included = useMemo(() => clusters.filter(c => sel[c.id].include), [clusters, sel]);
+  const includedCount = included.length;
+  // What Merge will do: the dry runs of the ticked clusters under their chosen headwords, added up.
+  const effect = useMemo(() => included.reduce((sum, c) => {
+    const { relabeled, removed } = c.effects[sel[c.id].canonical] ?? { relabeled: 0, removed: 0 };
+    return { relabeled: sum.relabeled + relabeled, removed: sum.removed + removed };
+  }, { relabeled: 0, removed: 0 }), [included, sel]);
 
   const setCanonical = (id: string, canonical: string) =>
     setSel(p => ({ ...p, [id]: { ...p[id], canonical } }));
@@ -29,10 +36,7 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
     setSel(p => ({ ...p, [id]: { ...p[id], include: !p[id].include } }));
 
   const handleMerge = () => {
-    const merges = clusters
-      .filter(c => sel[c.id].include)
-      .map(c => ({ baseWords: c.baseWords, canonical: sel[c.id].canonical }));
-    onMerge(merges);
+    onMerge(included.map(c => ({ baseWords: c.baseWords, canonical: sel[c.id].canonical })));
   };
 
   return (
@@ -128,6 +132,24 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
                   <span className="font-semibold text-indigo-600">{s.canonical}</span>
                 </div>
 
+                {/* Without evidence both ways these may be different words, so each one's meaning shows */}
+                {!cluster.defaultInclude && (
+                  <div className="mt-2 text-[12px]">
+                    <p className="flex items-center gap-1.5 font-semibold text-amber-700">
+                      <AlertTriangle size={12} className="shrink-0" />
+                      Possibly different words
+                    </p>
+                    <ul className="mt-1 space-y-0.5 text-slate-500">
+                      {cluster.members.map(member => (
+                        <li key={member.base}>
+                          <span className="font-semibold text-slate-600">{member.base}</span>
+                          {member.definition && <> — {member.definition}</>}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
                 {/* Cards involved */}
                 <div className="mt-2 flex flex-wrap gap-1">
                   {cluster.items.map(it => {
@@ -159,7 +181,14 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
             disabled={includedCount === 0}
             className="flex-1 border-0"
           >
-            {includedCount > 0 ? `Merge ${includedCount}` : 'Merge'}
+            {includedCount > 0 ? (
+              <span className="flex flex-col items-center leading-tight">
+                <span>Merge {includedCount}</span>
+                <span className="text-xs font-normal opacity-80">
+                  relabels {effect.relabeled} {effect.relabeled === 1 ? 'card' : 'cards'}, removes {effect.removed}
+                </span>
+              </span>
+            ) : 'Merge'}
           </Button>
         </div>
     </Modal>

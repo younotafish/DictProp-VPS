@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyMerges } from '../../services/mergeDuplicates.ts';
+import { applyMerges, dryRunMerge } from '../../services/mergeDuplicates.ts';
 import type { StoredItem, VocabCard } from '../../types.ts';
 
 // Characterization of the duplicate merge the Notebook's "Merge duplicates" applies: which card survives each sense,
@@ -57,13 +57,13 @@ test('members are relabeled to the canonical spelling and share every form', () 
   assert.deepEqual(vocabOf(relabeled[0]).forms, ['colour', 'colours']);
 });
 
-test('forms are deduplicated by exact spelling today, so case-only variants both stay', () => {
-  // client-data-10 (wave 2) collapses these to one; this pins the current result.
+test('forms are deduplicated by their normalized spelling, keeping the first one seen', () => {
   const merged = applyMerges(
-    [card('run', 'run', { forms: ['runs', 'Running'] }), card('running', 'running'), card('Running', 'Running')],
+    [card('run', 'run', { forms: ['runs', 'Running', ' RUNS '] }), card('running', 'running'), card('Running', 'Running')],
     [{ baseWords: ['run', 'running'], canonical: 'run' }],
   );
-  assert.deepEqual(vocabOf(merged[0]).forms, ['runs', 'Running', 'running']);
+  assert.deepEqual(vocabOf(merged[0]).forms, ['runs', 'Running']);
+  assert.deepEqual(vocabOf(merged[2]).forms, ['runs', 'Running']);
 });
 
 test('one card survives each sense, chosen by reviews, then richness, and a tie keeps the first', () => {
@@ -81,8 +81,44 @@ test('one card survives each sense, chosen by reviews, then richness, and a tie 
   const byRichness = applyMerges([plain, withPicture], [{ baseWords: ['leave', 'left'], canonical: 'leave' }]);
   assert.deepEqual(byRichness.map(item => !!item.isDeleted), [true, false], 'a picture counts for 1000');
 
-  const tie = applyMerges([card('first', 'leave'), card('second', 'left')], [{ baseWords: ['leave', 'left'], canonical: 'leave' }]);
-  assert.deepEqual(tie.map(item => !!item.isDeleted), [false, true], 'two cards without a sense share one, and the first stays');
+  const tie = applyMerges(
+    [card('first', 'leave', { sense: 'verb: depart' }), card('second', 'left', { sense: 'verb: depart' })],
+    [{ baseWords: ['leave', 'left'], canonical: 'leave' }],
+  );
+  assert.deepEqual(tie.map(item => !!item.isDeleted), [false, true], 'a tie keeps the first');
+});
+
+test('cards without a sense label are never merged into one another: both are relabeled and stay', () => {
+  const merged = applyMerges(
+    [card('find', 'find', { definition: 'to discover' }), card('found', 'found', { definition: 'to establish' })],
+    [{ baseWords: ['find', 'found'], canonical: 'find' }],
+  );
+  assert.deepEqual(merged.map(item => [vocabOf(item).word, !!item.isDeleted, vocabOf(item).definition]),
+    [['find', false, 'to discover'], ['find', false, 'to establish']]);
+  // A labeled card doesn't collide with an unlabeled one either.
+  const mixed = applyMerges([card('a', 'leave', { sense: 'verb: depart' }), card('b', 'left')], [{ baseWords: ['leave', 'left'], canonical: 'leave' }]);
+  assert.deepEqual(mixed.map(item => !!item.isDeleted), [false, false]);
+});
+
+test('a member already spelled and formed as the merge leaves it keeps its identity, and isn’t pushed again', () => {
+  const settled = card('run', 'run', { sense: 'verb: move', forms: ['ran'] });
+  const loser = card('ran', 'ran', { sense: 'verb: move' });
+  const merged = applyMerges([settled, loser], [{ baseWords: ['run', 'ran'], canonical: 'run' }]);
+  assert.equal(merged[0], settled);
+  assert.deepEqual(merged[1], { ...loser, isDeleted: true, updatedAt: NOW });
+  // A headword listing every form already keeps them in its order, so merging a variant in touches only the variant.
+  const run = card('run', 'run', { forms: ['runs', 'running', 'ran'] });
+  const ran = card('ran', 'ran', { forms: ['run'] });
+  const intoRun = applyMerges([ran, run], [{ baseWords: ['ran', 'run'], canonical: 'run' }]);
+  assert.equal(intoRun[1], run);
+  assert.deepEqual(vocabOf(intoRun[0]), { ...vocabOf(ran), word: 'run', forms: ['runs', 'running', 'ran'] });
+  // Missing forms are not the empty list the merge would write.
+  const formless = card('move', 'go', { sense: 'verb: move' });
+  const emptyForms = card('travel', 'go', { sense: 'verb: travel', forms: [] });
+  const relabeled = applyMerges([formless, emptyForms], [{ baseWords: ['go'], canonical: 'go' }]);
+  assert.notEqual(relabeled[0], formless);
+  assert.deepEqual(vocabOf(relabeled[0]).forms, []);
+  assert.equal(relabeled[1], emptyForms);
 });
 
 test('deleted cards and other kinds of item are never merged', () => {
@@ -97,8 +133,33 @@ test('deleted cards and other kinds of item are never merged', () => {
 
 test('every merge in the list applies, each to its own cluster', () => {
   const merged = applyMerges(
-    [card('a', 'go'), card('b', 'went'), card('c', 'see'), card('d', 'saw')],
+    [card('a', 'go', { sense: 'move' }), card('b', 'went', { sense: 'move' }), card('c', 'see', { sense: 'look' }), card('d', 'saw', { sense: 'look' })],
     [{ baseWords: ['go', 'went'], canonical: 'go' }, { baseWords: ['see', 'saw'], canonical: 'see' }],
   );
   assert.deepEqual(merged.map(item => [vocabOf(item).word, !!item.isDeleted]), [['go', false], ['went', true], ['see', false], ['saw', true]]);
+});
+
+test('a dry run counts exactly what the merge changes: the cards relabeled and the cards removed', () => {
+  const fixtures: Array<[StoredItem[], Array<{ baseWords: string[]; canonical: string }>]> = [
+    [[card('run', 'Run', { sense: 'verb: move fast', forms: ['runs'] }), card('ran', 'ran', { sense: 'verb: past tense' }), card('other', 'walk')],
+      [{ baseWords: ['run', 'ran'], canonical: 'run' }]],
+    [[card('plain', 'leave', { sense: 'verb: depart' }), card('rich', 'left', { sense: 'Verb: Depart ', examples: ['a'] }), reviewed(card('studied', 'leaves', { sense: 'verb: depart' }), 1)],
+      [{ baseWords: ['leave', 'left', 'leaves'], canonical: 'leave' }]],
+    [[card('settled', 'run', { sense: 'verb: move', forms: ['ran'] }), card('loser', 'ran', { sense: 'verb: move' })],
+      [{ baseWords: ['run', 'ran'], canonical: 'run' }]],
+    [[card('a', 'go'), card('b', 'went'), card('c', 'see', { sense: 'look' }), card('d', 'saw', { sense: 'look' }), { ...card('gone', 'saw'), isDeleted: true }],
+      [{ baseWords: ['go', 'went'], canonical: 'go' }, { baseWords: ['see', 'saw'], canonical: 'see' }]],
+    [[card('run', 'run'), card('ran', 'ran')], []],
+  ];
+  for (const [items, merges] of fixtures) {
+    const merged = applyMerges(items, merges);
+    const changed = merged.filter((item, index) => item !== items[index]);
+    assert.deepEqual(dryRunMerge(items, merges), {
+      relabeled: changed.filter(item => !item.isDeleted).length,
+      removed: changed.filter(item => item.isDeleted).length,
+    });
+  }
+  assert.deepEqual(dryRunMerge(fixtures[1][0], fixtures[1][1]), { relabeled: 1, removed: 2 });
+  assert.deepEqual(dryRunMerge(fixtures[2][0], fixtures[2][1]), { relabeled: 0, removed: 1 });
+  assert.deepEqual(dryRunMerge(fixtures[3][0], fixtures[3][1]), { relabeled: 3, removed: 1 });
 });
