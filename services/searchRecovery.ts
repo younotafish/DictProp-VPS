@@ -112,6 +112,25 @@ export function describeSearchError(subject: SearchSubject | string, error: unkn
   return `Could not ${VERB[kind]} ${label}.`;
 }
 
+/** A failed lookup, comparison or scan, as the search keeps it until it's retried, edited or dismissed. */
+export interface SearchFailure {
+  message: string;
+  /** Sending the same request again could succeed (see isRetryableSearchError). */
+  retryable: boolean;
+  /** The model found no dictionary entry for the query (a 422), so editing it is the way on, not retrying. */
+  notAWord: boolean;
+  /** When it failed. */
+  at: number;
+}
+
+/** The failure the search keeps for `error`, which happened at `at` to a request about `subject`. */
+export const failureOf = (subject: SearchSubject, error: unknown, at: number): SearchFailure => ({
+  message: describeSearchError(subject, error),
+  retryable: isRetryableSearchError(error),
+  notAWord: error instanceof HttpError && error.status === 422,
+  at,
+});
+
 /** describeSearchError for a plain query, worded as it was before subjects. */
 function describeQueryError(query: string, error: unknown): string {
   if (error instanceof HttpError) {

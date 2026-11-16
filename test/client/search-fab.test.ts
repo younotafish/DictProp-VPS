@@ -19,8 +19,8 @@ const fab = (props: Partial<FabProps> = {}) => renderToStaticMarkup(createElemen
   unseenCount: 0, readyCount: 0, runningCount: 0, isBusy: false, onClick: () => {}, ...props,
 }));
 const errorToast = (props: Partial<ToastProps> = {}) => renderToStaticMarkup(createElement(SearchToasts, {
-  saveToast: null, statusToast: null, error: { msg: 'Could not analyze "gamut".', query: 'gamut' },
-  onRetry: () => {}, onDismissError: () => {}, ...props,
+  saveToast: null, statusToast: null, error: { msg: 'Couldn’t reach DictProp for “gamut”.', action: 'retry' },
+  onRetry: () => {}, onEdit: () => {}, onDismissError: () => {}, ...props,
 }));
 
 // Where the button and the error toast float: on a tab, above the tab bar (and Study's grade footer); over a card,
@@ -78,7 +78,7 @@ test('the save and status toasts stay at the top whatever aboveTabBar says', () 
   for (const aboveTabBar of [undefined, true, false]) {
     const markup = renderToStaticMarkup(createElement(SearchToasts, {
       saveToast: 'Sentence saved', statusToast: 'Found 2 expressions — analyzing…', error: null,
-      onRetry: () => {}, onDismissError: () => {}, aboveTabBar,
+      onRetry: () => {}, onEdit: () => {}, onDismissError: () => {}, aboveTabBar,
     }));
     assert.equal((markup.match(/fixed top-4 left-1\/2/g) ?? []).length, 2);
     assert.doesNotMatch(markup, /bottom-/);

@@ -1,18 +1,25 @@
 import React from 'react';
 import { X } from 'lucide-react';
 
-/** A failure the error toast shows: its message, and the query (with its analysis mode) a tap retries. */
+/** What the error toast shows: a notice, or the newest failure, with how many others wait behind it. */
 export interface SearchErrorToast {
   msg: string;
-  query?: string;
-  analyzeMode?: 'batch';
+  /** How many other failures are shown behind this one. */
+  more?: number;
+  /** Besides ×: running the failure again (Retry), with every other one retrying could fix (Retry all), or editing a
+   *  query the model found no entry for (Edit). */
+  action?: 'retry' | 'retry-all' | 'edit';
 }
+
+const ACTION_LABELS: Record<NonNullable<SearchErrorToast['action']>, string> = { retry: 'Retry', 'retry-all': 'Retry all', edit: 'Edit' };
 
 interface Props {
   saveToast: string | null;
   statusToast: string | null;
   error: SearchErrorToast | null;
-  onRetry: (failed: SearchErrorToast) => void;
+  onRetry: () => void;
+  onEdit: () => void;
+  /** × on the error toast: drops every failure and the notice. */
   onDismissError: () => void;
   /** On a tab (true), or over a card or sentence view (false); see errorBottom. */
   aboveTabBar?: boolean;
@@ -29,7 +36,7 @@ const errorBottom = (aboveTabBar: boolean | undefined): string =>
   : 'bottom-[calc(var(--card-float-bottom,6rem)+7.5rem)]';
 
 /** The search's notices: the save confirmation, the neutral status pill and the failure toast. */
-export const SearchToasts: React.FC<Props> = ({ saveToast, statusToast, error, onRetry, onDismissError, aboveTabBar }) => (
+export const SearchToasts: React.FC<Props> = ({ saveToast, statusToast, error, onRetry, onEdit, onDismissError, aboveTabBar }) => (
   <>
     {/* Save toast */}
     {saveToast && (
@@ -43,19 +50,25 @@ export const SearchToasts: React.FC<Props> = ({ saveToast, statusToast, error, o
         {statusToast}
       </div>
     )}
-    {/* Error toast — failures surface here instead of vanishing. Tapping the message retries the failed
-        query (see GlobalSearch's retryFailedSearch); the X closes the toast without retrying. */}
+    {/* Error toast — failures surface here instead of vanishing, above the search box's suggestions (z-[56]). Its
+        action follows the newest failure (see GlobalSearch); the X drops every failure without retrying. */}
     {error && (
       <div
         role="alert"
-        className={`fixed ${errorBottom(aboveTabBar)} right-4 z-[56] max-w-[18rem] flex bg-red-50 text-red-600 text-xs font-medium rounded-lg shadow-lg fade-in duration-200`}
+        className={`fixed ${errorBottom(aboveTabBar)} right-4 z-[57] max-w-[18rem] flex bg-red-50 text-red-600 text-xs font-medium rounded-lg shadow-lg fade-in duration-200`}
       >
-        <button
-          onClick={() => onRetry(error)}
-          className="min-w-0 flex-1 text-left pl-3 pr-1 py-2 rounded-l-lg hover:bg-red-100 transition-colors"
-        >
-          {error.msg}{error.query ? ' · Tap to retry' : ''}
-        </button>
+        <p className="min-w-0 flex-1 pl-3 pr-1 py-2">
+          {error.msg}{error.more ? ` +${error.more} more` : ''}
+        </p>
+        {error.action && (
+          <button
+            type="button"
+            onClick={error.action === 'edit' ? onEdit : onRetry}
+            className="shrink-0 px-2 font-semibold text-red-700 hover:bg-red-100 transition-colors"
+          >
+            {ACTION_LABELS[error.action]}
+          </button>
+        )}
         <button
           onClick={onDismissError}
           aria-label="Dismiss error"

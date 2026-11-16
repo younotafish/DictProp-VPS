@@ -1,4 +1,5 @@
 import { comparisonKey, type ComparisonResult, type SearchResult, type VocabCard } from '../../types';
+import type { SearchFailure } from '../../services/searchRecovery';
 
 /**
  * The search queue as data: every lookup, comparison and sentence scan the search button runs, and the state changes
@@ -37,6 +38,8 @@ export interface QueueItem {
   translation?: string;
   /** scan: when it finished. */
   finishedAt?: number;
+  /** Once it has failed: why, and what the error toast offers for it. */
+  failure?: SearchFailure;
 }
 
 /**
@@ -51,7 +54,8 @@ export type QueueAction =
    *  duplicate that hasn't failed leaves the queue as it is, and a failed lookup of the query gives way to it. An
    *  expression a scan found carries the scan's id. Scans are never duplicates of a lookup, nor replaced by one. */
   | { type: 'add-search'; id: string; query: string; forceAI: boolean; analyzeMode?: 'batch'; scanId?: string; openOnReady: OpenPolicy }
-  /** A comparison of `words` (trimmed, two or more): ready at once when it was saved before. */
+  /** A comparison of `words` (trimmed, two or more): ready at once when it was saved before. A failed comparison of
+   *  the same words gives way to it. */
   | { type: 'add-compare'; id: string; words: string[]; cached: ComparisonResult | null }
   /** A scan of the sentence `query` (trimmed): nothing while a scan of it is still running; a failed one gives way. */
   | { type: 'add-scan'; id: string; query: string }
@@ -61,7 +65,12 @@ export type QueueAction =
   | { type: 'compare-ready'; id: string; comparison: ComparisonResult }
   /** The scan finished at `at`, finding `found` expressions; `translation` is the sentence in English, if it was Chinese. */
   | { type: 'scan-done'; id: string; found: number; translation?: string; at: number }
-  | { type: 'fail'; id: string }
+  /** The request failed; the entry keeps why until it's retried or dismissed. */
+  | { type: 'fail'; id: string; failure: SearchFailure }
+  /** Every failure that retrying could fix goes back to pending, in its place and its own mode, to run again. */
+  | { type: 'retry-failed' }
+  /** Drops every failed entry. */
+  | { type: 'dismiss-failed' }
   /** An in-place refresh of a ready lookup: it keeps showing the old result until the fresh one arrives. */
   | { type: 'refresh-start'; id: string }
   | { type: 'refresh-ready'; id: string; query: string; results: SearchResult }
@@ -103,7 +112,8 @@ export function searchQueueReducer(queue: QueueItem[], action: QueueAction): Que
     }
     case 'add-compare': {
       const { id, words, cached } = action;
-      return [...queue, {
+      const key = comparisonKey(words);
+      return [...queue.filter(item => !(item.kind === 'compare' && item.status === 'failed' && comparisonKey(item.words || []) === key)), {
         id, kind: 'compare', query: words.join(' vs '), words,
         status: cached ? 'ready' : 'pending', results: null, comparison: cached, seen: false,
       }];
@@ -128,7 +138,15 @@ export function searchQueueReducer(queue: QueueItem[], action: QueueAction): Que
       return patch(queue, action.id, { status: 'ready', found, ...(translation ? { translation } : {}), finishedAt: at });
     }
     case 'fail':
-      return patch(queue, action.id, { status: 'failed' });
+      return patch(queue, action.id, { status: 'failed', failure: action.failure });
+    case 'retry-failed':
+      return queue.map(item => {
+        if (item.status !== 'failed' || !item.failure?.retryable) return item;
+        const { failure: _failure, startedAt: _startedAt, repeatAt: _repeatAt, ...asked } = item;
+        return { ...asked, status: 'pending' };
+      });
+    case 'dismiss-failed':
+      return queue.filter(item => item.status !== 'failed');
     case 'refresh-start':
       return patch(queue, action.id, { refreshing: true });
     case 'refresh-ready':
@@ -211,6 +229,52 @@ export const runningCountOf = (queue: readonly QueueItem[]): number =>
 
 /** Whether anything is still running, sentence scans included: the button spins until each one has finished. */
 export const isBusyOf = (queue: readonly QueueItem[]): boolean => queue.some(isRunning);
+
+/** How long the error toast shows a failure that neither retrying nor editing could fix. */
+export const PASSING_FAILURE_MS = 6000;
+
+type FailedItem = QueueItem & { failure: SearchFailure };
+
+/** A failure stays until it's acted on when Retry or Edit could fix it; any other passes after PASSING_FAILURE_MS. */
+const lasts = (failure: SearchFailure): boolean => failure.retryable || failure.notAWord;
+
+const failuresShownAt = (queue: readonly QueueItem[], now: number): FailedItem[] =>
+  queue.filter((item): item is FailedItem => item.status === 'failed' && !!item.failure
+    && (lasts(item.failure) || now < item.failure.at + PASSING_FAILURE_MS));
+
+/** What the error toast shows for the failures in the queue. */
+export interface FailureSummary {
+  /** The newest failure: its message leads the toast, and Edit puts its query back in the box. */
+  newest: FailedItem;
+  /** How many other failures are shown behind it. */
+  others: number;
+  /** What the toast offers besides ×, following the newest failure: running it again ('retry'), with every other
+   *  failure retrying could fix ('retry-all'), editing a query the model found no entry for ('edit'), or nothing. */
+  action: 'retry' | 'retry-all' | 'edit' | null;
+}
+
+/** The failures the error toast shows at `now`, or null when there are none. */
+export function summarizeFailures(queue: readonly QueueItem[], now: number): FailureSummary | null {
+  const shown = failuresShownAt(queue, now);
+  if (shown.length === 0) return null;
+  const newest = shown.reduce((latest, item) => (item.failure.at >= latest.failure.at ? item : latest));
+  const retryable = shown.filter(item => item.failure.retryable).length;
+  const action = newest.failure.notAWord ? 'edit'
+    : newest.failure.retryable ? (retryable > 1 ? 'retry-all' : 'retry')
+    : null;
+  return { newest, others: shown.length - 1, action };
+}
+
+/** When the next passing failure leaves the error toast, after `now`, or null when none will. */
+export function nextFailureExpiry(queue: readonly QueueItem[], now: number): number | null {
+  let next: number | null = null;
+  for (const { failure } of failuresShownAt(queue, now)) {
+    if (lasts(failure)) continue;
+    const expiry = failure.at + PASSING_FAILURE_MS;
+    if (next === null || expiry < next) next = expiry;
+  }
+  return next;
+}
 
 /** The comparison of the word set `key` (a comparisonKey) that's queued, running or ready, if any. */
 export const findLiveComparison = (queue: readonly QueueItem[], key: string): QueueItem | undefined =>

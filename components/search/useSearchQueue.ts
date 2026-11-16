@@ -3,7 +3,7 @@ import { comparisonKey, type ComparisonResult, type VocabCard } from '../../type
 import { analyzeInput, compareWords, detectVocabulary } from '../../services/api/ai';
 import { ensureTTS } from '../../services/neuralTts';
 import { log, warn } from '../../services/logger';
-import { consumeSearchRetry, describeSearchError, isAuthenticationError, isRetryableSearchError, rememberSearchRetry } from '../../services/searchRecovery';
+import { consumeSearchRetry, describeSearchError, failureOf, isAuthenticationError, rememberSearchRetry } from '../../services/searchRecovery';
 // The analysis route makes the same call, so a query the box treats as a word is analyzed as one.
 import { looksLikeSentence } from '../../services/queryMode';
 import { useLatest } from '../../hooks/useStableValue';
@@ -18,8 +18,8 @@ import {
 let queueIdCounter = 0;
 
 /**
- * An analyze effect that keeps the error its request rejected with. runLookup words a failure for its toast with the
- * plain-query describeSearchError; the search words it from that error, with what the lookup was about.
+ * An analyze effect that keeps the error its request rejected with. runLookup reports a failure without it (and words a
+ * toast the search no longer shows); the search keeps the failure on the entry, worded from that error.
  */
 function keepingRejection(analyze: LookupEffects['analyze']) {
   const kept: { error?: unknown } = {};
@@ -46,8 +46,9 @@ interface Options {
   /** Open this entry in the results sheet once it's ready: a saved word, a refresh, a saved comparison, or a word
    *  asked for again whose result is ready. */
   openWhenReady: (id: string) => void;
-  showError: (msg: string, query?: string, analyzeMode?: 'batch') => void;
-  clearError: () => void;
+  /** A passing notice in the error toast: a request refused offline, or a refresh of an open result that failed.
+   *  Failed entries carry their own failure, which the toast shows until it's retried or dismissed. */
+  showNotice: (message: string) => void;
   showStatus: (msg: string) => void;
 }
 
@@ -55,11 +56,11 @@ interface Options {
  * The search queue's lifecycle. Lookups, comparisons and sentence scans join it from the search box, from the rest of
  * the app (services/searchRequests and, until App switches to it, the window's 'global-search' event), and from a
  * resume after signing in again; every pending entry starts at once and runs once; each settles as ready, opening in
- * the sheet when that was asked for, or as failed, with the error toast. A finished scan queues a lookup of each
- * expression it found.
+ * the sheet when that was asked for, or as failed, keeping its failure for the error toast. A finished scan queues a
+ * lookup of each expression it found.
  */
 export function useSearchQueue({
-  findSavedByWord, isOnline, onRefreshReplace, onCompareReady, openWhenReady, showError, clearError, showStatus,
+  findSavedByWord, isOnline, onRefreshReplace, onCompareReady, openWhenReady, showNotice, showStatus,
 }: Options) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const processingIdsRef = useRef<Set<string>>(new Set()); // prevents a re-render from starting an item twice
@@ -125,13 +126,13 @@ export function useSearchQueue({
       sentence: looksLikeSentence(query),
     });
     if (route.kind === 'offline') {
-      showError(OFFLINE_LOOKUP);
+      showNotice(OFFLINE_LOOKUP);
       return false;
     }
     if (route.kind === 'scan') scan(query);
     else enqueue(query, { forceAI: route.forceAI, analyzeMode: route.analyzeMode, openOnReady: route.forceAI ? 'any' : 'saved-hit' });
     return true;
-  }, [queueRef, isOnlineRef, findSavedByWordRef, openWhenReady, showStatus, showError, scan, enqueue]);
+  }, [queueRef, isOnlineRef, findSavedByWordRef, openWhenReady, showStatus, showNotice, scan, enqueue]);
 
   // OAuth redirects preserve sessionStorage. Resume the exact failed query once the user signs in again.
   useEffect(() => {
@@ -151,14 +152,14 @@ export function useSearchQueue({
       return; // already queued/generating → don't duplicate
     }
     if (!cached && !isOnlineRef.current) {
-      showError(OFFLINE_COMPARE);
+      showNotice(OFFLINE_COMPARE);
       return;
     }
     const id = `q-${++queueIdCounter}`;
     log('⚖️ Queue: comparing "' + clean.join(' vs ') + '"' + (cached ? ' (saved)' : ''));
     setQueue(queueUpdate({ type: 'add-compare', id, words: clean, cached }));
     if (cached) openWhenReady(id); // saved comparison → open instantly in the popup
-  }, [queueRef, isOnlineRef, openWhenReady, showError]);
+  }, [queueRef, isOnlineRef, openWhenReady, showNotice]);
 
   // What every AI lookup reads and changes beyond its own queue entry (see runLookup). The library is read through a
   // ref, as it is when a request settles, not as it was when the request started. The audio is generated if it
@@ -193,9 +194,8 @@ export function useSearchQueue({
         for (const w of words) enqueue(w.word, { analyzeMode: 'batch', scanId: itemId, openOnReady: 'never' });
       }).catch(err => {
         warn('🔍 Sentence scan failed "' + q + '":', (err as Error | undefined)?.message);
-        setQueue(queueUpdate({ type: 'fail', id: itemId }));
+        setQueue(queueUpdate({ type: 'fail', id: itemId, failure: failureOf({ kind: 'scan', label: q }, err, Date.now()) }));
         if (isAuthenticationError(err)) rememberSearchRetry({ query: q });
-        showError(describeSearchError({ kind: 'scan', label: q }, err), isRetryableSearchError(err) ? q : undefined);
       }).finally(done);
       return;
     }
@@ -205,13 +205,11 @@ export function useSearchQueue({
       setQueue(queueUpdate({ type: 'start', id: itemId, at: Date.now() }));
       log('⚖️ Queue: generating comparison "' + item.query + '"');
       compareWords(item.words || []).then(result => {
-        clearError();
         setQueue(queueUpdate({ type: 'compare-ready', id: itemId, comparison: result }));
         onCompareReady?.(item.words || [], result); // persist (server + local) for the word pages
       }).catch(err => {
         warn('⚖️ Queue: compare failed "' + item.query + '":', err?.message);
-        setQueue(queueUpdate({ type: 'fail', id: itemId }));
-        showError(describeSearchError({ kind: 'comparison', label: item.query }, err), undefined);
+        setQueue(queueUpdate({ type: 'fail', id: itemId, failure: failureOf({ kind: 'comparison', label: item.query }, err, Date.now()) }));
       }).finally(done);
       return;
     }
@@ -239,15 +237,15 @@ export function useSearchQueue({
       // newer request, so this one changes nothing: no toast, no queue change, no saved-card write.
       isCurrent: () => isQueued(queueRef.current, itemId),
       showResult: result => {
-        clearError(); // a fresh success clears any lingering failure toast
         setQueue(queueUpdate({ type: 'search-ready', id: itemId, results: result }));
         if (item.openOnReady === 'any') openWhenReady(itemId); // refresh → open the fresh result (like the reuse path auto-opens)
       },
-      showFailure: () => setQueue(queueUpdate({ type: 'fail', id: itemId })),
-      showError: (_runLookupWording, retryQuery, analyzeMode) =>
-        showError(describeSearchError({ kind: 'analysis', label: item.query }, request.kept.error), retryQuery, analyzeMode),
+      showFailure: () => setQueue(queueUpdate({
+        type: 'fail', id: itemId, failure: failureOf({ kind: 'analysis', label: item.query }, request.kept.error, Date.now()),
+      })),
+      showError: () => {}, // runLookup's toast: the entry's failure is what the error toast shows
     }).finally(done);
-  }, [findSavedByWord, lookupEffects, showError, showStatus, enqueue, onCompareReady, openWhenReady, clearError, queueRef]);
+  }, [findSavedByWord, lookupEffects, showStatus, enqueue, onCompareReady, openWhenReady, queueRef]);
 
   // The results sheet's refresh button: re-run the AI for `word` and swap the fresh result into `item` in place,
   // keeping its current result on screen (with a spinner) meanwhile, rather than clearing the entry, which blanked
@@ -272,11 +270,11 @@ export function useSearchQueue({
         setQueue(queueUpdate({ type: 'refresh-ready', id, query, results }));
         onFresh();
       },
+      // The entry keeps its old result, so the failure is a passing notice: the card's refresh button is still there.
       showFailure: () => setQueue(queueUpdate({ type: 'refresh-fail', id })),
-      showError: (_runLookupWording, retryQuery, retryMode) =>
-        showError(describeSearchError({ kind: 'analysis', label: query }, request.kept.error), retryQuery, retryMode),
+      showError: () => showNotice(describeSearchError({ kind: 'analysis', label: query }, request.kept.error)),
     });
-  }, [lookupEffects, refreshLog, showError]);
+  }, [lookupEffects, refreshLog, showNotice]);
 
   // Driver: start every pending text-model job immediately. DeepInfra owns provider capacity; locally we
   // only de-duplicate starts so a re-render while a request is in flight cannot submit the same item twice.
@@ -318,5 +316,5 @@ export function useSearchQueue({
   // Applies a state change GlobalSearch makes itself: a dismissal, Clear all, a result shown.
   const updateQueue = useCallback((action: QueueAction) => setQueue(queueUpdate(action)), []);
 
-  return { queue, readyItems, unseenCount, runningCount, isBusy, updateQueue, enqueue, lookUp, refreshInPlace };
+  return { queue, readyItems, unseenCount, runningCount, isBusy, updateQueue, lookUp, refreshInPlace };
 }

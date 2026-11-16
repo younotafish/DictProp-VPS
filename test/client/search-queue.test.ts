@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  classifyEnqueue, createRefreshLog, findLiveComparison, findLiveLookup, hasLiveDuplicate, isBusyOf, isQueued,
-  openIndexForResults, queueUpdate, readyItemsOf, runningCountOf, savedCardsResult, searchQueueReducer, unseenReadyCount,
-  type QueueAction, type QueueItem,
+  PASSING_FAILURE_MS, classifyEnqueue, createRefreshLog, findLiveComparison, findLiveLookup, hasLiveDuplicate, isBusyOf, isQueued,
+  nextFailureExpiry, openIndexForResults, queueUpdate, readyItemsOf, runningCountOf, savedCardsResult, searchQueueReducer,
+  summarizeFailures, unseenReadyCount, type QueueAction, type QueueItem,
 } from '../../components/search/searchQueue.ts';
 import { comparisonKey, type ComparisonResult, type SearchResult, type VocabCard } from '../../types.ts';
+import type { SearchFailure } from '../../services/searchRecovery.ts';
 
 const vocab = (word: string, sense = ''): VocabCard => ({
   id: `${word}-${sense}`, word, sense, chinese: '', ipa: `/${word}/`, definition: '', synonyms: [], antonyms: [],
@@ -25,6 +26,9 @@ const run = (actions: QueueAction[], start: QueueItem[] = []): QueueItem[] => ac
 const add = (id: string, query: string, extra: Partial<Extract<QueueAction, { type: 'add-search' }>> = {}): QueueAction =>
   ({ type: 'add-search', id, query, forceAI: false, openOnReady: 'saved-hit', ...extra });
 const start = (id: string, at = 1_000): QueueAction => ({ type: 'start', id, at });
+const failure = (fields: Partial<SearchFailure> = {}): SearchFailure =>
+  ({ message: 'Couldn’t reach DictProp.', retryable: true, notAWord: false, at: 1_000, ...fields });
+const fail = (id: string, fields?: Partial<SearchFailure>): QueueAction => ({ type: 'fail', id, failure: failure(fields) });
 
 test('a lookup joins the queue as pending and unseen, keeping its refresh flag, analysis mode and open policy', () => {
   assert.deepEqual(run([add('q-1', 'gamut', { analyzeMode: 'batch', openOnReady: 'never' })]), [
@@ -41,13 +45,13 @@ test('a lookup that repeats a running or ready one leaves the queue untouched, w
 });
 
 test('a failed lookup asked for again gives way to the new one', () => {
-  const queue = run([add('q-1', 'gamut'), add('q-2', 'impasse'), { type: 'fail', id: 'q-1' }]);
+  const queue = run([add('q-1', 'gamut'), add('q-2', 'impasse'), fail('q-1')]);
   assert.equal(hasLiveDuplicate(queue, 'gamut'), false);
   assert.deepEqual(run([add('q-3', 'Gamut')], queue).map(item => [item.id, item.status]), [['q-2', 'pending'], ['q-3', 'pending']]);
 });
 
 test("a failed comparison stays when a lookup of its text is asked for, since it isn't that lookup", () => {
-  const queue = run([{ type: 'add-compare', id: 'q-1', words: ['fable', 'parable'], cached: null }, { type: 'fail', id: 'q-1' }]);
+  const queue = run([{ type: 'add-compare', id: 'q-1', words: ['fable', 'parable'], cached: null }, fail('q-1')]);
   assert.deepEqual(run([add('q-2', 'fable vs parable')], queue).map(item => [item.id, item.status]), [['q-1', 'failed'], ['q-2', 'pending']]);
 });
 
@@ -85,7 +89,7 @@ test('a request settles only its own entry and leaves the others as they were', 
   assert.equal(ready[1].status, 'ready');
   assert.equal(ready[1].results, found);
   const compared = comparison(['a', 'b']);
-  const settled = run([{ type: 'compare-ready', id: 'q-3', comparison: compared }, { type: 'fail', id: 'q-1' }], ready);
+  const settled = run([{ type: 'compare-ready', id: 'q-3', comparison: compared }, fail('q-1')], ready);
   assert.deepEqual(settled.map(item => item.status), ['failed', 'ready', 'ready']);
   assert.equal(settled[2].comparison, compared);
 });
@@ -116,7 +120,7 @@ test('dismiss drops one entry, and clear all keeps only the entries still runnin
   const queue = run([
     add('q-1', 'a'), { type: 'search-ready', id: 'q-1', results: result('a') },
     add('q-2', 'b'), start('q-2'),
-    add('q-3', 'c'), { type: 'fail', id: 'q-3' },
+    add('q-3', 'c'), fail('q-3'),
     add('q-4', 'd'),
   ]);
   assert.deepEqual(searchQueueReducer(queue, { type: 'dismiss', id: 'q-1' }).map(item => item.id), ['q-2', 'q-3', 'q-4']);
@@ -142,17 +146,17 @@ test('the running count covers queued and running lookups and comparisons', () =
     add('q-1', 'a'), add('q-2', 'b'), start('q-2'),
     { type: 'add-compare', id: 'q-3', words: ['x', 'y'], cached: null },
     add('q-4', 'c'), { type: 'search-ready', id: 'q-4', results: result('c') },
-    add('q-5', 'd'), { type: 'fail', id: 'q-5' },
+    add('q-5', 'd'), fail('q-5'),
   ]);
   assert.equal(runningCountOf(queue), 3);
   assert.equal(isBusyOf(queue), true);
-  assert.equal(isBusyOf(run([{ type: 'fail', id: 'q-1' }, { type: 'fail', id: 'q-2' }, { type: 'fail', id: 'q-3' }], queue)), false);
+  assert.equal(isBusyOf(run([fail('q-1'), fail('q-2'), fail('q-3')], queue)), false);
 });
 
 test('a comparison is found by its word set in any order, unless it failed', () => {
   const queue = run([
     { type: 'add-compare', id: 'q-1', words: ['Fable', 'parable'], cached: null },
-    { type: 'add-compare', id: 'q-2', words: ['rot', 'decay'], cached: null }, { type: 'fail', id: 'q-2' },
+    { type: 'add-compare', id: 'q-2', words: ['rot', 'decay'], cached: null }, fail('q-2'),
     add('q-3', 'rot vs decay'),
   ]);
   assert.equal(isQueued(queue, 'q-3'), true, "a lookup may repeat a failed comparison's text");
@@ -213,7 +217,7 @@ test('asking again for a lookup opens it when ready, says so while it runs, and 
     ...ready('q-1', 'gamut'),
     add('q-2', 'impasse'),
     add('q-3', 'obfuscate'), start('q-3'),
-    add('q-4', 'rot'), { type: 'fail', id: 'q-4' },
+    add('q-4', 'rot'), fail('q-4'),
   ]);
   assert.equal(classifyEnqueue(queue, 'gamut'), 'open');
   assert.equal(classifyEnqueue(queue, 'impasse'), 'running', 'queued');
@@ -281,7 +285,7 @@ test('a sentence scan joins the queue as pending, and records what it found once
   }]);
   const chinese = run([scan('q-1', '今天天气很好，我们去公园散步吧。'), { type: 'scan-done', id: 'q-1', found: 1, translation: 'The weather is nice.', at: 2 }]);
   assert.equal(chinese[0].translation, 'The weather is nice.');
-  assert.equal(run([scan('q-1'), { type: 'fail', id: 'q-1' }])[0].status, 'failed');
+  assert.equal(run([scan('q-1'), fail('q-1')])[0].status, 'failed');
 });
 
 test('overlapping scans keep the search busy until every one of them has finished', () => {
@@ -289,7 +293,7 @@ test('overlapping scans keep the search busy until every one of them has finishe
   assert.equal(isBusyOf(both), true);
   const oneLeft = run([{ type: 'scan-done', id: 'q-1', found: 0, at: 2 }], both);
   assert.equal(isBusyOf(oneLeft), true, 'the first scan finishing leaves the second running');
-  assert.equal(isBusyOf(run([{ type: 'fail', id: 'q-2' }], oneLeft)), false);
+  assert.equal(isBusyOf(run([fail('q-2')], oneLeft)), false);
 });
 
 test('a scan is never a result, a lookup running, or something to open', () => {
@@ -313,7 +317,7 @@ test('the expressions a scan finds carry its id, and nothing else does', () => {
 test('scanning a sentence that is still being scanned adds nothing, and a failed scan of it gives way to the new one', () => {
   const running = run([scan('q-1'), start('q-1')]);
   assert.equal(searchQueueReducer(running, scan('q-2', 'the GAMUT of emotions ran wild at the impasse.')), running, 'whatever its case');
-  assert.deepEqual(run([{ type: 'fail', id: 'q-1' }, scan('q-2')], running).map(item => [item.id, item.status]), [['q-2', 'pending']]);
+  assert.deepEqual(run([fail('q-1'), scan('q-2')], running).map(item => [item.id, item.status]), [['q-2', 'pending']]);
   const finished = run([{ type: 'scan-done', id: 'q-1', found: 1, at: 2 }, scan('q-2')], running);
   assert.deepEqual(finished.map(item => [item.id, item.status]), [['q-1', 'ready'], ['q-2', 'pending']], 'a finished scan can be run again');
 });
@@ -322,7 +326,7 @@ test('clear all drops finished and failed scans and keeps the ones still running
   const queue = run([
     scan('q-1'), { type: 'scan-done', id: 'q-1', found: 0, at: 2 },
     scan('q-2', 'A sentence still being scanned, a long one.'), start('q-2'),
-    scan('q-3', 'A sentence whose scan failed, sadly enough.'), { type: 'fail', id: 'q-3' },
+    scan('q-3', 'A sentence whose scan failed, sadly enough.'), fail('q-3'),
     ...ready('q-4', 'gamut'),
   ]);
   assert.deepEqual(searchQueueReducer(queue, { type: 'clear-finished' }).map(item => item.id), ['q-2']);
@@ -335,4 +339,97 @@ test('a lookup never takes a scan of the same text for a duplicate, and a refres
   assert.equal(findLiveLookup(queue, SENTENCE), undefined);
   assert.deepEqual(run([add('q-2', SENTENCE)], queue).map(item => [item.id, item.kind]), [['q-1', 'scan'], ['q-2', 'lookup']]);
   assert.deepEqual(run([add('q-2', SENTENCE, { forceAI: true })], queue).map(item => [item.id, item.kind]), [['q-1', 'scan'], ['q-2', 'lookup']]);
+});
+
+test('a failed request keeps why on its entry', () => {
+  const why = failure({ message: 'No dictionary entry found for “qwxzv”.', retryable: false, notAWord: true, at: 7 });
+  const [entry] = run([add('q-1', 'qwxzv'), start('q-1'), { type: 'fail', id: 'q-1', failure: why }]);
+  assert.equal(entry.status, 'failed');
+  assert.equal(entry.failure, why);
+});
+
+test('with no failures the error toast has nothing to show', () => {
+  assert.equal(summarizeFailures(run([...ready('q-1', 'gamut'), add('q-2', 'impasse')]), 0), null);
+  assert.equal(summarizeFailures([], 0), null);
+});
+
+test('the toast leads with the newest failure, counts the others, and offers Retry all when several could work', () => {
+  const queue = run([
+    add('q-1', 'gamut'), fail('q-1', { at: 1_000, message: 'Couldn’t reach DictProp for “gamut”.' }),
+    { type: 'add-compare', id: 'q-2', words: ['fable', 'parable'], cached: null }, fail('q-2', { at: 3_000, message: 'Couldn’t reach DictProp for “fable vs parable”.' }),
+    { type: 'add-scan', id: 'q-3', query: SENTENCE }, fail('q-3', { at: 2_000 }),
+    ...ready('q-4', 'impasse'),
+  ]);
+  const summary = summarizeFailures(queue, 3_500);
+  assert.equal(summary?.newest.id, 'q-2');
+  assert.equal(summary?.newest.failure.message, 'Couldn’t reach DictProp for “fable vs parable”.');
+  assert.equal(summary?.others, 2);
+  assert.equal(summary?.action, 'retry-all');
+});
+
+test('the action follows the newest failure: Retry for the only one that could work, Edit for a word not found, else none', () => {
+  const one = run([add('q-1', 'gamut'), fail('q-1')]);
+  assert.equal(summarizeFailures(one, 0)?.action, 'retry');
+
+  const notAWord = run([add('q-1', 'gamut'), fail('q-1', { at: 1 }), add('q-2', 'qwxzv'), fail('q-2', { at: 2, retryable: false, notAWord: true })]);
+  assert.deepEqual([summarizeFailures(notAWord, 2)?.newest.id, summarizeFailures(notAWord, 2)?.action], ['q-2', 'edit']);
+
+  const refused = run([add('q-1', 'gamut'), fail('q-1', { at: 1 }), add('q-2', 'x'.repeat(30)), fail('q-2', { at: 2, retryable: false })]);
+  assert.deepEqual([summarizeFailures(refused, 2)?.newest.id, summarizeFailures(refused, 2)?.action, summarizeFailures(refused, 2)?.others], ['q-2', null, 1]);
+
+  const olderRetryable = run([add('q-1', 'qwxzv'), fail('q-1', { at: 1, retryable: false, notAWord: true }), add('q-2', 'gamut'), fail('q-2', { at: 2 })]);
+  assert.equal(summarizeFailures(olderRetryable, 2)?.action, 'retry', 'only one of them could work');
+});
+
+test('a failure neither Retry nor Edit could fix leaves the toast after 6 s; the others stay until acted on', () => {
+  const queue = run([
+    add('q-1', 'gamut'), fail('q-1', { at: 1_000 }),
+    add('q-2', 'qwxzv'), fail('q-2', { at: 2_000, retryable: false, notAWord: true }),
+    add('q-3', 'Text that is too long'), fail('q-3', { at: 3_000, retryable: false }),
+    add('q-4', 'Another refused text'), fail('q-4', { at: 4_000, retryable: false }),
+  ]);
+  assert.equal(nextFailureExpiry(queue, 4_000), 3_000 + PASSING_FAILURE_MS);
+  assert.equal(summarizeFailures(queue, 4_000)?.others, 3);
+  assert.equal(nextFailureExpiry(queue, 3_000 + PASSING_FAILURE_MS), 4_000 + PASSING_FAILURE_MS);
+  const later = summarizeFailures(queue, 3_000 + PASSING_FAILURE_MS);
+  assert.deepEqual([later?.newest.id, later?.others], ['q-4', 2]);
+  const muchLater = summarizeFailures(queue, 60_000);
+  assert.deepEqual([muchLater?.newest.id, muchLater?.others, muchLater?.action], ['q-2', 1, 'edit']);
+  assert.equal(nextFailureExpiry(queue, 60_000), null);
+  assert.equal(nextFailureExpiry(run([add('q-1', 'gamut'), fail('q-1')]), 0), null, 'a failure retrying could fix never leaves by itself');
+});
+
+test('Retry all runs every failure that retrying could fix again, in place and in its own mode', () => {
+  const queue = run([
+    add('q-1', 'gamut', { analyzeMode: 'batch', scanId: 'q-9', openOnReady: 'never' }), start('q-1', 10), { type: 'repeat-asked', id: 'q-1', at: 20 }, fail('q-1'),
+    ...ready('q-2', 'impasse'),
+    add('q-3', 'run', { forceAI: true, openOnReady: 'any' }), fail('q-3'),
+    { type: 'add-compare', id: 'q-4', words: ['fable', 'parable'], cached: null }, fail('q-4'),
+    { type: 'add-scan', id: 'q-5', query: SENTENCE }, fail('q-5'),
+    add('q-6', 'qwxzv'), fail('q-6', { retryable: false, notAWord: true }),
+  ]);
+  const retried = searchQueueReducer(queue, { type: 'retry-failed' });
+  assert.deepEqual(retried.map(item => [item.id, item.status]), [
+    ['q-1', 'pending'], ['q-2', 'ready'], ['q-3', 'pending'], ['q-4', 'pending'], ['q-5', 'pending'], ['q-6', 'failed'],
+  ]);
+  assert.deepEqual(retried[0], {
+    id: 'q-1', kind: 'lookup', query: 'gamut', status: 'pending', results: null, seen: false, forceAI: false,
+    analyzeMode: 'batch', openOnReady: 'never', scanId: 'q-9',
+  }, 'as it was asked for: no failure, and no request out yet');
+  assert.deepEqual([retried[2].forceAI, retried[2].openOnReady], [true, 'any']);
+  assert.deepEqual([retried[3].kind, retried[3].words], ['compare', ['fable', 'parable']]);
+  assert.equal(retried[4].kind, 'scan');
+  assert.equal(retried[1], queue[1], 'the others are left as they were');
+  assert.equal(retried[5], queue[5]);
+});
+
+test('× drops every failed entry and keeps the rest', () => {
+  const queue = run([add('q-1', 'gamut'), fail('q-1'), ...ready('q-2', 'impasse'), add('q-3', 'rot'), add('q-4', 'qwxzv'), fail('q-4', { retryable: false, notAWord: true })]);
+  assert.deepEqual(searchQueueReducer(queue, { type: 'dismiss-failed' }).map(item => item.id), ['q-2', 'q-3']);
+});
+
+test('a failed comparison gives way to the same comparison asked for again, so a retry never runs it twice', () => {
+  const queue = run([{ type: 'add-compare', id: 'q-1', words: ['fable', 'parable'], cached: null }, fail('q-1'), add('q-2', 'gamut'), fail('q-2')]);
+  const again = searchQueueReducer(queue, { type: 'add-compare', id: 'q-3', words: ['Parable', 'fable'], cached: null });
+  assert.deepEqual(again.map(item => [item.id, item.status]), [['q-2', 'failed'], ['q-3', 'pending']]);
 });

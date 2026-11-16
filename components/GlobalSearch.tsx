@@ -17,7 +17,7 @@ import { useTimedMessage } from '../hooks/useTimedMessage';
 import {
   clampMeaning, meaningAfterRefresh, neighbourAfterDismiss, resolveViewing, stepMeaning, type SearchMode,
 } from './search/searchViewing';
-import { openIndexForResults } from './search/searchQueue';
+import { nextFailureExpiry, openIndexForResults, summarizeFailures } from './search/searchQueue';
 import { SearchToasts, type SearchErrorToast } from './search/SearchToasts';
 import { SearchInputBar } from './search/SearchInputBar';
 import { SearchResultsSheet } from './search/SearchResultsSheet';
@@ -72,13 +72,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   const inputRef = useRef<HTMLInputElement>(null);
   const { zoneFlash, flashZone, playOrToggleSentence } = useSheetPlayback(mode);
 
-  // Surface a failed search as an auto-dismissing toast. The floating search has no inline results
-  // area, so without this a failed queue item just vanishes (the bug behind silent search failures).
-  const { message: error, show: showErrorToast, clear: clearError } = useTimedMessage<SearchErrorToast>(6000);
-  const showError = useCallback((msg: string, query?: string, analyzeMode?: 'batch') => {
-    // Search failures remain actionable until retried. Informational failures can still expire.
-    showErrorToast({ msg, query, analyzeMode }, { untilCleared: !!query });
-  }, [showErrorToast]);
+  // The error toast shows a passing notice (a request refused offline, a refresh that failed) for 6 s, or else the
+  // failures the queue keeps (see summarizeFailures). The floating search has no inline results area, so without it a
+  // failed lookup would just vanish.
+  const { message: notice, show: showNotice, clear: clearNotice } = useTimedMessage<string>(6000);
 
   // Neutral status pill (top-center) — "scanning…/found N expressions" notices that aren't errors.
   const { message: statusToast, show: showStatus } = useTimedMessage<string>(3500);
@@ -124,11 +121,25 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   }, [suggestions, onOpenSentence]);
 
   const {
-    readyItems, unseenCount, runningCount, isBusy, updateQueue, enqueue, lookUp, refreshInPlace,
+    queue, readyItems, unseenCount, runningCount, isBusy, updateQueue, lookUp, refreshInPlace,
   } = useSearchQueue({
-    findSavedByWord, isOnline, onRefreshReplace, onCompareReady, openWhenReady: setPendingOpenId, showError, clearError, showStatus,
+    findSavedByWord, isOnline, onRefreshReplace, onCompareReady, openWhenReady: setPendingOpenId, showNotice, showStatus,
   });
   const readyCount = readyItems.length;
+
+  // The time the error toast is worked out at. It moves on when a failure is due to leave the toast, so that expiry
+  // re-renders without a ticking clock; a failure that arrives later than it still shows, since it can only expire
+  // after it arrived.
+  const [clock, setClock] = useState(() => Date.now());
+  const failures = summarizeFailures(queue, clock);
+  const nextChange = nextFailureExpiry(queue, clock);
+  useEffect(() => {
+    if (nextChange === null) return;
+    const timer = setTimeout(() => setClock(Math.max(Date.now(), nextChange)), Math.max(0, nextChange - Date.now()));
+    return () => clearTimeout(timer);
+  }, [nextChange]);
+  const errorToast: SearchErrorToast | null = notice !== null ? { msg: notice }
+    : failures && { msg: failures.newest.failure.message, more: failures.others, action: failures.action ?? undefined };
 
   // Current viewing state: the open result stays the same one while other lookups finish around it.
   const viewing = mode === 'viewing' ? resolveViewing(readyItems, viewingId) : null;
@@ -224,12 +235,19 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [mode, sheetKeysRef]);
 
-  // Auto-focus input
+  // Auto-focus input, selecting the text when Edit put a failed query there.
+  const selectOnOpenRef = useRef(false);
+  const focusBox = useCallback((select: boolean) => {
+    setTimeout(() => {
+      inputRef.current?.focus();
+      if (select) inputRef.current?.select();
+    }, 50);
+  }, []);
   useEffect(() => {
-    if (mode === 'input') {
-      setTimeout(() => inputRef.current?.focus(), 50);
-    }
-  }, [mode]);
+    if (mode !== 'input') return;
+    focusBox(selectOnOpenRef.current);
+    selectOnOpenRef.current = false;
+  }, [mode, focusBox]);
 
   // Submit from input box: look the typed text up (see useSearchQueue's lookUp) and go back to the button, whose spinner
   // shows the lookup running. Offline, a word asked for before or a saved word still answers; anything that needs the
@@ -366,13 +384,25 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     });
   }, [viewingItemRef, refreshInPlace]);
 
-  // The error toast's retry: replays the query the failure carries.
-  const retryFailedSearch = (failed: SearchErrorToast) => {
-    const q = failed.query; const mode = failed.analyzeMode; clearError();
-    if (!q) return;
-    // Preserve routing: a failed extracted expression re-analyzes as a unit (batch); a failed
-    // user query (word or sentence) is looked up again as typed (a sentence is scanned again).
-    if (mode) enqueue(q, { forceAI: true, analyzeMode: mode, openOnReady: 'any' }); else lookUp({ query: q, source: 'text' });
+  // The error toast's buttons. Retry runs every failure that retrying could fix again, each in its own mode, where it
+  // was; Edit puts a query the model found no entry for back in the box, selected, to fix the spelling; × drops every
+  // failure, and the notice.
+  const retryFailures = () => updateQueue({ type: 'retry-failed' });
+  const editFailedQuery = () => {
+    if (failures?.action !== 'edit') return;
+    updateQueue({ type: 'dismiss', id: failures.newest.id });
+    setQuery(failures.newest.query);
+    setHighlightedIndex(-1);
+    if (mode === 'input') {
+      focusBox(true);
+    } else {
+      selectOnOpenRef.current = true;
+      setMode('input');
+    }
+  };
+  const dismissFailures = () => {
+    updateQueue({ type: 'dismiss-failed' });
+    clearNotice();
   };
 
   return (
@@ -380,9 +410,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       <SearchToasts
         saveToast={saveToast}
         statusToast={statusToast}
-        error={error}
-        onRetry={retryFailedSearch}
-        onDismissError={clearError}
+        error={errorToast}
+        onRetry={retryFailures}
+        onEdit={editFailedQuery}
+        onDismissError={dismissFailures}
         aboveTabBar={aboveTabBar}
       />
 
