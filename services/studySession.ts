@@ -2,6 +2,7 @@ import {
   type ItemGroup,
   type ReviewRating,
   type ReviewTaskType,
+  type SRSData,
   type StoredItem,
   getItemSpelling,
   getItemTitle,
@@ -120,12 +121,15 @@ export const RATINGS = REVIEW_RATINGS;
 
 const emptyRatings = (): Record<ReviewRating, number> => ({ again: 0, hard: 0, good: 0, easy: 0 });
 
-/** A grade that stands in a session: the card it was given to, which grade, and when. */
+/** A grade that stands in a session: the card it was given to, which grade, when, and the card's review count after it. */
 export interface StandingGrade {
   itemId: string;
   rating: ReviewRating;
-  /** When it was given: its review's reviewedAt, which the review stamps as the card's lastReviewDate. */
+  /** When it was given, by this device's clock: its review's reviewedAt. */
   at: number;
+  /** The card's totalReviews once the grade's review is applied (the review event's nextStep). Every review adds one,
+   *  so a card whose count is higher was reviewed again after the grade, whatever any clock says (isSessionCardLive). */
+  totalReviews: number;
 }
 
 /** A review session in progress: the cards it shows, in order, and how far it has got. */
@@ -136,7 +140,7 @@ export interface StudySession {
   revealed: boolean;
   typedAnswer: string;
   promptStartedAt: number;
-  /** When the session began: a card reviewed after it, other than by this session, is passed over (isSessionCardLive). */
+  /** When the session began: a card it hasn't graded that was reviewed after then is passed over (isSessionCardLive). */
   startedAt: number;
   /** The session's grades that stand, in the order they were given; undoing one takes it back off the end. */
   grades: StandingGrade[];
@@ -276,16 +280,16 @@ export interface SessionReview {
   durationMs: number;
   sessionId: string;
   eventId: string;
-  /** The grade's own time, which its standing grade keeps as `at` and the review stamps as the card's lastReviewDate. */
+  /** The grade's own time, which its standing grade keeps as `at`; the server stamps the card's lastReviewDate from it. */
   reviewedAt: number;
 }
 
 /**
  * The grade of the card the session shows (`item`, at session.index), given at `now`: what undoing it takes, the review
- * that records it, and `advance`, which moves the session on with the grade standing (advanceSession).
- * `intervalMinutes` is the interval the grade sets, which may queue an extra showing (requeueShortStep). The one `now`
- * stamps both the review and the grade the session keeps, so the session's own review doesn't count as one given
- * elsewhere (isSessionCardLive).
+ * that records it, and `advance`, which moves the session on with the grade standing (advanceSession). `next` is the
+ * card's schedule after the grade, as updateSRS schedules it: its interval may queue an extra showing
+ * (requeueShortStep), and the grade keeps its review count, so a review of the card elsewhere afterwards shows
+ * (isSessionCardLive). The one `now` stamps both the review and the grade the session keeps.
  */
 export function gradeSessionCard(
   session: StudySession,
@@ -293,23 +297,23 @@ export function gradeSessionCard(
   rating: ReviewRating,
   eventId: string,
   now: number,
-  intervalMinutes: number,
+  next: Pick<SRSData, 'interval' | 'totalReviews'>,
 ): { grade: SessionGrade; review: SessionReview; advance: (current: StudySession) => StudySession } {
-  const itemIds = requeueShortStep(session.itemIds, session.index, intervalMinutes);
+  const itemIds = requeueShortStep(session.itemIds, session.index, next.interval);
   const grade: SessionGrade = {
     eventId,
     sessionId: session.id,
     itemId: item.data.id,
     itemIndex: session.index,
     word: getItemTitle(item),
-    intervalMinutes,
+    intervalMinutes: next.interval,
     rating,
     taskType: selectReviewTask(item),
     durationMs: cappedDuration(session.promptStartedAt, now),
     typedAnswer: session.typedAnswer,
     requeuedAt: itemIds !== session.itemIds ? session.itemIds.length : undefined,
   };
-  const standing: StandingGrade = { itemId: grade.itemId, rating, at: now };
+  const standing: StandingGrade = { itemId: grade.itemId, rating, at: now, totalReviews: next.totalReviews };
   return {
     grade,
     review: { taskType: grade.taskType, durationMs: grade.durationMs, sessionId: grade.sessionId, eventId, reviewedAt: standing.at },
@@ -380,19 +384,20 @@ export function findSessionCard(
 }
 
 /**
- * Whether the session still shows a card: it is in the study list (a deleted or archived card isn't), and it
- * wasn't reviewed elsewhere (by Got it in the review popup or the card view, or on another device) since the
- * session began or, for a card the session graded, since the latest of its grades. Every review stamps the card's
- * lastReviewDate, and the session's own reviews stamp their grade's time (StandingGrade.at), so they don't count
- * as reviewed elsewhere, while a Got it on a card brought back to the end of the session does.
+ * Whether the session still shows a card: it is in the study list (a deleted or archived card isn't), and it wasn't
+ * reviewed elsewhere (by Got it in the review popup or the card view, or on another device). A card the session graded
+ * goes by its review count, which no clock can skew: a count above the one its latest standing grade left
+ * (StandingGrade.totalReviews) means a review came after that grade, as a Got it on a card brought back to the end of
+ * the session does. A card the session hasn't graded goes by time: a review after the session began passes it over.
  */
 export function isSessionCardLive(item: StoredItem | undefined, session: Pick<StudySession, 'startedAt' | 'grades'>): boolean {
   if (!item) return false;
-  let reviewedHere = session.startedAt;
-  for (const grade of session.grades) {
-    if (grade.itemId === item.data.id && grade.at > reviewedHere) reviewedHere = grade.at;
-  }
-  return (item.srs?.lastReviewDate ?? 0) <= reviewedHere;
+  // The latest grade, not the highest count: a reset elsewhere between two grades leaves the later one the lower count.
+  let latest: StandingGrade | undefined;
+  for (const grade of session.grades) if (grade.itemId === item.data.id) latest = grade;
+  return latest
+    ? (item.srs?.totalReviews ?? 0) <= latest.totalReviews
+    : (item.srs?.lastReviewDate ?? 0) <= session.startedAt;
 }
 
 /**

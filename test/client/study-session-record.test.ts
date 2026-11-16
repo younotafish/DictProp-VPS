@@ -38,7 +38,10 @@ const session = (overrides: Partial<StudySession> = {}): StudySession => ({
   typedAnswer: 'secret answer',
   promptStartedAt: NOW - 30_000,
   startedAt: NOW - HOUR,
-  grades: [{ itemId: 'a', rating: 'again', at: NOW - HOUR + 20_000 }, { itemId: 'b', rating: 'good', at: NOW - HOUR + 40_000 }],
+  grades: [
+    { itemId: 'a', rating: 'again', at: NOW - HOUR + 20_000, totalReviews: 3 },
+    { itemId: 'b', rating: 'good', at: NOW - HOUR + 40_000, totalReviews: 1 },
+  ],
   siblingCounts: { a: 2 },
   passedOverFrom: 1,
   ...overrides,
@@ -52,7 +55,10 @@ test('the record holds the session\'s ids, place and grades, and nothing of its 
   const raw = encodeStudySession(session(), USER, NOW);
   assert.deepEqual(JSON.parse(raw), {
     version: 2, userId: USER, sessionId: 'session-1', itemIds: ['a', 'b', 'c', 'a'], index: 2,
-    grades: [{ itemId: 'a', rating: 'again', at: NOW - HOUR + 20_000 }, { itemId: 'b', rating: 'good', at: NOW - HOUR + 40_000 }],
+    grades: [
+      { itemId: 'a', rating: 'again', at: NOW - HOUR + 20_000, totalReviews: 3 },
+      { itemId: 'b', rating: 'good', at: NOW - HOUR + 40_000, totalReviews: 1 },
+    ],
     startedAt: NOW - HOUR, savedAt: NOW,
   });
   assert.doesNotMatch(raw, /secret answer|siblingCounts|revealed/);
@@ -72,6 +78,9 @@ test('a record that can\'t be taken up decodes to nothing: unreadable, another v
     ['a grade with another rating', recordJson({ grades: [{ itemId: 'a', rating: 'perfect' }] })],
     ['a grade without a card', recordJson({ grades: [{ rating: 'good' }] })],
     ['a grade with a time that is not one', recordJson({ grades: [{ itemId: 'a', rating: 'good', at: 'soon' }] })],
+    ['a grade with a review count that is not one', recordJson({ grades: [{ itemId: 'a', rating: 'good', at: NOW - HOUR, totalReviews: '2' }] })],
+    ['a grade with a fractional review count', recordJson({ grades: [{ itemId: 'a', rating: 'good', at: NOW - HOUR, totalReviews: 1.5 }] })],
+    ['a grade with a negative review count', recordJson({ grades: [{ itemId: 'a', rating: 'good', at: NOW - HOUR, totalReviews: -1 }] })],
     ['the place past the end', recordJson({ index: 4 })],
     ['a negative place', recordJson({ index: -1 })],
     ['a fractional place', recordJson({ index: 1.5 })],
@@ -94,6 +103,17 @@ test('a grade in a record written before grades kept their time is taken as give
   ]);
 });
 
+test('a grade in a record written before grades kept their review count takes its card\'s count when the session is taken up', () => {
+  const raw = recordJson({ grades: [{ itemId: 'a', rating: 'again', at: NOW - HOUR + 20_000 }, session().grades[1]] });
+  const record = decodeStudySession(raw, USER, NOW)!;
+  assert.deepEqual(record.grades, [{ itemId: 'a', rating: 'again', at: NOW - HOUR + 20_000 }, session().grades[1]]);
+  const counts: Record<string, number> = { a: 4, b: 7 };
+  assert.deepEqual(restoredSession(record, 3, NOW, {}, id => counts[id]).grades, [
+    { itemId: 'a', rating: 'again', at: NOW - HOUR + 20_000, totalReviews: 4 },
+    { itemId: 'b', rating: 'good', at: NOW - HOUR + 40_000, totalReviews: 1 },
+  ], 'a grade that kept its count keeps it');
+});
+
 test('taken up again, a session goes on at the first card still studied and not reviewed since the record was written', () => {
   const record: Pick<StudySessionRecord, 'itemIds' | 'index' | 'savedAt'> = { itemIds: ['a', 'b', 'c', 'd', 'a'], index: 1, savedAt: NOW };
   const present = (...ids: string[]) => (id: string) => ids.includes(id);
@@ -108,7 +128,7 @@ test('taken up again, a session goes on at the first card still studied and not 
 
 test('a restored session is at its card, unrevealed and unanswered, with its start and grades and nothing passed over', () => {
   const record = decodeStudySession(encodeStudySession(session(), USER, NOW), USER, NOW)!;
-  const restored = restoredSession(record, 3, NOW + 60_000, { a: 2 });
+  const restored = restoredSession(record, 3, NOW + 60_000, { a: 2 }, () => 0);
   assert.deepEqual(restored, {
     id: 'session-1', itemIds: ['a', 'b', 'c', 'a'], index: 3, revealed: false, typedAnswer: '', promptStartedAt: NOW + 60_000,
     startedAt: NOW - HOUR, grades: session().grades, siblingCounts: { a: 2 },
@@ -124,7 +144,7 @@ test('the record is written again when the session moves on, never as an answer 
   assert.equal(changed({ ...current, typedAnswer: 'ran' }), false, 'typing');
   assert.equal(changed({ ...current, revealed: true }), false, 'showing the answer');
   assert.equal(changed({ ...current, index: 3 }), true, 'another card');
-  assert.equal(changed({ ...current, grades: [...current.grades, { itemId: 'c', rating: 'easy', at: NOW }] }), true, 'a grade');
+  assert.equal(changed({ ...current, grades: [...current.grades, { itemId: 'c', rating: 'easy', at: NOW, totalReviews: 1 }] }), true, 'a grade');
   assert.equal(changed({ ...current, grades: current.grades.slice(0, -1) }), true, 'an undo');
   assert.equal(changed({ ...current, itemIds: [...current.itemIds, 'c'] }), true, 'a card brought back');
   assert.equal(changed({ ...current, id: 'session-2' }), true, 'another session');
@@ -215,4 +235,27 @@ test('the study screen takes a session up at its card after a reload, and clears
     onReview: async () => true, onUndoReview: async () => true, onOpenExampleSentence: () => {}, onViewCards: () => {},
   })), /Today&#x27;s Study/);
   assert.equal(storage.getItem(STUDY_SESSION_KEY), null);
+});
+
+test('a session taken up from a record written before grades kept their review count still shows the card it brought back', t => {
+  const storage = new MemoryStorage();
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
+  t.after(() => { Reflect.deleteProperty(globalThis, 'localStorage'); });
+  t.mock.method(Date, 'now', () => NOW);
+  // a was rated Again, then b Good; a's own review is its only one since, and it comes back at the end.
+  const gradedAt = { a: NOW - HOUR + 20_000, b: NOW - HOUR + 40_000 };
+  const items = ['a', 'b'].map(id => {
+    const item = card(id);
+    return { ...item, srs: { ...item.srs, totalReviews: 1, lastReviewDate: gradedAt[id as 'a' | 'b'] } };
+  });
+  storage.setItem(STUDY_SESSION_KEY, recordJson({
+    itemIds: ['a', 'b', 'a'], index: 2,
+    grades: [{ itemId: 'a', rating: 'again', at: gradedAt.a }, { itemId: 'b', rating: 'good', at: gradedAt.b }],
+  }));
+  const markup = renderToStaticMarkup(createElement(StudyEnhanced, {
+    userId: USER, items, reviewHistory: { recent: [], olderTimes: [], olderCount: 0 },
+    onReview: async () => true, onUndoReview: async () => true, onOpenExampleSentence: () => {}, onViewCards: () => {},
+  }));
+  assert.match(markup, /<span class="text-sm font-semibold text-slate-600">3 \/ 3<\/span>/);
+  assert.match(markup, />word-a</);
 });

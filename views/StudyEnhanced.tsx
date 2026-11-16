@@ -56,7 +56,7 @@ interface StudyEnhancedProps {
   items: StoredItem[];
   /** The review history, and whether a load of it has succeeded yet (useReviewHistory). */
   reviewHistory: ReviewHistory & { loaded?: boolean };
-  /** Records a review. `reviewedAt` is the grade's own time, which the review stamps as the card's lastReviewDate. */
+  /** Records a review. `reviewedAt` is the grade's own time, from which the server stamps the card's lastReviewDate. */
   onReview: (itemId: string, rating: ReviewRating, context: SessionReview) => Promise<boolean>;
   /** Takes back a review on the server: false while it's still in the outbox, and a request that fails throws. */
   onUndoReview: (eventId: string) => Promise<boolean>;
@@ -107,7 +107,7 @@ function restoreSession(userId: string, items: readonly StoredItem[], now: numbe
     return null;
   }
   const queue = record.itemIds.flatMap(id => itemsById.get(id) ?? []);
-  return restoredSession(record, index, now, sessionSiblingCounts(queue, items));
+  return restoredSession(record, index, now, sessionSiblingCounts(queue, items), id => itemsById.get(id)?.srs?.totalReviews ?? 0);
 }
 
 export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({ 
@@ -209,13 +209,12 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     lastActionAtRef.current = performance.now();
     const eventId = crypto.randomUUID();
     const now = Date.now();
-    // The interval the grade sets, scheduled as updateSRS will schedule it.
-    const intervalMinutes = updateAfterRating(
-      SRSAlgorithm.ensure(currentItem.srs, currentItem.data.id, currentItem.type), rating, now,
-    ).interval;
+    // The card's schedule after the grade, as updateSRS will schedule it: the interval the grade sets, and the review
+    // count the session keeps with the grade.
+    const next = updateAfterRating(SRSAlgorithm.ensure(currentItem.srs, currentItem.data.id, currentItem.type), rating, now);
     // The review and the step that moves the session on come from one call with one time, so the review is stamped
     // with the time the session keeps with the grade (gradeSessionCard).
-    const { grade: sessionGrade, review, advance } = gradeSessionCard(session, currentItem, rating, eventId, now, intervalMinutes);
+    const { grade: sessionGrade, review, advance } = gradeSessionCard(session, currentItem, rating, eventId, now, next);
     const grade: LastGrade = { ...sessionGrade, undoing: false, waiting: false };
     setLastGrade(grade);
     setUndoError('');
