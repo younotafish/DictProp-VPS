@@ -16,13 +16,27 @@ export function stepMeaning(index: number, count: number, delta: 1 | -1, wrap: b
 }
 
 /**
- * The open result's index once `dismissedId` leaves the queue: the same position, or the last ready result when
- * that position is gone; null when no ready result is left, so the sheet closes.
+ * The open result, found by its entry's id, and its position among the ready results; null once it's no longer
+ * among them. Ready results keep the order they were asked for, so an earlier lookup finishing moves the open one's
+ * position but not which result is open.
  */
-export function viewingIndexAfterDismiss(queue: readonly QueueItem[], dismissedId: string, viewingIndex: number): number | null {
-  const remaining = queue.filter(item => item.id !== dismissedId && item.status === 'ready').length;
-  return remaining === 0 ? null : Math.min(viewingIndex, remaining - 1);
+export function resolveViewing(readyItems: readonly QueueItem[], viewingId: string | null): { index: number; item: QueueItem } | null {
+  const index = viewingId === null ? -1 : readyItems.findIndex(item => item.id === viewingId);
+  return index < 0 ? null : { index, item: readyItems[index] };
 }
+
+/**
+ * The result the sheet shows once the open result `dismissedId` is dismissed: the next ready result, or the previous
+ * one when it was the last; null when no other result is ready, so the sheet closes.
+ */
+export function neighbourAfterDismiss(readyItems: readonly QueueItem[], dismissedId: string): string | null {
+  const index = readyItems.findIndex(item => item.id === dismissedId);
+  if (index < 0) return null;
+  return (readyItems[index + 1] ?? readyItems[index - 1])?.id ?? null;
+}
+
+/** The meaning to show for `index` among `count`: the last one when the result has fewer meanings, and 0 for none. */
+export const clampMeaning = (index: number, count: number): number => Math.max(0, Math.min(index, count - 1));
 
 /**
  * The meaning to show once the entry `refreshedId` has its fresh result: the first, when that entry is the open result

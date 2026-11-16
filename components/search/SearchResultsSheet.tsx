@@ -94,8 +94,9 @@ export const SearchResultsSheet: React.FC<Props> = ({
                 </button>
               </div>
             )}
-            {/* Save all meanings of current word (searches only — comparisons auto-save) */}
-            {viewingItem.kind !== 'compare' && (() => {
+            {/* Save all meanings of current word (searches only — comparisons auto-save; a lookup that came back
+                without a card has nothing to save) */}
+            {viewingItem.kind !== 'compare' && meaningCount > 0 && (() => {
               const allSaved = viewingItem.results?.vocabs?.every(v => isVocabSaved(v)) ?? false;
               return (
                 <button

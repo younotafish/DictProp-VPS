@@ -14,7 +14,9 @@ import { looksLikeSentence } from '../services/queryMode';
 import { useSearchQueue } from './search/useSearchQueue';
 import { useSheetPlayback } from './search/useSheetPlayback';
 import { useTimedMessage } from '../hooks/useTimedMessage';
-import { meaningAfterRefresh, stepMeaning, viewingIndexAfterDismiss, type SearchMode } from './search/searchViewing';
+import {
+  clampMeaning, meaningAfterRefresh, neighbourAfterDismiss, resolveViewing, stepMeaning, type SearchMode,
+} from './search/searchViewing';
 import { SearchToasts, type SearchErrorToast } from './search/SearchToasts';
 import { SearchInputBar } from './search/SearchInputBar';
 import { SearchResultsSheet } from './search/SearchResultsSheet';
@@ -56,8 +58,9 @@ interface Props {
 export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedByWord, onSearch, isOnline, onLazyLoadImage, onRefreshReplace, onSaveSentence, isSentenceSaved, onCompareReady, onCompare, sentenceItems, onOpenSentence, aboveTabBar }) => {
   const [mode, setMode] = useState<SearchMode>('idle');
   const [query, setQuery] = useState('');
-  // Viewing state: which queue item and which vocab within it
-  const [viewingQueueIdx, setViewingQueueIdx] = useState(0);
+  // The open result, by its queue entry's id (its position among the ready results moves as earlier lookups finish),
+  // and the meaning shown within it.
+  const [viewingId, setViewingId] = useState<string | null>(null);
   const [viewingVocabIdx, setViewingVocabIdx] = useState(0);
   // When a DB hit (already-saved word) becomes ready, auto-open its card. AI results don't set this.
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
@@ -117,18 +120,20 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   }, [suggestions, onOpenSentence]);
 
   const {
-    queue, readyItems, busyCount, scanning, updateQueue, enqueue, submitQuery, refreshInPlace,
+    readyItems, busyCount, scanning, updateQueue, enqueue, submitQuery, refreshInPlace,
   } = useSearchQueue({
     findSavedByWord, onRefreshReplace, onCompareReady, openWhenReady: setPendingOpenId, showError, clearError, showStatus,
   });
   const readyCount = readyItems.length;
   const isBusy = busyCount > 0 || scanning; // scanning = sentence→expression scan before items are enqueued
 
-  // Current viewing state
-  const viewingItem = mode === 'viewing' ? readyItems[viewingQueueIdx] : null;
+  // Current viewing state: the open result stays the same one while other lookups finish around it.
+  const viewing = mode === 'viewing' ? resolveViewing(readyItems, viewingId) : null;
+  const viewingItem = viewing?.item ?? null;
   const viewingResult = viewingItem?.results;
-  const viewingVocab = viewingResult?.vocabs?.[viewingVocabIdx];
   const viewingVocabCount = viewingResult?.vocabs?.length || 0;
+  const meaningIndex = clampMeaning(viewingVocabIdx, viewingVocabCount);
+  const viewingVocab = viewingResult?.vocabs?.[meaningIndex];
 
   // Shows another meaning of the open result; with `speak` (the arrow keys and swipes), also says its word.
   const showMeaning = useCallback((index: number, options?: { speak?: boolean }) => {
@@ -136,28 +141,36 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     const word = viewingResult?.vocabs?.[index]?.word;
     if (options?.speak && word) speakWord(word);
   }, [viewingResult]);
-  // Opens another ready result, at its first meaning.
+  // Opens another ready result (the sheet passes its position), at its first meaning.
   const showResult = useCallback((index: number) => {
-    setViewingQueueIdx(index);
+    const id = readyItems[index]?.id;
+    if (!id) return;
+    setViewingId(id);
     setViewingVocabIdx(0);
-  }, []);
+  }, [readyItems]);
 
   // Auto-open the popup once an instant DB hit becomes ready (AI results stay on the floating button)
   useEffect(() => {
     if (!pendingOpenId) return;
-    const idx = readyItems.findIndex(q => q.id === pendingOpenId);
-    if (idx < 0) return;
-    setViewingQueueIdx(idx);
+    const item = readyItems.find(q => q.id === pendingOpenId);
+    if (!item) return;
+    setViewingId(item.id);
     setViewingVocabIdx(0);
     setMode('viewing');
     setPendingOpenId(null);
-    const w = readyItems[idx]?.results?.vocabs?.[0]?.word;
+    const w = item.results?.vocabs?.[0]?.word;
     if (w) speakWord(w);
   }, [pendingOpenId, readyItems]);
 
+  // The open result can leave the ready ones while the sheet is up: a refresh of the same word from its card replaces
+  // the entry, and the fresh result opens by itself once it's ready. Until then the sheet closes, rather than show
+  // another result or nothing.
+  const openResultGone = mode === 'viewing' && !viewingItem;
+  useEffect(() => { if (openResultGone) setMode('idle'); }, [openResultGone]);
+
   // The arrow and Cmd+1–4 keys read the open result through this ref, so their listener is added once per mode
   // instead of again after every change to the queue.
-  const sheetKeysRef = useLatest({ readyItems, viewingQueueIdx, viewingVocabIdx, playOrToggleSentence, showMeaning });
+  const sheetKeysRef = useLatest({ viewingItem, meaningIndex, playOrToggleSentence, showMeaning });
 
   // Cmd+F / Ctrl+F keyboard shortcut
   useEffect(() => {
@@ -172,10 +185,10 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         }
       }
       // Arrow key navigation in viewing mode — stop propagation so background carousel doesn't also move
-      const { readyItems, viewingQueueIdx, viewingVocabIdx, playOrToggleSentence, showMeaning } = sheetKeysRef.current;
-      if (mode === 'viewing' && readyItems.length > 0) {
+      const { viewingItem, meaningIndex, playOrToggleSentence, showMeaning } = sheetKeysRef.current;
+      if (mode === 'viewing' && viewingItem) {
         if (isTypingTarget(e.target)) return;
-        const currentResult = readyItems[viewingQueueIdx]?.results;
+        const currentResult = viewingItem.results;
         const vocabCount = currentResult?.vocabs?.length || 0;
 
         // Cmd/Ctrl+1–4: read the displayed card's corresponding example sentence (natural voice).
@@ -183,7 +196,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         if ((e.metaKey || e.ctrlKey) && /^[1-4]$/.test(e.key)) {
           e.preventDefault();
           e.stopImmediatePropagation();
-          const vocab = currentResult?.vocabs?.[viewingVocabIdx];
+          const vocab = currentResult?.vocabs?.[meaningIndex];
           const sentence = stripSentenceMarkers((vocab?.examples || [])[Number(e.key) - 1] || '').trim();
           if (!sentence) return;
           playOrToggleSentence(sentence);
@@ -194,7 +207,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
         if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
           e.preventDefault();
           e.stopImmediatePropagation();
-          const next = stepMeaning(viewingVocabIdx, vocabCount, e.key === 'ArrowLeft' ? -1 : 1, true);
+          const next = stepMeaning(meaningIndex, vocabCount, e.key === 'ArrowLeft' ? -1 : 1, true);
           if (next !== null) showMeaning(next, { speak: true });
         }
       }
@@ -284,26 +297,21 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     setQuery('');
   }, [query, onSaveSentence, isSentenceSaved, showSaveToast]);
 
-  // Remove a single item from queue
+  // The sheet's Dismiss drops the open result and shows the next ready one, or the previous one after the last;
+  // dismissing the only one closes the sheet.
   const dismissQueueItem = useCallback((id: string) => {
+    const next = neighbourAfterDismiss(readyItems, id);
     updateQueue({ type: 'dismiss', id });
-    // Adjust viewing index if needed
-    setViewingQueueIdx(prev => {
-      const next = viewingIndexAfterDismiss(queue, id, prev);
-      if (next === null) {
-        setMode('idle');
-        return 0;
-      }
-      return next;
-    });
+    setViewingId(next);
     setViewingVocabIdx(0);
-  }, [queue, updateQueue]);
+    if (next === null) setMode('idle');
+  }, [readyItems, updateQueue]);
 
   // Clear all completed items
   const clearQueue = useCallback(() => {
     updateQueue({ type: 'clear-finished' });
     setMode('idle');
-    setViewingQueueIdx(0);
+    setViewingId(null);
     setViewingVocabIdx(0);
   }, [updateQueue]);
 
@@ -313,11 +321,12 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   };
 
   const handleViewResults = () => {
-    setViewingQueueIdx(0);
+    const firstReady = readyItems[0];
+    if (!firstReady) return;
+    setViewingId(firstReady.id);
     setViewingVocabIdx(0);
     setMode('viewing');
-    const firstReady = readyItems[0];
-    if (firstReady?.results?.vocabs?.[0]?.word) {
+    if (firstReady.results?.vocabs?.[0]?.word) {
       speakWord(firstReady.results.vocabs[0].word);
     }
   };
@@ -327,8 +336,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   };
 
   // The results popup is modal: focus moves into it, Tab stays inside, the page behind goes inert, and
-  // closing it gives focus back.
-  const resultsOpen = !!viewingItem && (!!viewingVocab || viewingItem.kind === 'compare');
+  // closing it gives focus back. A lookup that came back without a card still opens, and says so.
+  const resultsOpen = viewingItem !== null;
   const resultsDialogRef = useRef<HTMLDivElement>(null);
   useOverlay(resultsOpen);
   useModalFocus(resultsDialogRef, resultsOpen);
@@ -394,14 +403,14 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
       )}
 
       {/* Results popup */}
-      {resultsOpen && viewingItem && (
+      {viewing && (
         <SearchResultsSheet
           dialogRef={resultsDialogRef}
-          viewingItem={viewingItem}
-          meaningIndex={viewingVocabIdx}
+          viewingItem={viewing.item}
+          meaningIndex={meaningIndex}
           meaningCount={viewingVocabCount}
           readyItems={readyItems}
-          resultIndex={viewingQueueIdx}
+          resultIndex={viewing.index}
           onShowResult={showResult}
           isVocabSaved={isVocabSaved}
           onClose={handleClose}
@@ -413,7 +422,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           {viewingVocab && (
             <SearchVocabPane
               vocabs={viewingResult!.vocabs}
-              meaningIndex={viewingVocabIdx}
+              meaningIndex={meaningIndex}
               onShowMeaning={showMeaning}
               zoneFlash={zoneFlash}
               flashZone={flashZone}
