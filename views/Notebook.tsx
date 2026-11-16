@@ -309,7 +309,8 @@ export const NotebookView: React.FC<NotebookProps> = ({
     // row.type === 'group'
     const { group, section } = row;
 
-    if (compareMode && section === 'main') {
+    // In compare mode every listed word is a checkbox, the due and archived ones too: none opens its card or actions.
+    if (compareMode) {
       const displayWord = getItemTitle(group.items[0]) || group.title;
       const isSelected = selectedForCompare.includes(displayWord);
       const canSelect = canSelectForCompare(selectedForCompare, displayWord);
