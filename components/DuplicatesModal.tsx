@@ -174,7 +174,7 @@ export const DuplicatesModal: React.FC<Props> = ({ clusters, onClose, onMerge })
             variant="primary"
             onClick={handleMerge}
             disabled={includedCount === 0}
-            className="flex-1 border-0 bg-indigo-500 hover:bg-indigo-600 shadow-indigo-200"
+            className="flex-1 border-0"
           >
             {includedCount > 0 ? `Merge ${includedCount}` : 'Merge'}
           </Button>
