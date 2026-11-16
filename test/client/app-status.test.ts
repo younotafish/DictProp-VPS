@@ -256,9 +256,13 @@ test('a batch of the offline download counts what it stored and what failed, and
   assert.deepEqual(await fetchImageBatch(['a', 'b', 'c', 'd'], versions, offline, store(true)), { saved: 0, failed: 4 }, 'the batch threw');
 });
 
-test('the image restore keeps its texts', () => {
+test('the image restore says how it went, with no check marks, as no other pill has', () => {
   assert.match(renderStack({ imageRestoreProgress: { phase: 'failed', done: 0, total: 0, failed: 0 } }), /bg-rose-600/);
-  assert.match(renderStack({ imageRestoreProgress: { phase: 'done', done: 4, total: 4, failed: 0 } }), /bg-emerald-600[^>]*><span class="min-w-0 truncate">Restored 4 images to the server ✓/);
+  const restored = renderStack({ imageRestoreProgress: { phase: 'done', done: 4, total: 4, failed: 0 } });
+  assert.match(restored, /bg-emerald-600[^>]*><span class="min-w-0 truncate">Restored 4 images to the server<\/span>/);
+  const nothingToRestore = renderStack({ imageRestoreProgress: { phase: 'done', done: 0, total: 0, failed: 0 } });
+  assert.match(nothingToRestore, /<span class="min-w-0 truncate">All images already on the server<\/span>/);
+  for (const html of [restored, nothingToRestore]) assert.doesNotMatch(html, /✓/);
 });
 
 test('the speech sweep shows its progress, with no time estimate, and a × that only hides it: the server carries on', () => {

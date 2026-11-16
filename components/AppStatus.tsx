@@ -22,8 +22,8 @@ const describeImageRestore = ({ phase, done, total, failed }: ImageRestoreProgre
   if (phase === 'checking') return 'Checking which images the server is missing…';
   if (phase === 'uploading') return `Restoring images to server: ${done}/${total}`;
   if (phase === 'failed') return 'Couldn\u2019t restore images. Try again later.';
-  if (total === 0) return 'All images already on the server ✓';
-  return failed ? `Restored ${total - failed} of ${total} images; ${failed} failed` : `Restored ${total} images to the server ✓`;
+  if (total === 0) return 'All images already on the server';
+  return failed ? `Restored ${total - failed} of ${total} images; ${failed} failed` : `Restored ${total} images to the server`;
 };
 
 interface AppStatusPillsProps {
