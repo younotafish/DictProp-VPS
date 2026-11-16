@@ -49,12 +49,14 @@ const AppNavigation = forwardRef<HTMLElement, AppNavigationProps>(({
   covered,
   onFocus,
 }, ref) => (
+  // Its height is src/index.css's --nav-h, which the notices and the search button float above: change the padding,
+  // the buttons' spacing or their icon and label sizes there too.
   <nav
     ref={ref}
     aria-label="Main"
     inert={covered}
     onFocus={onFocus}
-    className="fixed bottom-0 left-0 right-0 z-30 flex translate-y-0 justify-between bg-white px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-1 transition-transform duration-300"
+    className="fixed bottom-0 left-0 right-0 z-30 flex translate-y-0 justify-between bg-white px-2 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-1 transition-transform duration-300"
   >
     <NavButton view="notebook" currentView={currentView} onClick={onNavigate} icon={Book} label="Notebook" />
     <NavButton view="sentences" currentView={currentView} onClick={onNavigate} icon={MessageSquareQuote} label="Sentences" badge={sentenceDueCount || undefined} />

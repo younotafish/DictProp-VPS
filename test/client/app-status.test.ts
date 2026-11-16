@@ -23,6 +23,7 @@ const quiet: StackProps = {
   onStopSpeechGeneration: () => {},
   undoMessage: null,
   onUndo: () => {},
+  aboveTabBar: true,
 };
 const renderStack = (props: Partial<StackProps> = {}) => renderToStaticMarkup(createElement(AppStatusPills, { ...quiet, ...props }));
 /** The class list of the stack's own element, the first in the markup. */
@@ -31,10 +32,17 @@ const refuseOneReview = () => recordRefusedReview('u1', { itemId: 'i1', word: 'g
 
 test('the stack is a fixed, centred column that lets taps through between its pills', () => {
   const classes = stackClasses(renderStack());
-  for (const name of ['fixed', 'bottom-20', 'left-1/2', '-translate-x-1/2', 'z-[80]', 'flex', 'flex-col', 'items-center', 'gap-2', 'pointer-events-none']) {
+  for (const name of ['fixed', 'left-1/2', '-translate-x-1/2', 'z-[80]', 'flex', 'flex-col', 'items-center', 'gap-2', 'pointer-events-none']) {
     assert.ok(classes.includes(name), name);
   }
   assert.ok(stackClasses(renderStack({ undoMessage: 'Deleted “gamut”' })).includes('z-[110]'), 'an undo offer lifts it');
+});
+
+test('on the tabs the stack floats above the tab bar and a tab\'s footer; over a card it starts at --card-float-bottom', () => {
+  assert.ok(stackClasses(renderStack({ aboveTabBar: true })).includes('bottom-[calc(var(--nav-h)+var(--tab-footer-h,0px)+0.5rem)]'));
+  const overCard = stackClasses(renderStack({ aboveTabBar: false }));
+  assert.ok(overCard.includes('bottom-[var(--card-float-bottom)]'));
+  assert.equal(overCard.filter(name => name.startsWith('bottom-')).length, 1);
 });
 
 test('both slots render while empty, hidden, and nothing else shows with no notice', () => {

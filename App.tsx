@@ -207,6 +207,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
         onStopSpeechGeneration={() => { ttsGenAbortRef.current = true; }}
         undoMessage={undoMessage}
         onUndo={undoLastChange}
+        aboveTabBar={!detailContext}
       />
 
       {detailContext && (

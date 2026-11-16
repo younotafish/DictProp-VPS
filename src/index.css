@@ -10,6 +10,18 @@
 @source "../hooks";
 @source "../services";
 
+/* The bottom chrome, for everything that floats above it.
+   --nav-h is the tab bar's height, from components/AppNavigation.tsx's classes: pt-1 (4px), a NavButton of 67px
+   (py-3, 24px; a 24px icon; gap-1, 4px; a 10px label at line-height 1.5, 15px) and the bar's bottom padding,
+   pb-[max(1.5rem,env(safe-area-inset-bottom))]: 95px on a laptop, 105px on a Face ID iPhone. Change the two together;
+   test/client/nav-geometry.test.ts holds them to each other.
+   --card-float-bottom is where whatever floats over an open card starts (the notice stack, the search button): 96px on a
+   laptop, and on a Face ID iPhone high enough to clear the sentence lesson's bottom row and the controls above it. */
+:root {
+  --nav-h: calc(71px + max(1.5rem, env(safe-area-inset-bottom)));
+  --card-float-bottom: max(6rem, calc(env(safe-area-inset-bottom) + 5.5rem));
+}
+
 /* iOS Safari Optimizations */
 * {
   -webkit-tap-highlight-color: transparent;
