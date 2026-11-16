@@ -31,8 +31,7 @@ const sentenceOnScreen = (sentence: string, done: string[], flags: Partial<Sente
   handleRemember: () => done.push(`remember ${sentence}`),
   handleResetSRS: () => done.push(`reset ${sentence}`),
   handleDeleteItem: () => done.push(`delete ${sentence}`),
-  isSentenceAutoPlaying: false,
-  toggleSentenceAutoPlay: () => done.push('toggle auto-play'),
+  onSpace: () => done.push(`space on ${sentence}`),
   ...flags,
 });
 
@@ -49,9 +48,7 @@ const wordOnScreen = (word: string, done: string[], flags: Partial<WordKeyHandle
   isSaved: false,
   savedItemMatch: undefined,
   onUnarchive: id => done.push(`unarchive ${id}`),
-  isSentenceAutoPlaying: false,
-  toggleSentenceAutoPlay: () => done.push('toggle examples'),
-  toggleAutoPlay: () => done.push('toggle slideshow'),
+  onSpace: () => done.push(`space on ${word}`),
   cycleSpeed: () => done.push('cycle speed'),
   ...flags,
 });
@@ -124,13 +121,20 @@ test('sentence review has no slide speed, so + and = are left to the browser', (
   assert.deepEqual(done, []);
 });
 
-test('in sentence review Space starts auto-play when nothing plays, and never stops it', () => {
+test('Space goes once to the view\'s own Space, which decides what it does; with Cmd, Ctrl or Alt it stays the browser\'s', () => {
+  // What Space does (auto-play's pause, the play rule, auto-play or the slideshow) is decided by the views'
+  // handleSpace, from services/audio/playbackToggle.ts (test/client/playback-toggle.test.ts).
   const done: string[] = [];
-  handleSentenceKey(press(' '), sentenceOnScreen('A', done));
-  const whileAutoPlaying = press(' ');
-  handleSentenceKey(whileAutoPlaying, sentenceOnScreen('A', done, { isSentenceAutoPlaying: true }));
-  assert.equal(whileAutoPlaying.prevented, true);
-  assert.deepEqual(done, ['toggle auto-play']);
+  const tables = [
+    (key: CardKeyEvent) => handleSentenceKey(key, sentenceOnScreen('A', done)),
+    (key: CardKeyEvent) => handleWordKey(key, wordOnScreen('apple', done)),
+  ];
+  for (const table of tables) {
+    const keys = [press(' '), press(' ', { shiftKey: true }), press(' ', { metaKey: true }), press(' ', { ctrlKey: true }), press(' ', { altKey: true })];
+    keys.forEach(table);
+    assert.deepEqual(keys.map(key => key.prevented), [true, true, false, false, false]);
+  }
+  assert.deepEqual(done, ['space on A', 'space on A', 'space on apple', 'space on apple']);
 });
 
 test('the word card\'s D and A act on the card on screen, only once it is saved, and A unarchives an archived card', () => {
@@ -159,10 +163,9 @@ test('the word card\'s H, R, S, E, Space and + keys', () => {
   for (const key of [press('h'), press('r'), press('R', { shiftKey: true }), press('s'), press('e'), press(' '), press('+'), press('=')]) {
     handleWordKey(key, handlers);
   }
-  handleWordKey(press(' '), wordOnScreen('apple', done, { isSentenceAutoPlaying: true }));
   assert.deepEqual(done, [
-    'header true', 'remember apple', 'reset apple', 'save apple', 'read apple', 'toggle slideshow',
-    'cycle speed', 'cycle speed', 'toggle examples',
+    'header true', 'remember apple', 'reset apple', 'save apple', 'read apple', 'space on apple',
+    'cycle speed', 'cycle speed',
   ]);
 });
 

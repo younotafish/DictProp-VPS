@@ -376,11 +376,8 @@ export function WordDetailView(props: DetailViewBodyProps) {
     isSaved,
     savedItemMatch,
     onUnarchive,
-    isSentenceAutoPlaying,
-    toggleSentenceAutoPlay,
-    toggleAutoPlay,
-    cycleSpeed,
     onSpace: handleSpace,
+    cycleSpeed,
   });
 
   // Eyes-free read-zone band counts, so the guides only draw the bands that read something.

@@ -454,8 +454,6 @@ export function SentenceReviewView({
     handleRemember,
     handleResetSRS,
     handleDeleteItem,
-    isSentenceAutoPlaying,
-    toggleSentenceAutoPlay,
     onSpace: handleSpace,
   });
 

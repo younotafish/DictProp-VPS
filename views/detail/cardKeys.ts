@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type { StoredItem } from '../../types';
-import { getPlaybackState, pauseCurrent, resumeCurrent, speakWord } from '../../services/neuralTts';
+import { speakWord } from '../../services/neuralTts';
 import { acceptKeyRepeat } from '../../components/keyboardTarget';
 
 /**
@@ -25,15 +25,15 @@ export interface SentenceKeyHandlers {
   handleRemember: () => void;
   handleResetSRS: () => void;
   handleDeleteItem: () => void;
-  isSentenceAutoPlaying: boolean;
-  toggleSentenceAutoPlay: () => void;
+  /** Space: auto-play's pause while it runs, else the play rule, else start auto-play (useSentencePlayback's handleSpace). */
+  onSpace: () => void;
 }
 
 /** Sentence review's keys: P, E, R and Shift+R, D, Space, and Cmd/Ctrl+1–4. */
 export function handleSentenceKey(e: CardKeyEvent, handlers: SentenceKeyHandlers): void {
   const {
     title, speakSentenceAt, readCurrentSentence, isSentencePreview, catalogSentencePreview, handleRemember,
-    handleResetSRS, handleDeleteItem, isSentenceAutoPlaying, toggleSentenceAutoPlay,
+    handleResetSRS, handleDeleteItem, onSpace,
   } = handlers;
   if (!acceptKeyRepeat(e)) return;
 
@@ -78,13 +78,10 @@ export function handleSentenceKey(e: CardKeyEvent, handlers: SentenceKeyHandlers
     if (!isSentencePreview && !catalogSentencePreview) handleDeleteItem();
   }
 
-  // Space: pause/resume the sentence that's playing; if nothing is playing, start continuous auto-play.
+  // Space: what the view decides (see onSpace).
   if (e.key === ' ') {
     e.preventDefault();
-    const st = getPlaybackState().status;
-    if (st === 'playing') pauseCurrent();
-    else if (st === 'paused') resumeCurrent();
-    else if (!isSentenceAutoPlaying) toggleSentenceAutoPlay(); // only the visible Stop control exits autoplay
+    onSpace();
   }
 }
 
@@ -103,9 +100,8 @@ export interface WordKeyHandlers {
   isSaved: boolean;
   savedItemMatch: StoredItem | undefined;
   onUnarchive?: (id: string) => void;
-  isSentenceAutoPlaying: boolean;
-  toggleSentenceAutoPlay: () => void;
-  toggleAutoPlay: () => void;
+  /** Space: stop example auto-play while it runs, else the play rule, else start or stop the slideshow. */
+  onSpace: () => void;
   cycleSpeed: () => void;
 }
 
@@ -113,8 +109,7 @@ export interface WordKeyHandlers {
 export function handleWordKey(e: CardKeyEvent, handlers: WordKeyHandlers): void {
   const {
     speakSentenceAt, setShowHeader, title, readCardExamples, handleRemember, handleResetSRS, handleSaveShortcut,
-    handleDeleteItem, handleArchiveItem, isSaved, savedItemMatch, onUnarchive, isSentenceAutoPlaying,
-    toggleSentenceAutoPlay, toggleAutoPlay, cycleSpeed,
+    handleDeleteItem, handleArchiveItem, isSaved, savedItemMatch, onUnarchive, onSpace, cycleSpeed,
   } = handlers;
   if (!acceptKeyRepeat(e)) return;
 
@@ -171,11 +166,10 @@ export function handleWordKey(e: CardKeyEvent, handlers: WordKeyHandlers): void 
     else if (isSaved) handleArchiveItem();
   }
 
-  // Space: stops whichever auto-play is running, or starts the slideshow — the two never run at once.
+  // Space: what the view decides (see onSpace).
   if (e.key === ' ') {
     e.preventDefault();
-    if (isSentenceAutoPlaying) toggleSentenceAutoPlay();
-    else toggleAutoPlay();
+    onSpace();
   }
 
   // +/=: Cycle speed forward
