@@ -13,6 +13,7 @@ import {
 import { Virtuoso } from 'react-virtuoso';
 import type { ReviewRating, StoredItem } from '../../types';
 import { HighlightedSentence } from '../../components/HighlightedSentence';
+import { activateOnEnterOrSpace } from '../../components/activateOnKey';
 import { isImeKey } from '../../components/keyboardTarget';
 import { SentenceSpeakerButton } from '../../components/SentenceSpeakerButton';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
@@ -65,14 +66,7 @@ export const RealLifeSentenceRow = React.memo(function RealLifeSentenceRow({
         role="button"
         tabIndex={0}
         onClick={() => onOpen(sentence)}
-        onKeyDown={event => {
-          // Keys pressed on the buttons inside the row are theirs: Enter on Reviewed mustn't open the lesson too.
-          if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ') || event.repeat) return;
-          event.preventDefault();
-          // The lesson this opens listens for Enter and Space on window too; it mustn't take this press as well.
-          event.stopPropagation();
-          onOpen(sentence);
-        }}
+        onKeyDown={activateOnEnterOrSpace(() => onOpen(sentence))}
         className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all hover:border-indigo-200 hover:shadow-md sm:p-4"
         title="Open the full sentence lesson"
       >

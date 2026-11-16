@@ -4,6 +4,7 @@ import { getItemTitle, isPhraseItem, isVocabItem, type StoredItem } from '../../
 import { stripSentenceMarkers } from '../../services/sentenceMarkers';
 import { PronunciationBlock } from '../../components/PronunciationBlock';
 import { useEscapeLayer } from '../../components/escapeStack';
+import { activateOnEnterOrSpace } from '../../components/activateOnKey';
 import { useLongPress } from './useLongPress';
 import { useActionStack } from './actionStack';
 
@@ -64,14 +65,6 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
     onOpen(itemIndex);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ') || e.repeat) return;
-    e.preventDefault();
-    // The card this opens listens for Enter and Space on window too; it mustn't take this press as well.
-    e.stopPropagation();
-    handleClick();
-  };
-
   const title = getItemTitle(item);
   const vocab = isVocabItem(item) ? item.data : null;
   const subtitle = isPhraseItem(item) ? item.data.translation : vocab?.chinese;
@@ -90,7 +83,7 @@ export const NotebookItem: React.FC<NotebookItemProps> = React.memo(({
         role="button"
         tabIndex={0}
         onClick={handleClick}
-        onKeyDown={handleKeyDown}
+        onKeyDown={activateOnEnterOrSpace(handleClick)}
         {...pressHandlers}
         className="bg-white p-4 relative cursor-pointer select-none [-webkit-touch-callout:none]"
         style={{ touchAction: 'pan-y' }}
