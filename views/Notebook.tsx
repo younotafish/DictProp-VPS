@@ -6,6 +6,7 @@ import { BatchImport } from '../components/BatchImport';
 import { JSONImport } from '../components/JSONImport';
 import { makeVocabStoredItem } from '../services/items';
 import { useLatest } from '../hooks/useStableValue';
+import type { BatchImportProgress } from '../hooks/useBatchImport';
 import {
   buildNotebookRows, countSavedSpellings, listNoteFor, nextNotebookFilter, nextNotebookSort, notebookStats,
   type NotebookFilter, type NotebookRow, type NotebookSection, type NotebookSort,
@@ -19,7 +20,7 @@ import { NotebookSearchBar } from './notebook/NotebookSearchBar';
 import { ArchivedToggle, DueHeader, ListNote } from './notebook/ListRows';
 import { CompareBanner, CompareRow, CompareSelectedButton } from './notebook/CompareMode';
 import { EmptyNotebook } from './notebook/EmptyNotebook';
-import { BatchImportBanner, type BatchImportProgress } from './notebook/BatchImportBanner';
+import { BatchImportBanner } from './notebook/BatchImportBanner';
 import { SearchErrorBanner } from './notebook/SearchErrorBanner';
 import { useAutoHidingHeader } from './notebook/useAutoHidingHeader';
 import { useNotebookAISearch } from './notebook/useNotebookAISearch';

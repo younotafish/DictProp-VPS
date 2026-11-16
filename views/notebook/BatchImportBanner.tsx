@@ -1,15 +1,6 @@
 import React from 'react';
 import { Loader2 } from 'lucide-react';
-
-/** A batch import running in the background (hooks/useBatchImport). */
-export interface BatchImportProgress {
-  current: number;
-  total: number;
-  skipped: number;
-  failed: number;
-  saved: number;
-  isRunning: boolean;
-}
+import type { BatchImportProgress } from '../../hooks/useBatchImport';
 
 /** The progress of a running batch import, at the foot of the notebook's sticky header. */
 export const BatchImportBanner: React.FC<{ progress: BatchImportProgress }> = ({ progress }) => (
