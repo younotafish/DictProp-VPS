@@ -16,7 +16,7 @@ export interface ItemChanges {
 const ITEM_PAGE_SIZE = 500;
 const MAX_ITEM_PAGES = 100_000;
 
-export const loadItemChanges = async (cursor: RevisionCursor, limit = ITEM_PAGE_SIZE): Promise<ItemChanges> => {
+const loadItemChanges = async (cursor: RevisionCursor, limit = ITEM_PAGE_SIZE): Promise<ItemChanges> => {
   const params = new URLSearchParams({
     afterRevision: String(cursor.revision),
     afterId: cursor.id,

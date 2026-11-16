@@ -120,7 +120,7 @@ export function buildReviewQueue(
 /** The four grades, in the order of their buttons and of keys 1–4: the order the review events record them in. */
 export const RATINGS = REVIEW_RATINGS;
 
-export const emptyRatings = (): Record<ReviewRating, number> => ({ again: 0, hard: 0, good: 0, easy: 0 });
+const emptyRatings = (): Record<ReviewRating, number> => ({ again: 0, hard: 0, good: 0, easy: 0 });
 
 /** A grade that stands in a session: the card it was given to, and which grade. */
 export interface StandingGrade {
@@ -263,7 +263,7 @@ export function moveSessionTo(session: StudySession, index: number, now: number)
 }
 
 /** The most time one prompt records: one left open while the learner was away counts this, not the absence. */
-export const PROMPT_TIME_CAP_MS = 120_000;
+const PROMPT_TIME_CAP_MS = 120_000;
 
 /** The time from `start` to `now`, at most `cap`, and none for a clock that went back. */
 export function cappedDuration(start: number, now: number, cap = PROMPT_TIME_CAP_MS): number {
@@ -418,7 +418,7 @@ export function requeueShortStep(itemIds: string[], index: number, intervalMinut
 }
 
 /** How long after a reveal or a grade a tap on the study card's footer is taken for the second tap of a double tap. */
-export const FOOTER_TAP_GUARD_MS = 350;
+const FOOTER_TAP_GUARD_MS = 350;
 
 /**
  * Whether a tap on the study card's footer counts: not within `windowMs` of the last reveal or grade (made any

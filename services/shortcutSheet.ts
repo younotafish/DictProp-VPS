@@ -38,7 +38,7 @@ export interface ShortcutSection {
 }
 
 /** The keys that join the key after them into one chord. */
-export const MODIFIER_KEYS: ReadonlySet<string> = new Set(['Mod', '⌘', 'Ctrl', 'Shift']);
+const MODIFIER_KEYS: ReadonlySet<string> = new Set(['Mod', '⌘', 'Ctrl', 'Shift']);
 
 /** A row's keys as the chords to press, any one of them: ['S', '⌘', 'S'] is S, or ⌘ with S. */
 export function keyChords(keys: readonly string[]): string[][] {

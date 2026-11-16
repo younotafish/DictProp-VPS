@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { withoutImageFields } from '../../server/src/corpus-hash.ts';
 import { fileReady, writeJsonAtomic } from './atomic-file.mjs';
 
-export const LEDGER_VERSION = 1;
+const LEDGER_VERSION = 1;
 // A stage exits with this when it made no progress at all, so the runner can re-check the model
 // instead of treating the stage like a crash.
 export const NOTHING_SUCCEEDED_EXIT_CODE = 3;
@@ -47,7 +47,7 @@ export function readLedger(path) {
   }
 }
 
-export function writeLedger(path, ledger, now = Date.now()) {
+function writeLedger(path, ledger, now = Date.now()) {
   mkdirSync(dirname(path), { recursive: true });
   writeJsonAtomic(path, { ...ledger, version: LEDGER_VERSION, updatedAt: now });
 }

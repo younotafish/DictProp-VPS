@@ -31,7 +31,7 @@ export const aiCardStillValid = (submitted: string | null, current: string): boo
   submitted === null || comparable(submitted) === comparable(current);
 
 /** How far a finger drags the list, mostly up or down, before the keyboard drops. */
-export const BLUR_DRAG_PX = 10;
+const BLUR_DRAG_PX = 10;
 
 /**
  * Whether a drag on the list drops the keyboard of the focused search box: more than 10 px, mostly vertical, and not

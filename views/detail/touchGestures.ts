@@ -6,15 +6,15 @@ import { eyesFreeZoneAt } from '../../components/eyesFreeBands';
 import { swipeDirection } from '../../components/swipeDirection';
 
 /** A finger that moved no more than this either way is a tap, not a swipe or a scroll. */
-export const TAP_MOVE_MAX = 10;
+const TAP_MOVE_MAX = 10;
 /** A vertical swipe travels further than this. */
-export const SWIPE_MIN = 50;
+const SWIPE_MIN = 50;
 /** Vertical swipes shorter than this are short (they reveal the word card's header)... */
-export const SHORT_SWIPE_MAX = 120;
+const SHORT_SWIPE_MAX = 120;
 /** ...and from this length on they're long, and change the card at the matching edge. */
-export const LONG_SWIPE_MIN = 120;
+const LONG_SWIPE_MIN = 120;
 /** Horizontal swipes are more sensitive: anything past this changes the page or the meaning. */
-export const HORIZONTAL_SWIPE_MIN = 60;
+const HORIZONTAL_SWIPE_MIN = 60;
 /** A scroller within this many pixels of an end counts as at that end. */
 const EDGE_SLACK = 5;
 
