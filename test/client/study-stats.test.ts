@@ -157,6 +157,26 @@ test('weekly stats cover the last seven days and the share not rated again', () 
   assert.equal(stats.totalLifetimeReviews, 5);
 });
 
+test('the week is the chart\'s seven days: at 21:00 a review 6 days 23 hours back and one stamped a day ahead count in neither', () => {
+  const evening = new Date(2026, 8, 26, 21, 0).getTime();
+  const sixDaysTwentyThreeHoursBack = review(evening - 6 * DAY - 23 * HOUR, 'again');
+  const fromAClockAhead = review(evening + DAY);
+  const inside = [review(evening - HOUR), review(new Date(2026, 8, 20, 0, 0).getTime(), 'again')];
+  const stats = computeStudyStats([], recentOnly([sixDaysTwentyThreeHoursBack, fromAClockAhead, ...inside]), evening);
+  assert.equal(stats.weeklyReviews, 2);
+  assert.equal(stats.weeklyRecallRate, 50);
+  assert.equal(stats.last7Days.reduce((sum, day) => sum + day.reviews, 0), stats.weeklyReviews, 'the chart\'s total agrees');
+});
+
+test('the history\'s numbers depend only on the day, so any time that day gives the same ones', () => {
+  const events = [review(midnight(0) + HOUR), review(midnight(3) + 20 * HOUR, 'again'), review(midnight(6) + 2 * HOUR)];
+  const history: ReviewHistory = { recent: events, olderTimes: [midnight(9) + HOUR], olderCount: 4 };
+  const atNoon = computeHistoryStats(history, midnight(0) + 12 * HOUR);
+  assert.deepEqual(computeHistoryStats(history, midnight(0)), atNoon);
+  assert.deepEqual(computeHistoryStats(history, midnight(-1) - 1), atNoon);
+  assert.notDeepEqual(computeHistoryStats(history, midnight(-1)), atNoon, 'the next day moves the week on');
+});
+
 test('study stats match the per-event date formatting they replace', () => {
   let seed = 11;
   const rand = () => ((seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31) / 2 ** 31);

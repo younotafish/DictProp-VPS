@@ -62,7 +62,6 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
 
   // Max reviews for chart scaling, at least 1
   const maxReviews = Math.max(...stats.last7Days.map(d => d.reviews), 1);
-  const last7DaysTotal = stats.last7Days.reduce((sum, d) => sum + d.reviews, 0);
 
   return (
     <div 
@@ -203,9 +202,9 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
         
         {/* Summary row */}
         <div className="flex justify-between text-xs text-slate-500 pt-2 border-t border-slate-100">
-          <span>Total: {last7DaysTotal} reviews</span>
+          <span>Total: {stats.weeklyReviews} reviews</span>
           <span>
-            Avg: {Math.round(last7DaysTotal / 7)}/day
+            Avg: {Math.round(stats.weeklyReviews / 7)}/day
           </span>
         </div>
       </section>

@@ -11,6 +11,7 @@ export interface StudyStats {
   avgStrength: number;
   /** Consecutive days with a review, counting back from today, or from yesterday if today has none yet. */
   streak: number;
+  /** Reviews today and on the six days before it, the chart's seven days. */
   weeklyReviews: number;
   weeklyRecallRate: number;
   totalLifetimeReviews: number;
@@ -93,7 +94,8 @@ export function computeItemStats(items: readonly StoredItem[], now: number): Ite
 }
 
 /**
- * The study dashboard's numbers from one pass over the review history, for the day `now` falls on. Review days are
+ * The study dashboard's numbers from one pass over the review history, for the day `now` falls on: any time that day
+ * gives the same numbers. Review days are
  * found against precomputed local midnights rather than by formatting a date per review, which mattered once the
  * history grew to tens of thousands of reviews.
  */
@@ -114,22 +116,19 @@ export function computeHistoryStats(history: ReviewHistory, now: number): Histor
     return newer;
   };
 
-  const weekAgo = new Date(now);
-  weekAgo.setDate(weekAgo.getDate() - 7);
-  const weekAgoTime = weekAgo.getTime();
-
   const reviewsByDay = new Array<number>(STREAK_DAYS).fill(0);
   for (const time of history.olderTimes) {
     const day = dayOf(time);
     if (day >= 0) reviewsByDay[day]++;
   }
-  // Only the recent reviews carry ratings, and they cover the week.
+  // Only the recent reviews carry ratings, and they cover the week: the chart's seven days, today and the six
+  // before it, so the weekly numbers and the chart's total count the same reviews.
   let weeklyReviews = 0;
   let weeklyRecalled = 0;
   for (const event of history.recent) {
     const day = dayOf(event.reviewedAt);
     if (day >= 0) reviewsByDay[day]++;
-    if (event.reviewedAt >= weekAgoTime) {
+    if (day >= 0 && day < 7) {
       weeklyReviews++;
       if (event.rating !== 'again') weeklyRecalled++;
     }
