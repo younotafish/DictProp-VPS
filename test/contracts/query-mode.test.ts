@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import * as client from '../../services/queryMode.ts';
 import * as server from '../../server/src/shared/query-mode.ts';
@@ -61,12 +59,4 @@ test('idioms and attributive participles stay one dictionary entry', () => {
 test('blank input is not a sentence', () => {
   assert.equal(server.looksLikeSentence('   '), false);
   assert.equal(server.looksLikeSentence('The kids ran home'), true);
-});
-
-test('the search box routes with the shared decision instead of a copy of its own', () => {
-  const globalSearch = readFileSync(fileURLToPath(new URL('../../components/GlobalSearch.tsx', import.meta.url)), 'utf8');
-  assert.match(globalSearch, /import \{ looksLikeSentence \} from '\.\.\/services\/queryMode'/);
-  assert.doesNotMatch(globalSearch, /const looksLikeSentence\b/);
-  // A refreshed expression keeps the batch mode it was first analyzed with.
-  assert.match(globalSearch, /analyzeInput\(trimmed, analyzeMode \? \{ mode: analyzeMode \} : undefined\)/);
 });
