@@ -1,3 +1,9 @@
+// The usage audit, the detailed sentence analysis and the review vocabulary are the server's contracts: their types
+// come from server/src through type-only imports and re-exports, so nothing of the server reaches the bundle.
+import type { SentenceAnalysis } from './server/src/sentence-analysis';
+import type { ReviewRating, ReviewTaskType } from './server/src/shared/review';
+import type { UsageAudit } from './server/src/shared/usage-audit';
+
 // Word family entry - related words of different parts of speech
 export interface WordFamilyEntry {
   word: string;
@@ -5,22 +11,7 @@ export interface WordFamilyEntry {
   chinese: string;
 }
 
-export type UsageStatus =
-  | 'modern_american'
-  | 'current_general'
-  | 'british_only'
-  | 'rare_or_dated'
-  | 'narrow_specialized';
-
-/** Offline audit of whether a specific sense is worth studying for modern American English. */
-export interface UsageAudit {
-  status: UsageStatus;
-  reason: string;
-  confidence: 'high' | 'medium' | 'low';
-  auditedAt: number;
-  /** Retains the pre-audit wording when an example or saved sentence was replaced. */
-  originalText?: string;
-}
+export type { UsageAudit, UsageStatus } from './server/src/shared/usage-audit';
 
 /** Proves which offline enrichment harness generated this card's rich learning metadata. */
 export interface AdvancedEnrichmentMarker {
@@ -78,65 +69,14 @@ export interface SearchResult {
   localImageEnrichment?: LocalImageEnrichmentMarker;
 }
 
-export type AmericanEnglishStatus = 'american' | 'shared' | 'not_american';
-
-export interface SentenceAnalysisTerm {
-  term: string;
-  chinese: string;
-  ipa: string;
-  originalMeaning: string;
-  synonyms: string[];
-  antonyms: string[];
-  examples: string[];
-  historicalEvolution: string;
-}
-
-export interface SentenceGrammarPoint {
-  label: string;
-  excerpt: string;
-  explanation: string;
-}
-
-export interface SentenceGrammarAnalysis {
-  /** Compact map of the sentence's clause and phrase structure. */
-  structure: string;
-  /** Context-specific explanations of the grammar that carries meaning in this sentence. */
-  points: SentenceGrammarPoint[];
-}
-
-export interface SentencePronunciationGuide {
-  /** Deliberate but natural General American pronunciation with clear word boundaries. */
-  slowIpa: string;
-  /** Fluent connected-speech General American pronunciation. */
-  fastIpa: string;
-  /** Learner-friendly stress and chunk guide, not a replacement for IPA. */
-  carefulSpeakerGuide: string;
-  /** Sentence-specific linking, reduction, flapping, assimilation, or weak-form notes. */
-  fastSpeechFeatures: string[];
-  /** Suggested thought groups and pitch movement for the complete sentence. */
-  intonationAndChunking: string;
-  /** Plain-English contrast between the careful and fluent renderings. */
-  keyDifference: string;
-}
-
-export interface SentenceAnalysis {
-  translation: string;
-  /** Legacy alias of pronunciation.fastIpa, retained while older records are migrated. */
-  naturalSpeechIpa?: string;
-  /** Optional during the legacy-data migration; required for newly generated analyses. */
-  grammar?: SentenceGrammarAnalysis;
-  americanEnglish: {
-    status: AmericanEnglishStatus;
-    explanation: string;
-    /** Concrete sentence-specific reasons supporting the status. */
-    evidence?: string[];
-  };
-  terms: SentenceAnalysisTerm[];
-  /** Optional for legacy records; required for newly generated analyses. */
-  pronunciation?: SentencePronunciationGuide;
-  /** Photorealistic, text-free landscape prompt depicting the complete sentence. */
-  imagePrompt: string;
-}
+export type {
+  AmericanEnglishStatus,
+  SentenceAnalysis,
+  SentenceAnalysisTerm,
+  SentenceGrammarAnalysis,
+  SentenceGrammarPoint,
+  SentencePronunciationGuide,
+} from './server/src/sentence-analysis';
 
 // Sentence — saved example sentence from a vocabulary card
 export interface SentenceData {
@@ -208,8 +148,7 @@ export interface RevisionCursor {
   id: string;
 }
 
-export type ReviewRating = 'again' | 'hard' | 'good' | 'easy';
-export type ReviewTaskType = 'meaning' | 'production' | 'cloze' | 'listening' | 'quick';
+export type { ReviewRating, ReviewTaskType } from './server/src/shared/review';
 
 export interface ReviewEvent {
   id: string;

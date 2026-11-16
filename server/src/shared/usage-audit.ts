@@ -20,11 +20,13 @@ export const USAGE_PRIORITY: Readonly<Record<UsageStatus, number>> = {
   rare_or_dated: 4,
 };
 
+/** Offline audit of whether a specific sense is worth studying for modern American English. */
 export interface UsageAudit {
   status: UsageStatus;
   reason: string;
   confidence: 'high' | 'medium' | 'low';
   auditedAt: number;
+  /** Retains the pre-audit wording when an example or saved sentence was replaced. */
   originalText?: string;
 }
 
