@@ -9,8 +9,8 @@ import { looksLikeSentence } from '../../services/queryMode';
 import { useLatest } from '../../hooks/useStableValue';
 import { runLookup } from './runLookup';
 import {
-  busyCountOf, createRefreshLog, findLiveComparison, isQueued, queueUpdate, readyItemsOf, savedCardsResult, searchQueueReducer,
-  type QueueAction, type QueueItem,
+  busyCountOf, createRefreshLog, findLiveComparison, findLiveLookup, isQueued, queueUpdate, readyItemsOf, savedCardsResult,
+  searchQueueReducer, unseenReadyCount, type QueueAction, type QueueItem,
 } from './searchQueue';
 
 let queueIdCounter = 0;
@@ -21,7 +21,8 @@ interface Options {
   onRefreshReplace?: (word: string, vocabs: VocabCard[]) => void;
   /** A finished comparison — persist it (server + local) so it shows on each involved word's page. */
   onCompareReady?: (words: string[], result: ComparisonResult) => void;
-  /** Open this entry in the results sheet once it's ready: a saved word, a refresh, a saved comparison. */
+  /** Open this entry in the results sheet once it's ready: a saved word, a refresh, a saved comparison, or a word
+   *  asked for again whose result is ready. */
   openWhenReady: (id: string) => void;
   showError: (msg: string, query?: string, analyzeMode?: 'batch') => void;
   clearError: () => void;
@@ -39,17 +40,31 @@ export function useSearchQueue({
 }: Options) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const processingIdsRef = useRef<Set<string>>(new Set()); // prevents a re-render from starting an item twice
-  const queueRef = useRef<QueueItem[]>([]); // the latest queue, for checks outside a render (dedup, a superseded request)
+  const queueRef = useLatest(queue); // the latest queue, for checks outside a render (asking again, a superseded request)
   const [scanning, setScanning] = useState(false); // sentence → expression scan in flight (pre-enqueue)
   const [refreshLog] = useState(createRefreshLog); // the forced lookups asked for, so an in-place refresh knows it was replaced
 
   // Add a query to the queue. forceAI = a refresh: re-run the AI even if the word is saved, and
   // replace any existing queue entry for it so the fresh result supersedes the old/reused one.
+  // Asking again for a word whose result is ready opens it, and for one still running says so instead of sending it
+  // again. An expression found in a sentence never opens by itself, so its repeat is only skipped.
   const enqueue = useCallback((q: string, opts?: { forceAI?: boolean; analyzeMode?: 'batch' }) => {
     const trimmed = q.trim();
     if (!trimmed) return;
     const forceAI = !!opts?.forceAI;
     const analyzeMode = opts?.analyzeMode;
+    const live = forceAI || analyzeMode ? undefined : findLiveLookup(queueRef.current, trimmed);
+    if (live?.status === 'ready') {
+      log('🔍 Queue: opening "' + trimmed + '", already looked up');
+      openWhenReady(live.id);
+      return;
+    }
+    if (live) {
+      log('🔍 Queue: "' + trimmed + '" is still being looked up');
+      setQueue(queueUpdate({ type: 'repeat-asked', id: live.id, at: Date.now() }));
+      showStatus(`Still looking up “${trimmed}”…`);
+      return;
+    }
     const id = `q-${++queueIdCounter}`;
     if (forceAI) refreshLog.note(trimmed);
     setQueue(prev => {
@@ -58,16 +73,13 @@ export function useSearchQueue({
       else log('🔍 Queue: adding "' + trimmed + '"' + (forceAI ? ' (force refresh)' : '') + (analyzeMode ? ' (' + analyzeMode + ')' : ''));
       return next;
     });
-  }, [refreshLog]);
+  }, [queueRef, refreshLog, openWhenReady, showStatus]);
 
   // OAuth redirects preserve sessionStorage. Resume the exact failed query once the user signs in again.
   useEffect(() => {
     const retry = consumeSearchRetry();
     if (retry) enqueue(retry.query, { forceAI: true, analyzeMode: retry.analyzeMode });
   }, [enqueue]);
-
-  // Keep a fresh snapshot of the queue for synchronous dedup/open decisions in enqueueCompare.
-  useEffect(() => { queueRef.current = queue; }, [queue]);
 
   // Add a comparison to the SAME queue as searches. With a cachedResult (already saved) it drops in as
   // 'ready' and auto-opens; otherwise it's 'pending' and generates in the background like a search.
@@ -84,7 +96,7 @@ export function useSearchQueue({
     log('⚖️ Queue: comparing "' + clean.join(' vs ') + '"' + (cachedResult ? ' (saved)' : ''));
     setQueue(queueUpdate({ type: 'add-compare', id, words: clean, cached: cachedResult ?? null }));
     if (cachedResult) openWhenReady(id); // saved comparison → open instantly in the popup
-  }, [openWhenReady]);
+  }, [queueRef, openWhenReady]);
 
   // Typed-search entry. A single word/short phrase analyzes directly (current behavior). A full sentence
   // is first scanned for its uncommon expressions, and each is then queued for its OWN full analysis
@@ -141,7 +153,7 @@ export function useSearchQueue({
 
     // Comparison items run compareWords and persist on success.
     if (item.kind === 'compare') {
-      setQueue(queueUpdate({ type: 'start', id: itemId }));
+      setQueue(queueUpdate({ type: 'start', id: itemId, at: Date.now() }));
       log('⚖️ Queue: generating comparison "' + item.query + '"');
       compareWords(item.words || []).then(result => {
         clearError();
@@ -167,7 +179,7 @@ export function useSearchQueue({
     }
 
     // Mark as searching
-    setQueue(queueUpdate({ type: 'start', id: itemId }));
+    setQueue(queueUpdate({ type: 'start', id: itemId, at: Date.now() }));
 
     log('🔍 Queue: searching "' + item.query + '"' + (item.analyzeMode ? ' (' + item.analyzeMode + ')' : ''));
     void runLookup({ query: item.query, analyzeMode: item.analyzeMode, refresh: !!item.forceAI }, {
@@ -182,7 +194,7 @@ export function useSearchQueue({
       },
       showFailure: () => setQueue(queueUpdate({ type: 'fail', id: itemId })),
     }).finally(done);
-  }, [findSavedByWord, lookupEffects, showError, onCompareReady, openWhenReady, clearError]);
+  }, [findSavedByWord, lookupEffects, showError, onCompareReady, openWhenReady, clearError, queueRef]);
 
   // The results sheet's refresh button: re-run the AI for `word` and swap the fresh result into `item` in place,
   // keeping its current result on screen (with a spinner) meanwhile, rather than clearing the entry, which blanked
@@ -244,9 +256,10 @@ export function useSearchQueue({
 
   // Derived state — searches AND comparisons are both queue items, so all counts include both.
   const readyItems = useMemo(() => readyItemsOf(queue), [queue]);
+  const unseenCount = unseenReadyCount(queue);
   const busyCount = busyCountOf(queue);
-  // Applies a state change GlobalSearch makes itself: a dismissal, Clear all.
+  // Applies a state change GlobalSearch makes itself: a dismissal, Clear all, a result shown.
   const updateQueue = useCallback((action: QueueAction) => setQueue(queueUpdate(action)), []);
 
-  return { queue, readyItems, busyCount, scanning, updateQueue, enqueue, submitQuery, refreshInPlace };
+  return { queue, readyItems, unseenCount, busyCount, scanning, updateQueue, enqueue, submitQuery, refreshInPlace };
 }

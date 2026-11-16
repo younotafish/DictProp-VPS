@@ -32,7 +32,7 @@ test('stepping from an index past the end keeps the arithmetic, which is why the
   assert.equal(stepMeaning(clampMeaning(5, 3), 3, -1, true), 1);
 });
 
-const item = (id: string, status: QueueItem['status']): QueueItem => ({ id, kind: 'lookup', query: id, status, results: null });
+const item = (id: string, status: QueueItem['status']): QueueItem => ({ id, kind: 'lookup', query: id, status, results: null, seen: false });
 const readyOf = (queue: QueueItem[]) => queue.filter(entry => entry.status === 'ready');
 
 test('an earlier lookup finishing moves the open result along without swapping it for another', () => {

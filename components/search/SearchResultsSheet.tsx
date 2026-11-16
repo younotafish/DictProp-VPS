@@ -147,7 +147,8 @@ export const SearchResultsSheet: React.FC<Props> = ({
         )}
         </div>
 
-        {/* Queue strip — show all ready items as tabs at bottom */}
+        {/* Queue strip — show all ready items as tabs at bottom. A result not seen yet carries a dot; the open one
+            is being seen, so it never does. */}
         {readyItems.length > 1 && (
           <div className="px-4 pb-3 pt-2 border-t border-slate-100 flex gap-2 overflow-x-auto no-scrollbar">
             {readyItems.map((item, idx) => (
@@ -161,6 +162,12 @@ export const SearchResultsSheet: React.FC<Props> = ({
                 }`}
               >
                 {item.query}
+                {!item.seen && idx !== resultIndex && (
+                  <>
+                    <span aria-hidden="true" className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-red-500 align-middle" />
+                    <span className="sr-only"> (new)</span>
+                  </>
+                )}
               </button>
             ))}
             <>

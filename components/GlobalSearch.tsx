@@ -17,6 +17,7 @@ import { useTimedMessage } from '../hooks/useTimedMessage';
 import {
   clampMeaning, meaningAfterRefresh, neighbourAfterDismiss, resolveViewing, stepMeaning, type SearchMode,
 } from './search/searchViewing';
+import { classifyEnqueue, openIndexForResults } from './search/searchQueue';
 import { SearchToasts, type SearchErrorToast } from './search/SearchToasts';
 import { SearchInputBar } from './search/SearchInputBar';
 import { SearchResultsSheet } from './search/SearchResultsSheet';
@@ -62,7 +63,8 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   // and the meaning shown within it.
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [viewingVocabIdx, setViewingVocabIdx] = useState(0);
-  // When a DB hit (already-saved word) becomes ready, auto-open its card. AI results don't set this.
+  // The entry to open in the sheet once it's ready: a saved word, a refresh, a saved comparison, or a word asked for
+  // again whose result is ready. Other AI results wait on the floating button.
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { zoneFlash, flashZone, playOrToggleSentence } = useSheetPlayback(mode);
@@ -120,7 +122,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   }, [suggestions, onOpenSentence]);
 
   const {
-    readyItems, busyCount, scanning, updateQueue, enqueue, submitQuery, refreshInPlace,
+    queue, readyItems, unseenCount, busyCount, scanning, updateQueue, enqueue, submitQuery, refreshInPlace,
   } = useSearchQueue({
     findSavedByWord, onRefreshReplace, onCompareReady, openWhenReady: setPendingOpenId, showError, clearError, showStatus,
   });
@@ -149,7 +151,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     setViewingVocabIdx(0);
   }, [readyItems]);
 
-  // Auto-open the popup once an instant DB hit becomes ready (AI results stay on the floating button)
+  // Open the sheet on the pendingOpenId entry once it's ready, at its first meaning, and say its word.
   useEffect(() => {
     if (!pendingOpenId) return;
     const item = readyItems.find(q => q.id === pendingOpenId);
@@ -167,6 +169,11 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
   // another result or nothing.
   const openResultGone = mode === 'viewing' && !viewingItem;
   useEffect(() => { if (openResultGone) setMode('idle'); }, [openResultGone]);
+
+  // A result counts as seen once the sheet shows it, whether the user opened it or it opened by itself; the search
+  // button and the results pill count only the others.
+  const openUnseenId = viewingItem && !viewingItem.seen ? viewingItem.id : null;
+  useEffect(() => { if (openUnseenId) updateQueue({ type: 'mark-seen', id: openUnseenId }); }, [openUnseenId, updateQueue]);
 
   // The arrow and Cmd+1–4 keys read the open result through this ref, so their listener is added once per mode
   // instead of again after every change to the queue.
@@ -223,19 +230,20 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     }
   }, [mode]);
 
-  // Submit from input box — add to queue and switch to viewing once ready. Offline, a saved word still
-  // opens (the queue reuses saved cards without the network); anything else needs the AI.
+  // Submit from input box — add to queue and switch to viewing once ready. Offline, a word asked for before still
+  // answers (its result opens, or it says it's still running), and so does a saved word (the queue reuses saved
+  // cards without the network); anything else needs the AI.
   const handleSubmit = useCallback(() => {
     const q = query.trim();
     if (!q) return;
-    if (!isOnline && (looksLikeSentence(q) || findSavedByWord(q).length === 0)) {
+    if (!isOnline && (looksLikeSentence(q) || (classifyEnqueue(queue, q) === 'new' && findSavedByWord(q).length === 0))) {
       showError("You're offline, so only saved words can be looked up.");
       return;
     }
     void submitQuery(q);
     setQuery('');
     setMode('idle'); // Go back to idle — spinner shows on floating button
-  }, [query, isOnline, submitQuery, findSavedByWord, showError]);
+  }, [query, queue, isOnline, submitQuery, findSavedByWord, showError]);
 
   // Save a single vocab
   const saveOneVocab = useCallback((vocab: VocabCard) => {
@@ -320,14 +328,15 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
     setMode('input');
   };
 
+  // The results pill opens the first result not seen yet, or the newest, and says its word.
   const handleViewResults = () => {
-    const firstReady = readyItems[0];
-    if (!firstReady) return;
-    setViewingId(firstReady.id);
+    const opening = readyItems[openIndexForResults(readyItems)];
+    if (!opening) return;
+    setViewingId(opening.id);
     setViewingVocabIdx(0);
     setMode('viewing');
-    if (firstReady.results?.vocabs?.[0]?.word) {
-      speakWord(firstReady.results.vocabs[0].word);
+    if (opening.results?.vocabs?.[0]?.word) {
+      speakWord(opening.results.vocabs[0].word);
     }
   };
 
@@ -397,6 +406,7 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
           canSaveSentence={!!(query.trim() && looksLikeSentence(query) && onSaveSentence)}
           onSaveSentence={handleSaveSentenceClick}
           readyCount={readyCount}
+          unseenCount={unseenCount}
           onViewResults={handleViewResults}
           onClose={handleClose}
         />
@@ -442,7 +452,14 @@ export const GlobalSearch: React.FC<Props> = ({ onSave, isVocabSaved, findSavedB
 
       {/* Floating button — hidden when input or viewing is open */}
       {mode !== 'input' && mode !== 'viewing' && (
-        <SearchFab readyCount={readyCount} busyCount={busyCount} isBusy={isBusy} aboveTabBar={aboveTabBar} onClick={handleFloatingClick} />
+        <SearchFab
+          unseenCount={unseenCount}
+          readyCount={readyCount}
+          runningCount={busyCount}
+          isBusy={isBusy}
+          aboveTabBar={aboveTabBar}
+          onClick={handleFloatingClick}
+        />
       )}
     </>
   );

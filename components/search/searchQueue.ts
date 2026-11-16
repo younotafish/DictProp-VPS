@@ -20,16 +20,22 @@ export interface QueueItem {
   refreshing?: boolean; // in-place refresh in flight: keep showing the old results with a spinner
   analyzeMode?: 'batch'; // expressions auto-extracted from a sentence search: analyze as a pre-identified
                          // unit (don't re-split multi-word idioms) and don't auto-open the popup.
+  /** When its request went out ('start'). A saved word is answered without one, so it has none. */
+  startedAt?: number;
+  /** When the lookup was last asked for again while it was still running. */
+  repeatAt?: number;
+  /** Whether the sheet has shown the result. The search button and the results pill count only the others. */
+  seen: boolean;
 }
 
 export type QueueAction =
   /** A lookup of `query` (trimmed). A refresh (forceAI) replaces every entry for the same query; otherwise a
-   *  duplicate that hasn't failed leaves the queue as it is. */
+   *  duplicate that hasn't failed leaves the queue as it is, and a failed lookup of the query gives way to it. */
   | { type: 'add-search'; id: string; query: string; forceAI: boolean; analyzeMode?: 'batch' }
   /** A comparison of `words` (trimmed, two or more): ready at once when it was saved before. */
   | { type: 'add-compare'; id: string; words: string[]; cached: ComparisonResult | null }
-  /** The request went out. */
-  | { type: 'start'; id: string }
+  /** The request went out, at `at`. */
+  | { type: 'start'; id: string; at: number }
   | { type: 'search-ready'; id: string; results: SearchResult }
   | { type: 'compare-ready'; id: string; comparison: ComparisonResult }
   | { type: 'fail'; id: string }
@@ -39,7 +45,11 @@ export type QueueAction =
   | { type: 'refresh-fail'; id: string }
   | { type: 'dismiss'; id: string }
   /** Clear all: drops every finished entry (ready or failed) and keeps the ones still running. */
-  | { type: 'clear-finished' };
+  | { type: 'clear-finished' }
+  /** The sheet has shown the result. */
+  | { type: 'mark-seen'; id: string }
+  /** The lookup was asked for again, at `at`, while it was still running. */
+  | { type: 'repeat-asked'; id: string; at: number };
 
 /** A query as the queue matches it: case doesn't count. */
 const queryKey = (query: string): string => query.toLowerCase();
@@ -57,18 +67,23 @@ export function searchQueueReducer(queue: QueueItem[], action: QueueAction): Que
     case 'add-search': {
       const { id, query, forceAI, analyzeMode } = action;
       if (!forceAI && hasLiveDuplicate(queue, query)) return queue;
-      const base = forceAI ? queue.filter(item => !sameQuery(item.query, query)) : queue;
-      return [...base, { id, kind: 'lookup', query, status: 'pending', results: null, forceAI, analyzeMode }];
+      const replaces = forceAI
+        ? (item: QueueItem) => sameQuery(item.query, query)
+        : (item: QueueItem) => item.kind === 'lookup' && item.status === 'failed' && sameQuery(item.query, query);
+      return [
+        ...queue.filter(item => !replaces(item)),
+        { id, kind: 'lookup', query, status: 'pending', results: null, seen: false, forceAI, analyzeMode },
+      ];
     }
     case 'add-compare': {
       const { id, words, cached } = action;
       return [...queue, {
         id, kind: 'compare', query: words.join(' vs '), words,
-        status: cached ? 'ready' : 'pending', results: null, comparison: cached,
+        status: cached ? 'ready' : 'pending', results: null, comparison: cached, seen: false,
       }];
     }
     case 'start':
-      return patch(queue, action.id, { status: 'searching' });
+      return patch(queue, action.id, { status: 'searching', startedAt: action.at });
     case 'search-ready':
       return patch(queue, action.id, { status: 'ready', results: action.results });
     case 'compare-ready':
@@ -78,13 +93,18 @@ export function searchQueueReducer(queue: QueueItem[], action: QueueAction): Que
     case 'refresh-start':
       return patch(queue, action.id, { refreshing: true });
     case 'refresh-ready':
-      return patch(queue, action.id, { status: 'ready', results: action.results, query: action.query, refreshing: false });
+      // The fresh result is new to the user until the sheet shows it, which it does at once if it's open on it.
+      return patch(queue, action.id, { status: 'ready', results: action.results, query: action.query, refreshing: false, seen: false });
     case 'refresh-fail':
       return patch(queue, action.id, { refreshing: false });
     case 'dismiss':
       return queue.filter(item => item.id !== action.id);
     case 'clear-finished':
       return queue.filter(item => item.status === 'pending' || item.status === 'searching');
+    case 'mark-seen':
+      return patch(queue, action.id, { seen: true });
+    case 'repeat-asked':
+      return patch(queue, action.id, { repeatAt: action.at });
   }
 }
 
@@ -93,6 +113,22 @@ export const queueUpdate = (action: QueueAction) => (queue: QueueItem[]): QueueI
 
 /** Whether the entry `id` is still in the queue (a refresh of the same word replaces it, a dismissal drops it). */
 export const isQueued = (queue: readonly QueueItem[], id: string): boolean => queue.some(item => item.id === id);
+
+/**
+ * The lookup of `query` still running or ready, if any, matched trimmed and whatever its case: what asking for the
+ * word again finds.
+ */
+export const findLiveLookup = (queue: readonly QueueItem[], query: string): QueueItem | undefined =>
+  queue.find(item => item.kind === 'lookup' && item.status !== 'failed' && sameQuery(item.query, query.trim()));
+
+/**
+ * What asking again for `query` does: 'open' its ready result, say it's still 'running', or queue a 'new' lookup
+ * when none is live (a failed one is asked for again). Only lookups count, not comparisons.
+ */
+export function classifyEnqueue(queue: readonly QueueItem[], query: string): 'open' | 'running' | 'new' {
+  const live = findLiveLookup(queue, query);
+  return !live ? 'new' : live.status === 'ready' ? 'open' : 'running';
+}
 
 /**
  * The refreshes (forced lookups) asked for so far, by query. A forced lookup replaces every entry for its query, so a
@@ -119,6 +155,15 @@ export function createRefreshLog() {
 
 /** The results the sheet can show, in the order they were asked for. */
 export const readyItemsOf = (queue: readonly QueueItem[]): QueueItem[] => queue.filter(item => item.status === 'ready');
+
+/** The ready results the sheet hasn't shown yet: what the search button and the results pill count. */
+export const unseenReadyCount = (queue: readonly QueueItem[]): number => readyItemsOf(queue).filter(item => !item.seen).length;
+
+/** Where opening the results starts: the first one not seen yet, in the order they were asked for, else the newest. */
+export function openIndexForResults(readyItems: readonly QueueItem[]): number {
+  const unseen = readyItems.findIndex(item => !item.seen);
+  return unseen >= 0 ? unseen : Math.max(0, readyItems.length - 1);
+}
 
 /** Lookups and comparisons waiting for their request or waiting on it. */
 export const busyCountOf = (queue: readonly QueueItem[]): number =>

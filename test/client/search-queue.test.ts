@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  busyCountOf, createRefreshLog, findLiveComparison, hasLiveDuplicate, isQueued, queueUpdate, readyItemsOf, savedCardsResult,
-  searchQueueReducer, type QueueAction, type QueueItem,
+  busyCountOf, classifyEnqueue, createRefreshLog, findLiveComparison, findLiveLookup, hasLiveDuplicate, isQueued,
+  openIndexForResults, queueUpdate, readyItemsOf, savedCardsResult, searchQueueReducer, unseenReadyCount,
+  type QueueAction, type QueueItem,
 } from '../../components/search/searchQueue.ts';
 import { comparisonKey, type ComparisonResult, type SearchResult, type VocabCard } from '../../types.ts';
 
@@ -23,25 +24,31 @@ const run = (actions: QueueAction[], start: QueueItem[] = []): QueueItem[] => ac
 
 const add = (id: string, query: string, extra: Partial<Extract<QueueAction, { type: 'add-search' }>> = {}): QueueAction =>
   ({ type: 'add-search', id, query, forceAI: false, ...extra });
+const start = (id: string, at = 1_000): QueueAction => ({ type: 'start', id, at });
 
-test('a lookup joins the queue as pending, keeping its refresh flag and analysis mode', () => {
+test('a lookup joins the queue as pending and unseen, keeping its refresh flag and analysis mode', () => {
   assert.deepEqual(run([add('q-1', 'gamut', { analyzeMode: 'batch' })]), [
-    { id: 'q-1', kind: 'lookup', query: 'gamut', status: 'pending', results: null, forceAI: false, analyzeMode: 'batch' },
+    { id: 'q-1', kind: 'lookup', query: 'gamut', status: 'pending', results: null, seen: false, forceAI: false, analyzeMode: 'batch' },
   ]);
 });
 
 test('a lookup that repeats a running or ready one leaves the queue untouched, whatever its case', () => {
   for (const status of ['pending', 'searching', 'ready'] as const) {
-    const queue: QueueItem[] = [{ id: 'q-1', kind: 'lookup', query: 'Gamut', status, results: null }];
+    const queue: QueueItem[] = [{ id: 'q-1', kind: 'lookup', query: 'Gamut', status, results: null, seen: false }];
     assert.equal(searchQueueReducer(queue, add('q-2', 'gamut')), queue, status);
     assert.equal(hasLiveDuplicate(queue, 'GAMUT'), true, status);
   }
 });
 
-test('a failed lookup can be asked for again', () => {
-  const queue = run([add('q-1', 'gamut'), { type: 'fail', id: 'q-1' }]);
+test('a failed lookup asked for again gives way to the new one', () => {
+  const queue = run([add('q-1', 'gamut'), add('q-2', 'impasse'), { type: 'fail', id: 'q-1' }]);
   assert.equal(hasLiveDuplicate(queue, 'gamut'), false);
-  assert.deepEqual(run([add('q-2', 'gamut')], queue).map(item => [item.id, item.status]), [['q-1', 'failed'], ['q-2', 'pending']]);
+  assert.deepEqual(run([add('q-3', 'Gamut')], queue).map(item => [item.id, item.status]), [['q-2', 'pending'], ['q-3', 'pending']]);
+});
+
+test("a failed comparison stays when a lookup of its text is asked for, since it isn't that lookup", () => {
+  const queue = run([{ type: 'add-compare', id: 'q-1', words: ['fable', 'parable'], cached: null }, { type: 'fail', id: 'q-1' }]);
+  assert.deepEqual(run([add('q-2', 'fable vs parable')], queue).map(item => [item.id, item.status]), [['q-1', 'failed'], ['q-2', 'pending']]);
 });
 
 test('a refresh replaces every entry for its query, whatever its status, and goes to the end', () => {
@@ -62,16 +69,17 @@ test('a comparison is pending, or ready at once when it was saved before', () =>
     { type: 'add-compare', id: 'q-1', words: ['fable', 'parable'], cached: null },
     { type: 'add-compare', id: 'q-2', words: ['rot', 'decay', 'decompose'], cached: saved },
   ]), [
-    { id: 'q-1', kind: 'compare', query: 'fable vs parable', words: ['fable', 'parable'], status: 'pending', results: null, comparison: null },
-    { id: 'q-2', kind: 'compare', query: 'rot vs decay vs decompose', words: ['rot', 'decay', 'decompose'], status: 'ready', results: null, comparison: saved },
+    { id: 'q-1', kind: 'compare', query: 'fable vs parable', words: ['fable', 'parable'], status: 'pending', results: null, comparison: null, seen: false },
+    { id: 'q-2', kind: 'compare', query: 'rot vs decay vs decompose', words: ['rot', 'decay', 'decompose'], status: 'ready', results: null, comparison: saved, seen: false },
   ]);
 });
 
 test('a request settles only its own entry and leaves the others as they were', () => {
   const queue = run([add('q-1', 'gamut'), add('q-2', 'impasse'), { type: 'add-compare', id: 'q-3', words: ['a', 'b'], cached: null }]);
-  const started = searchQueueReducer(queue, { type: 'start', id: 'q-2' });
+  const started = searchQueueReducer(queue, start('q-2', 5_000));
   assert.equal(started[0], queue[0]);
   assert.equal(started[1].status, 'searching');
+  assert.equal(started[1].startedAt, 5_000, 'when the request went out');
   const found = result('impasse');
   const ready = searchQueueReducer(started, { type: 'search-ready', id: 'q-2', results: found });
   assert.equal(ready[1].status, 'ready');
@@ -95,7 +103,7 @@ test('an in-place refresh keeps the old result showing until the fresh one repla
   const refreshed = searchQueueReducer(queue, { type: 'refresh-ready', id: 'q-1', query: 'run out', results: fresh });
   assert.deepEqual(
     { ...refreshed[0], results: refreshed[0].results?.query },
-    { id: 'q-1', kind: 'lookup', query: 'run out', status: 'ready', results: 'run out', forceAI: false, analyzeMode: 'batch', refreshing: false },
+    { id: 'q-1', kind: 'lookup', query: 'run out', status: 'ready', results: 'run out', seen: false, forceAI: false, analyzeMode: 'batch', refreshing: false },
   );
 
   const failed = searchQueueReducer(queue, { type: 'refresh-fail', id: 'q-1' });
@@ -107,7 +115,7 @@ test('an in-place refresh keeps the old result showing until the fresh one repla
 test('dismiss drops one entry, and clear all keeps only the entries still running', () => {
   const queue = run([
     add('q-1', 'a'), { type: 'search-ready', id: 'q-1', results: result('a') },
-    add('q-2', 'b'), { type: 'start', id: 'q-2' },
+    add('q-2', 'b'), start('q-2'),
     add('q-3', 'c'), { type: 'fail', id: 'q-3' },
     add('q-4', 'd'),
   ]);
@@ -117,7 +125,7 @@ test('dismiss drops one entry, and clear all keeps only the entries still runnin
 
 test('queueUpdate applies an action to the queue it is given', () => {
   const queue = run([add('q-1', 'a')]);
-  assert.deepEqual(queueUpdate({ type: 'start', id: 'q-1' })(queue), searchQueueReducer(queue, { type: 'start', id: 'q-1' }));
+  assert.deepEqual(queueUpdate(start('q-1'))(queue), searchQueueReducer(queue, start('q-1')));
 });
 
 test('ready results keep the order they were asked for, not the order they finished in', () => {
@@ -131,7 +139,7 @@ test('ready results keep the order they were asked for, not the order they finis
 
 test('the busy count covers queued and running lookups and comparisons', () => {
   const queue = run([
-    add('q-1', 'a'), add('q-2', 'b'), { type: 'start', id: 'q-2' },
+    add('q-1', 'a'), add('q-2', 'b'), start('q-2'),
     { type: 'add-compare', id: 'q-3', words: ['x', 'y'], cached: null },
     add('q-4', 'c'), { type: 'search-ready', id: 'q-4', results: result('c') },
     add('q-5', 'd'), { type: 'fail', id: 'q-5' },
@@ -164,7 +172,7 @@ test('a saved word shows its saved cards as the result, without a translation', 
 });
 
 test('a lookup replaced by a refresh of the same word is no longer queued', () => {
-  const queue = run([add('q-1', 'gamut'), { type: 'start', id: 'q-1' }]);
+  const queue = run([add('q-1', 'gamut'), start('q-1')]);
   assert.equal(isQueued(queue, 'q-1'), true);
   const refreshed = searchQueueReducer(queue, add('q-2', 'gamut', { forceAI: true }));
   assert.equal(isQueued(refreshed, 'q-1'), false);
@@ -195,3 +203,67 @@ test("a forced lookup drops an entry mid-way through an in-place refresh, as the
   assert.equal(replaced(), true);
 });
 
+
+const ready = (id: string, query = id): QueueAction[] => [add(id, query), { type: 'search-ready', id, results: result(query) }];
+
+test('asking again for a lookup opens it when ready, says so while it runs, and queues a new one otherwise', () => {
+  const queue = run([
+    ...ready('q-1', 'gamut'),
+    add('q-2', 'impasse'),
+    add('q-3', 'obfuscate'), start('q-3'),
+    add('q-4', 'rot'), { type: 'fail', id: 'q-4' },
+  ]);
+  assert.equal(classifyEnqueue(queue, 'gamut'), 'open');
+  assert.equal(classifyEnqueue(queue, 'impasse'), 'running', 'queued');
+  assert.equal(classifyEnqueue(queue, 'obfuscate'), 'running', 'waiting on its answer');
+  assert.equal(classifyEnqueue(queue, 'rot'), 'new', 'a failed lookup is asked for again');
+  assert.equal(classifyEnqueue(queue, 'tangent'), 'new');
+  assert.equal(classifyEnqueue([], 'gamut'), 'new');
+});
+
+test('asking again matches the lookup trimmed and whatever its case, and finds the entry to open', () => {
+  const queue = run(ready('q-1', 'Gamut'));
+  assert.equal(classifyEnqueue(queue, '  gAMUT '), 'open');
+  assert.equal(findLiveLookup(queue, ' GAMUT')?.id, 'q-1');
+  assert.equal(findLiveLookup(queue, 'gamuts'), undefined);
+});
+
+test('a comparison is never taken for a lookup of its text', () => {
+  const queue = run([{ type: 'add-compare', id: 'q-1', words: ['fable', 'parable'], cached: comparison(['fable', 'parable']) }]);
+  assert.equal(classifyEnqueue(queue, 'fable vs parable'), 'new');
+  assert.equal(findLiveLookup(queue, 'fable vs parable'), undefined);
+});
+
+test('asking again while a lookup runs notes when, and leaves its request alone', () => {
+  const queue = run([add('q-1', 'gamut'), start('q-1', 1_000), { type: 'repeat-asked', id: 'q-1', at: 2_500 }]);
+  assert.deepEqual([queue[0].status, queue[0].startedAt, queue[0].repeatAt], ['searching', 1_000, 2_500]);
+});
+
+test('a result counts as new until the sheet shows it', () => {
+  const queue = run([
+    ...ready('q-1', 'gamut'), ...ready('q-2', 'impasse'),
+    { type: 'add-compare', id: 'q-3', words: ['fable', 'parable'], cached: comparison(['fable', 'parable']) },
+    add('q-4', 'rot'),
+  ]);
+  assert.equal(unseenReadyCount(queue), 3, 'ready lookups and comparisons, not the lookup still running');
+  const shown = searchQueueReducer(queue, { type: 'mark-seen', id: 'q-2' });
+  assert.equal(shown[1].seen, true);
+  assert.equal(unseenReadyCount(shown), 2);
+  assert.equal(unseenReadyCount(run([{ type: 'mark-seen', id: 'q-1' }, { type: 'mark-seen', id: 'q-3' }], shown)), 0);
+});
+
+test('a result refreshed in place is new again once its fresh result arrives', () => {
+  const queue = run([...ready('q-1', 'run'), { type: 'mark-seen', id: 'q-1' }, { type: 'refresh-start', id: 'q-1' }]);
+  assert.equal(queue[0].seen, true, 'the old result still shows, and the user saw it');
+  const refreshed = searchQueueReducer(queue, { type: 'refresh-ready', id: 'q-1', query: 'run', results: result('run') });
+  assert.equal(refreshed[0].seen, false);
+});
+
+test('opening the results starts at the first one not seen yet, in the order they were asked for, else the newest', () => {
+  const queue = run([...ready('q-1', 'a'), ...ready('q-2', 'b'), ...ready('q-3', 'c'), { type: 'mark-seen', id: 'q-1' }]);
+  assert.equal(openIndexForResults(readyItemsOf(queue)), 1);
+  assert.equal(openIndexForResults(readyItemsOf(run([{ type: 'mark-seen', id: 'q-3' }], queue))), 1);
+  const allSeen = run([{ type: 'mark-seen', id: 'q-2' }, { type: 'mark-seen', id: 'q-3' }], queue);
+  assert.equal(openIndexForResults(readyItemsOf(allSeen)), 2, 'the newest request');
+  assert.equal(openIndexForResults([]), 0);
+});

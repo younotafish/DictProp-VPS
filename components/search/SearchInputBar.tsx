@@ -19,7 +19,9 @@ interface Props {
   /** The query reads as a sentence and can be saved to the Sentences list as typed. */
   canSaveSentence: boolean;
   onSaveSentence: () => void;
+  /** Every ready result, and those the sheet hasn't shown yet: the results pill reads "2 new", or the total. */
   readyCount: number;
+  unseenCount: number;
   onViewResults: () => void;
   onClose: () => void;
 }
@@ -27,7 +29,7 @@ interface Props {
 /** The search box: the query, its saved-sentence suggestions, and the save, analyze, results and close buttons. */
 export const SearchInputBar: React.FC<Props> = ({
   inputRef, query, setQuery, suggestions, highlightedIndex, setHighlightedIndex, suggestionsListRef, suggestionsId,
-  onOpenSuggestion, onSubmit, canSaveSentence, onSaveSentence, readyCount, onViewResults, onClose,
+  onOpenSuggestion, onSubmit, canSaveSentence, onSaveSentence, readyCount, unseenCount, onViewResults, onClose,
 }) => (
   <div className="fixed bottom-20 right-4 left-4 z-[56]">
     {/* Saved-sentence suggestions (fuzzy). ↑/↓ or hover to highlight; Enter/click opens the card. */}
@@ -131,11 +133,11 @@ export const SearchInputBar: React.FC<Props> = ({
       {readyCount > 0 && (
         <button
           onClick={onViewResults}
-          aria-label={`Show ${readyCount} ${readyCount === 1 ? 'result' : 'results'}`}
-          className="shrink-0 h-7 px-2.5 rounded-full bg-indigo-500 text-white text-xs font-bold flex items-center gap-1 hover:bg-indigo-600 transition-colors animate-pulse"
+          aria-label={`Show ${readyCount} ${readyCount === 1 ? 'result' : 'results'}${unseenCount > 0 ? ` (${unseenCount} new)` : ''}`}
+          className="shrink-0 h-7 px-2.5 rounded-full bg-indigo-500 text-white text-xs font-bold flex items-center gap-1 hover:bg-indigo-600 transition-colors"
         >
           <Search size={12} />
-          {readyCount}
+          {unseenCount > 0 ? `${unseenCount} new` : readyCount}
         </button>
       )}
       <button
