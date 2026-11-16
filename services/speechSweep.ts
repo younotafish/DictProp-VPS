@@ -1,4 +1,3 @@
-import type { Notice } from '../hooks/useOverlays';
 import { getTtsBackfillStatus, startTtsBackfill, type TtsBackfillStatus } from './api/tts';
 
 /**
@@ -71,27 +70,4 @@ export async function runSpeechSweep({
   onProgress(null);
   // A Stop pressed while the last check ran still counts, even when that check found the sweep finished.
   return { kind: stopped() ? 'stopped' : pollFailed ? 'poll-failed' : 'finished', status };
-}
-
-/**
- * What the user is told when a sweep ends, or null for nothing. A failed progress check reads as the end, with the
- * last snapshot's numbers.
- */
-export function describeSweepOutcome(outcome: SpeechSweepOutcome, silent: boolean): Notice | null {
-  switch (outcome.kind) {
-    case 'start-failed':
-      return silent ? null : { title: "Couldn't Start", message: 'Failed to reach the server to start generation.', variant: 'warning' };
-    case 'finished':
-    case 'poll-failed': {
-      const { generated, total, failed } = outcome.status;
-      return {
-        title: 'Speech Generated',
-        message: `${generated} generated · ${Math.max(0, total - generated - failed)} already cached${failed ? `\n${failed} failed` : ''}`,
-        variant: 'success',
-      };
-    }
-    case 'started':
-    case 'stopped':
-      return null;
-  }
 }

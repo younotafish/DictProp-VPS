@@ -19,6 +19,7 @@ import { onTabReselect } from '../services/navReselect';
 import { isImeKey, isTypingTarget } from '../components/keyboardTarget';
 import { NotebookGroup } from './notebook/NotebookGroup';
 import { SearchResultsCarousel } from './notebook/SearchResultsCarousel';
+import { useAnyOverlayOpen } from '../components/overlayStack';
 import { NotebookHeader } from './notebook/NotebookHeader';
 import { NotebookToolsMenu } from './notebook/NotebookToolsMenu';
 import { NotebookSearchBar } from './notebook/NotebookSearchBar';
@@ -71,11 +72,6 @@ interface NotebookProps {
   onCompare: (words: string[]) => void;
   onSaveSentence: (text: string, word: string, sense?: string) => void;
   isSentenceSaved: (text: string) => boolean;
-  /**
-   * Something covers the notebook and takes its keys: anything open in the overlay stack (components/overlayStack),
-   * such as a card, the card popup, a dialog or the search sheet.
-   */
-  hasOverlay: boolean;
   onBatchImport: (words: string[]) => void;
   /** A batch import is running, so its tool shows busy; its progress is a pill in the notice stack. */
   batchImportRunning: boolean;
@@ -94,11 +90,14 @@ export const NotebookView: React.FC<NotebookProps> = ({
     items, onDelete, onSearch, onViewDetail,
     user, onSignOut, onViewRefusedReviews, forceSyncRunning, onScroll, onForceSync, isOnline, offline,
     isVocabSaved, onFindDuplicates, onArchive, onUnarchive, onSave, onCompare,
-    onSaveSentence, isSentenceSaved, hasOverlay,
+    onSaveSentence, isSentenceSaved,
     onBatchImport, batchImportRunning, onJSONImported,
     onGenerateAllSpeech, speechGenerationRunning,
     onRestoreImagesToServer, imageRestoreRunning, onDownloadOfflineImages, matchSavedBases, onSyncScroll, onShowShortcuts,
 }) => {
+  // Something covers the notebook and takes its keys: anything open in the overlay stack, such as a card, the card
+  // popup, a dialog or the search sheet.
+  const hasOverlay = useAnyOverlayOpen();
   // The sort and filter last chosen on this device (review priority and words only at first), kept across relaunches.
   const [initialView] = useState(readNotebookListView);
   const [sortMode, setSortMode] = useState<NotebookSort>(initialView.sort);

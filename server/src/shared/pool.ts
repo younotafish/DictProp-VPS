@@ -1,6 +1,7 @@
 // The one bounded worker pool: speech generation (POST /api/tts/generate), the speech backfill and bulk import
-// (POST /api/import) run their batches on it. It imports nothing, like everything in this folder, so client code
-// can run on it too.
+// (POST /api/import) run their batches on it, as do the client's clip warm-ups (services/audio/clipWarmers.ts) and
+// the session preload's pictures (components/SessionPreload.tsx). It imports nothing, like everything in this folder,
+// so client code can run on it too.
 
 /**
  * Runs `work` over the items in order, at most `concurrency` at a time. Once `signal` aborts, no further item

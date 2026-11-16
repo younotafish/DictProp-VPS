@@ -45,7 +45,7 @@ const subscribe = (listener: () => void) => {
 const anyOpen = () => openCount > 0;
 
 /** Whether any overlay is open. */
-export const useAnyOverlayOpen = (): boolean => useSyncExternalStore(subscribe, anyOpen);
+export const useAnyOverlayOpen = (): boolean => useSyncExternalStore(subscribe, anyOpen, () => false);
 
 /** The element that had focus when the first open overlay opened; reading it clears it. */
 export function takeOverlayOpener(): Element | null {

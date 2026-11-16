@@ -360,7 +360,6 @@ function SignedInApp({ user }: { user: AuthUser }) {
             onCompare={handleCompare}
             onSaveSentence={handleSaveSentence}
             isSentenceSaved={isSentenceSaved}
-            hasOverlay={overlayOpen}
             onBatchImport={handleBatchImport}
             onJSONImported={handleForceSync}
             batchImportRunning={batchImportRunning}

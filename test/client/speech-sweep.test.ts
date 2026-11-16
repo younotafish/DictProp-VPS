@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { TtsBackfillStatus } from '../../services/api/tts.ts';
-import { describeSweepOutcome, runSpeechSweep, type SpeechSweepRun } from '../../services/speechSweep.ts';
+import { runSpeechSweep, type SpeechSweepRun } from '../../services/speechSweep.ts';
 
 // services/speechSweep.ts, the server-side speech sweep the notebook's "Generate speech cache" starts and batch
 // import starts silently: what the progress pill hears, how a watch ends, and the dialog each ending shows.
@@ -50,29 +50,24 @@ function scripted(
   return { run, calls, stop };
 }
 
-test('a start that fails shows Couldn’t Start, unless the run was silent, and nothing is watched', async () => {
+test('a start that fails reports start-failed, silent or not, and nothing is watched', async () => {
   for (const silent of [false, true]) {
     const { run, calls } = scripted(new TypeError('Failed to fetch'), [], { silent });
     const outcome = await runSpeechSweep(run);
     assert.deepEqual(outcome, { kind: 'start-failed' });
     assert.deepEqual(calls, ['start'], 'no progress, no stop check, no wait, no check');
-    assert.deepEqual(
-      describeSweepOutcome(outcome, silent),
-      silent ? null : { title: "Couldn't Start", message: 'Failed to reach the server to start generation.', variant: 'warning' },
-    );
   }
 });
 
-test('a silent run only starts the sweep: no progress pill, no checks and no dialog', async () => {
+test('a silent run only starts the sweep: no progress pill and no checks', async () => {
   const started = status(3, 40, true);
   const { run, calls } = scripted(started, [], { silent: true });
   const outcome = await runSpeechSweep(run);
   assert.deepEqual(outcome, { kind: 'started', status: started });
   assert.deepEqual(calls, ['start']);
-  assert.equal(describeSweepOutcome(outcome, true), null);
 });
 
-test('a watched sweep shows the start’s snapshot, checks every 3 s until the server is done, then shows the counts', async () => {
+test('a watched sweep shows the start’s snapshot and checks every 3 s until the server is done', async () => {
   const done = status(10, 10, false, 6, 1);
   const { run, calls } = scripted(status(2, 10, true), [status(5, 10, true, 3), done]);
   const outcome = await runSpeechSweep(run);
@@ -84,20 +79,14 @@ test('a watched sweep shows the start’s snapshot, checks every 3 s until the s
     'progress 10/10 done', 'progress cleared', 'stopped?',
   ]);
   assert.deepEqual(outcome, { kind: 'finished', status: done });
-  assert.deepEqual(describeSweepOutcome(outcome, false), {
-    title: 'Speech Generated',
-    message: '6 generated · 3 already cached\n1 failed',
-    variant: 'success',
-  });
 });
 
-test('Stop ends the watch with no dialog, even when the check under way finds the sweep done', async () => {
+test('Stop ends the watch, even when the check under way finds the sweep done', async () => {
   const done = status(10, 10, false, 10);
   const pressedDuringWait = scripted(status(0, 10, true), [done], { onWait: () => { pressedDuringWait.stop.pressed = true; } });
   const outcome = await runSpeechSweep(pressedDuringWait.run);
   assert.deepEqual(pressedDuringWait.calls, ['start', 'progress 0/10', 'stopped?', 'wait 3000', 'check', 'progress 10/10 done', 'progress cleared', 'stopped?']);
   assert.deepEqual(outcome, { kind: 'stopped', status: done });
-  assert.equal(describeSweepOutcome(outcome, false), null);
 
   // Pressed while the server is still going: the watch ends before another wait or check.
   const stillRunning = status(4, 10, true, 4);
@@ -108,22 +97,12 @@ test('Stop ends the watch with no dialog, even when the check under way finds th
   assert.deepEqual(pressedLater.calls, ['start', 'progress 0/10', 'stopped?', 'wait 3000', 'check', 'progress 4/10', 'stopped?', 'progress cleared', 'stopped?']);
 });
 
-test('a failed check ends the watch and, as before, reports the last snapshot as generated', async () => {
+test('a failed check ends the watch and reports the last snapshot', async () => {
   const last = status(4, 10, true, 2, 1);
   const { run, calls } = scripted(status(1, 10, true), [last, new Error('Load TTS backfill status failed (502)')]);
   const outcome = await runSpeechSweep(run);
   assert.deepEqual(calls, ['start', 'progress 1/10', 'stopped?', 'wait 3000', 'check', 'progress 4/10', 'stopped?', 'wait 3000', 'check', 'progress cleared', 'stopped?']);
   assert.deepEqual(outcome, { kind: 'poll-failed', status: last });
-  assert.deepEqual(describeSweepOutcome(outcome, false), {
-    title: 'Speech Generated',
-    message: '2 generated · 7 already cached\n1 failed',
-    variant: 'success',
-  });
-});
-
-test('the already-cached count never goes below zero, and no failed line shows when nothing failed', () => {
-  assert.equal(describeSweepOutcome({ kind: 'finished', status: status(12, 10, false, 9, 3) }, false)?.message, '9 generated · 0 already cached\n3 failed');
-  assert.equal(describeSweepOutcome({ kind: 'finished', status: status(10, 10, false, 4) }, false)?.message, '4 generated · 6 already cached');
 });
 
 test('by default the sweep starts through the speech server’s backfill route', async () => {
