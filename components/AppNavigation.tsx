@@ -15,7 +15,7 @@ const NavButton: React.FC<NavButtonProps> = ({ view, currentView, onClick, icon:
   <button
     onClick={() => onClick(view)}
     aria-current={currentView === view ? 'page' : undefined}
-    aria-label={badge ? `${label}, ${badge} due` : undefined}
+    aria-label={badge ? `${label}, ${badge} to review` : undefined}
     className={`relative flex flex-1 flex-col items-center justify-center gap-1 py-3 transition-colors ${currentView === view ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
   >
     <div className="relative">

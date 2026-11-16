@@ -81,6 +81,12 @@ test('--nav-h is the tab bar\'s height: 95 px on a laptop, 105 px on a Face ID i
   }
 });
 
+test('a screen reader hears the Sentences badge as the sentences to review, never-reviewed ones included', () => {
+  const html = renderToStaticMarkup(createElement(AppNavigation, nav));
+  assert.match(html, /aria-label="Sentences, 3 to review"/);
+  assert.doesNotMatch(html, / due"/);
+});
+
 type StackProps = ComponentProps<typeof AppStatusPills>;
 const stack = (props: Partial<StackProps>) => classOf(renderToStaticMarkup(createElement(AppStatusPills, {
   userId: 'u1', onViewRefusedReviews: () => {}, imagePrefetchProgress: null, onStopImageDownload: () => {}, imageRestoreProgress: null,
