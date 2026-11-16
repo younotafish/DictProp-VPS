@@ -86,7 +86,9 @@ export function WordPlaybackControls({
             ? 'bg-emerald-500 text-white hover:bg-emerald-600'
             : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
         }`}
-        title={examplesPlaying ? 'Stop auto-play (Space)' : 'Auto-play first sentence of each card'}
+        title={examplesPlaying
+          ? 'Stop auto-play (Space)'
+          : 'Auto-play the first two examples of each card (on a phrase card, the phrase)'}
       >
         {examplesPlaying ? <Square size={18} fill="currentColor" /> : <AudioLines size={20} />}
       </button>

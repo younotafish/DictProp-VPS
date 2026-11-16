@@ -78,7 +78,7 @@ test('word cards\' example auto-play button is a Stop square while it runs', () 
   assert.ok(running);
   assert.match(running[1], /lucide-square/);
   assert.doesNotMatch(running[1], /lucide-pause/);
-  const idle = controls(false).match(/<button[^>]*title="Auto-play first sentence of each card"[^>]*>(.*?)<\/button>/);
+  const idle = controls(false).match(/<button[^>]*title="Auto-play the first two examples of each card \(on a phrase card, the phrase\)"[^>]*>(.*?)<\/button>/);
   assert.ok(idle);
   assert.match(idle[1], /lucide-audio-lines/);
 });
