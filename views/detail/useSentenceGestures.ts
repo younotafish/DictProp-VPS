@@ -6,6 +6,8 @@ import { sentenceTouchAction, touchFacts } from './touchGestures';
 interface SentenceGesturesOptions {
   /** The view's root: a scroll anywhere in it (the sentence's page or the analysis) means a fling may be under way. */
   rootRef: RefObject<HTMLElement | null>;
+  /** The sentence page's scroller: a long swipe on that page scrolls it to its end before changing sentences. */
+  heroScrollRef: RefObject<HTMLElement | null>;
   /** Phones and tablets: two-finger word chords, and word clicks that arrive as taps. */
   isMobile: boolean;
   sentencePage: 'sentence' | 'analysis';
@@ -28,8 +30,8 @@ interface SentenceGesturesOptions {
  * word's lookup.
  */
 export function useSentenceGestures({
-  rootRef, isMobile, sentencePage, setSentencePage, isSentenceAutoPlayingRef, setShowSentenceAutoPlayPanel, onClose,
-  currentGroupIndexRef, goToSentence, handleRemember, toggleSentencePlayback, playFromWordOffset,
+  rootRef, heroScrollRef, isMobile, sentencePage, setSentencePage, isSentenceAutoPlayingRef, setShowSentenceAutoPlayPanel,
+  onClose, currentGroupIndexRef, goToSentence, handleRemember, toggleSentencePlayback, playFromWordOffset,
 }: SentenceGesturesOptions) {
   // Touch Handling for swipe navigation
   const touchStartX = useRef<number | null>(null);
@@ -124,11 +126,11 @@ export function useSentenceGestures({
 
     const diffX = e.changedTouches[0].clientX - touchStartX.current;
     const diffY = e.changedTouches[0].clientY - touchStartY.current;
-    // Edges are measured on the page the touch moved: the analysis page. The sentence page has no scroller
-    // wired up, so a swipe there counts as at both edges.
+    // Edges are measured on the page the touch moved: the analysis page, or the sentence page's scroller, so a long
+    // swipe scrolls a long sentence to its end before it changes sentences.
     const container = sentencePage === 'analysis'
       ? document.querySelector<HTMLElement>('[data-sentence-analysis]')
-      : null;
+      : heroScrollRef.current;
     const facts = touchFacts(diffX, diffY, container);
     // A still tap that stopped a fling only stopped the page: it neither plays nor pauses and starts no double tap,
     // and a click the browser may still make of it is swallowed like a tap's.

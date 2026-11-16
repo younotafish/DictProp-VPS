@@ -77,10 +77,15 @@ export function SentenceReviewView({
 
   const { isMobile, isMacDesktop } = PLATFORM;
 
+  // The sentence page's scroller: a long sentence with a picture scrolls in it, and each new sentence starts at its top.
+  const heroScrollRef = useRef<HTMLDivElement>(null);
+
   // State for navigation between sentences (a group each)
   const {
     currentGroupIndex, setCurrentGroupIndex, currentItemIndex, setCurrentItemIndex, currentItem,
-  } = useCardNavigation(groups, { initialGroupIndex, initialItemIndex, navigationKey, sentenceReview: true });
+  } = useCardNavigation(groups, {
+    initialGroupIndex, initialItemIndex, navigationKey, scrollContainerRef: heroScrollRef, sentenceReview: true,
+  });
 
   const [sentencePage, setSentencePage] = useState<'sentence' | 'analysis'>('sentence');
   const rootRef = useRef<HTMLDivElement>(null);
@@ -353,8 +358,8 @@ export function SentenceReviewView({
     onContentTouchStart, onContentTouchEnd, handleMobileWordTouchStart, handleSentenceWordClickCapture,
     handleDoubleClick, handleSentenceSurfaceClick,
   } = useSentenceGestures({
-    rootRef, isMobile, sentencePage, setSentencePage, isSentenceAutoPlayingRef, setShowSentenceAutoPlayPanel, onClose,
-    currentGroupIndexRef, goToSentence, handleRemember, toggleSentencePlayback, playFromWordOffset,
+    rootRef, heroScrollRef, isMobile, sentencePage, setSentencePage, isSentenceAutoPlayingRef, setShowSentenceAutoPlayPanel,
+    onClose, currentGroupIndexRef, goToSentence, handleRemember, toggleSentencePlayback, playFromWordOffset,
   });
 
   useSentenceShortcuts({
@@ -418,7 +423,7 @@ export function SentenceReviewView({
             />
 
             {/* Row 2: the sentence — the hero, filling the page and centered in it. */}
-            <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col">
+            <div ref={heroScrollRef} className="flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col">
               <div className="my-auto w-full py-4">
                 {hasSentenceImage ? (
                   /* Attached image → responsive side-by-side: image left / sentence right on md+, image

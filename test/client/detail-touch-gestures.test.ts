@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { sentenceTouchAction, touchFacts, wordTouchAction, type ScrollPosition } from '../../views/detail/touchGestures.ts';
 import { TAP_CONTROL_SELECTOR, doubleTapControlSelector } from '../../services/reviewGestures.ts';
+import { useSentenceGestures } from '../../views/detail/useSentenceGestures.ts';
 
 const top: ScrollPosition = { scrollTop: 0, scrollHeight: 2000, clientHeight: 800 };
 const middle: ScrollPosition = { scrollTop: 600, scrollHeight: 2000, clientHeight: 800 };
@@ -65,9 +68,12 @@ test('in sentence review a long swipe changes sentences only at the matching end
   assert.equal(sentence(0, 121, middle, { onAnalysisPage: true }), null);
   assert.equal(sentence(0, -120, bottom), null, 'exactly 120 px is long but not past the threshold');
   assert.equal(sentence(0, 100, top), null, 'short swipes do nothing in sentence review');
-  // The sentence page has no measured scroller (detail-view-09), so it counts as at both ends.
-  assert.equal(sentence(0, -121, null), 'next');
-  assert.equal(sentence(0, 121, null), 'previous');
+  // The sentence page measures its own scroller too: a long sentence with a picture scrolls before it changes.
+  assert.equal(sentence(0, -121, middle), null);
+  assert.equal(sentence(0, -121, bottom), 'next');
+  assert.equal(sentence(0, -121, short), 'next', 'a sentence that fits the page');
+  assert.equal(sentence(0, 121, middle), null);
+  assert.equal(sentence(0, 121, top), 'previous');
 });
 
 const word = (dx: number, dy: number, scroller: ScrollPosition | null, options: Partial<Parameters<typeof wordTouchAction>[1]> = {}) =>
@@ -165,4 +171,50 @@ test('in sentence review a double tap on a control never remembers, while one on
   const imageNote = new FakeElement('div', { contenteditable: 'true' }, banner);
   for (const control of [copyIcon, reset, imageNote]) assert.equal(remembers(control, 'sentence'), false);
   assert.equal(remembers(banner, 'sentence'), true, 'blank space remembers');
+});
+
+/** Runs a hook once, in a server render, and hands back what it returned; refs and callbacks keep working after. */
+function capture<T>(useHook: () => T): T {
+  let result: T | undefined;
+  const Probe = () => { result = useHook(); return null; };
+  renderToStaticMarkup(createElement(Probe));
+  return result as T;
+}
+
+/**
+ * Sentence review's touch handlers, as the view wires them, on the sentence page of sentence 5 of a run. `hero` stands
+ * for the sentence page's scroller; the handlers record what they asked the view to do.
+ */
+function sentencePage(hero: ScrollPosition) {
+  const asked: string[] = [];
+  const scroller = { ...hero };
+  const handlers = capture(() => useSentenceGestures({
+    rootRef: { current: null }, heroScrollRef: { current: scroller as unknown as HTMLElement }, isMobile: true,
+    sentencePage: 'sentence', setSentencePage: page => { asked.push(`page ${String(page)}`); },
+    isSentenceAutoPlayingRef: { current: false }, setShowSentenceAutoPlayPanel: () => {}, onClose: () => { asked.push('close'); },
+    currentGroupIndexRef: { current: 5 }, goToSentence: index => { asked.push(`sentence ${index}`); },
+    handleRemember: () => {}, toggleSentencePlayback: () => {}, playFromWordOffset: async () => {},
+  }));
+  /** A one-finger drag of `dy` px, the scroller standing at `during` once the finger has moved, if given. */
+  const swipe = (dy: number, during?: ScrollPosition) => {
+    const globals = globalThis as Record<string, unknown>;
+    globals.window = { getSelection: () => null };
+    try {
+      handlers.onContentTouchStart({ touches: [{ clientX: 200, clientY: 400 }], timeStamp: 1_000 } as never);
+      if (during) Object.assign(scroller, during);
+      handlers.onContentTouchEnd({ changedTouches: [{ clientX: 200, clientY: 400 + dy }], target: null, timeStamp: 1_300 } as never);
+    } finally {
+      delete globals.window;
+    }
+    return asked.splice(0);
+  };
+  return { swipe };
+}
+
+test('on the sentence page a long swipe scrolls a long sentence to its end before it changes sentences', () => {
+  assert.deepEqual(sentencePage(middle).swipe(-150), [], 'mid-sentence: the drag only scrolls');
+  assert.deepEqual(sentencePage(bottom).swipe(-150), ['sentence 6']);
+  assert.deepEqual(sentencePage(short).swipe(-150), ['sentence 6'], 'a sentence that fits the page');
+  assert.deepEqual(sentencePage(middle).swipe(150), []);
+  assert.deepEqual(sentencePage(top).swipe(150), ['sentence 4']);
 });
