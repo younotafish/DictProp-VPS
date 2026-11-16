@@ -390,10 +390,11 @@ export function SentenceReviewView({
       className="fixed inset-0 z-50 bg-slate-50 flex flex-col shadow-2xl"
     >
       {/* The banner — the saved sentence's "card header": back, the sentence + natural-voice
-          speaker, position, and the complete memorization/statistics row. Sits above the scroll area. */}
+          speaker, position, and the complete memorization/statistics row. Sits above the scroll area. Its bottom
+          padding keeps the row's buttons out of a phone's home-indicator strip. */}
       {currentSentence && (
         <div
-          className={`bg-white border-b border-slate-200 px-3 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-2 shadow-sm flex-1 flex flex-col min-h-0`}
+          className={`bg-white border-b border-slate-200 px-3 pt-[calc(0.5rem+env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-sm flex-1 flex flex-col min-h-0`}
           style={{ touchAction: 'manipulation' }}
           onTouchStart={onContentTouchStart}
           onTouchEnd={onContentTouchEnd}
@@ -505,9 +506,8 @@ export function SentenceReviewView({
       {/* The Remembered! confirmation, shown only while the sentence it confirms is on screen */}
       {toast && toast.id === currentSentence?.data.id && <RememberToast intervalDays={toast.intervalDays} />}
 
-      {/* Attach-image FAB (sentence mode only). Sits above the global AI-search FAB in the right rail
-          (bottom-40 clears its bottom-24; z-[57] is above the search FAB's z-[55], below the autoplay
-          cluster's z-[60]). Hidden while its own paste panel is open. */}
+      {/* Attach-image FAB (sentence mode only), in the right rail 4rem above the search button (see SentenceImageFab).
+          Hidden while its own paste panel is open. */}
       {currentSentence && !isSentencePreview && !showImagePanel && (
         <SentenceImageFab hasImage={hasSentenceImage} onTap={handleImageFabTap} />
       )}

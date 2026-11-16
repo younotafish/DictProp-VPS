@@ -3,15 +3,16 @@ import { ClipboardPaste, Image as ImageIcon, ImagePlus, Loader2, X } from 'lucid
 import { extractImageFromTransfer } from './detailUtils';
 
 /**
- * Attach-image button (sentence review only). Sits above the global AI-search button in the right rail (bottom-40
- * clears its bottom-24; z-[57] is above the search button's z-[55], below the auto-play cluster's z-[60]). A tap
- * opens the panel; a double tap pastes straight from the clipboard.
+ * Attach-image button (sentence review only). Sits in the right rail 4rem above the card float line, where the search
+ * button sits (--card-float-bottom, src/index.css): 16 px above that button at any safe-area inset, and 8 px below the
+ * search error toast (test/client/card-float-geometry.test.ts). A tap opens the panel; a double tap pastes straight
+ * from the clipboard.
  */
 export function SentenceImageFab({ hasImage, onTap }: { hasImage: boolean; onTap: () => void }) {
   return (
     <button
       onClick={onTap}
-      className="fixed bottom-40 right-4 z-[57] w-12 h-12 touch-manipulation rounded-full flex items-center justify-center shadow-lg bg-white text-slate-500 border border-slate-200 hover:text-indigo-600 hover:bg-slate-50 transition-all"
+      className="fixed bottom-[calc(var(--card-float-bottom)+4rem)] right-4 z-[57] w-12 h-12 touch-manipulation rounded-full flex items-center justify-center shadow-lg bg-white text-slate-500 border border-slate-200 hover:text-indigo-600 hover:bg-slate-50 transition-all"
       aria-label={hasImage ? 'Replace image; double-tap to paste' : 'Attach image; double-tap to paste'}
       title={hasImage ? 'Replace image; double-tap to paste' : 'Attach image; double-tap to paste'}
     >

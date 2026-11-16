@@ -25,21 +25,23 @@ interface SentencePlaybackControlsProps {
 
 /**
  * Sentence review's floating playback cluster: the speech style on the primary surface, and the auto-play button,
- * whose panel holds only auto-play's own settings and its Stop.
+ * whose panel holds only auto-play's own settings and its Stop. The 44 px cluster sits 4 px above the lesson row's
+ * buttons and tops out 8 px below the notices and the search button, and the panel opens high enough that Stop
+ * auto-play clears the search button, at any safe-area inset (test/client/card-float-geometry.test.ts).
  */
 export function SentencePlaybackControls({
   onSpeechStyleChange, autoPlaying, onAutoPlayButton, showPanel, onClosePanel, countdownStartedAt, timerMinutes,
   onCycleTimer, repeats, onCycleRepeats, gap, onCycleGap, onStop,
 }: SentencePlaybackControlsProps) {
   return (
-    <div className="fixed bottom-[max(1.5rem,env(safe-area-inset-bottom))] right-4 z-[80] flex items-center gap-2">
+    <div className="fixed bottom-[max(2.75rem,calc(env(safe-area-inset-bottom)+2.25rem))] right-4 z-[80] flex items-center gap-2">
       <SpeechStyleToggle
         className="shrink-0 bg-white shadow-lg border border-slate-200"
         onChange={onSpeechStyleChange}
       />
       <div className="relative shrink-0">
         {showPanel && (
-          <div role="dialog" aria-label="Sentence auto-play settings" className="absolute bottom-14 right-0 w-64 rounded-lg border border-slate-200 bg-white p-3 shadow-xl">
+          <div role="dialog" aria-label="Sentence auto-play settings" className="absolute bottom-[6.75rem] right-0 w-64 rounded-lg border border-slate-200 bg-white p-3 shadow-xl">
             <div className="mb-3 flex items-center justify-between">
               <span className="text-sm font-semibold text-slate-700">Auto-play</span>
               <button type="button" onClick={onClosePanel} className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-slate-600" title="Close settings">
@@ -74,7 +76,7 @@ export function SentencePlaybackControls({
         )}
         <button
           onClick={onAutoPlayButton}
-          className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all ${
+          className={`w-11 h-11 rounded-full shadow-lg flex items-center justify-center transition-all ${
             autoPlaying
               ? 'bg-emerald-500 text-white hover:bg-emerald-600'
               : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
