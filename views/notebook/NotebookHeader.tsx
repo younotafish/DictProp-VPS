@@ -1,12 +1,13 @@
 import React from 'react';
 import { ArrowDownAZ, Filter, Layers, Scale, Sparkles, Type, WifiOff } from 'lucide-react';
 import type { AppUser } from '../../types';
-import type { NotebookFilter, NotebookSort } from '../../services/notebookList';
+import { filterNoun, type NotebookFilter, type NotebookSort } from '../../services/notebookList';
 import { UserMenu } from '../../components/UserMenu';
 
 interface NotebookHeaderProps {
   /** Hidden and shown by class as the list scrolls, so scrolling never re-renders the notebook. */
   headerRef: React.Ref<HTMLDivElement>;
+  /** Spellings under the filter, named for what it lists (words, phrases or items), so a kept filter shows. */
   savedCount: number;
   reviewedToday: number;
   /** Spellings due by the notebook's rule, never-reviewed ones included: what the list marks Due. */
@@ -38,7 +39,7 @@ export const NotebookHeader: React.FC<NotebookHeaderProps> = ({
     <div className="px-4 sm:px-6 py-4 flex justify-between items-center gap-3">
       <div className="min-w-0">
         <h2 className="text-2xl font-bold text-slate-900">Notebook</h2>
-        <p className="text-xs text-slate-500 font-medium truncate">{savedCount} saved · {reviewedToday} reviewed today · {toReviewCount} to review</p>
+        <p className="text-xs text-slate-500 font-medium truncate">{savedCount} {filterNoun(filterMode, savedCount)} · {reviewedToday} reviewed today · {toReviewCount} to review</p>
       </div>
       <div className="flex flex-wrap md:flex-nowrap items-center justify-end gap-1 min-w-0">
         {toolsMenu}

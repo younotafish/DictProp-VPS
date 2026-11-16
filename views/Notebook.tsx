@@ -11,6 +11,7 @@ import {
   buildNotebookRows, listNoteFor, nextNotebookFilter, nextNotebookSort, notebookStats,
   type NotebookFilter, type NotebookRow, type NotebookSection, type NotebookSort,
 } from '../services/notebookList';
+import { readNotebookListView, writeNotebookListView } from '../services/notebook/listView';
 import { isImeKey, isTypingTarget } from '../components/keyboardTarget';
 import { NotebookGroup } from './notebook/NotebookGroup';
 import { SearchResultsCarousel } from './notebook/SearchResultsCarousel';
@@ -73,8 +74,11 @@ export const NotebookView: React.FC<NotebookProps> = React.memo(({
     onGenerateAllSpeech, ttsGenProgress,
     onRestoreImagesToServer, imageRestoreRunning, onDownloadOfflineImages
 }) => {
-  const [sortMode, setSortMode] = useState<NotebookSort>('familiarity');
-  const [filterMode, setFilterMode] = useState<NotebookFilter>('vocab'); // Default to vocab only
+  // The sort and filter last chosen on this device (review priority and words only at first), kept across relaunches.
+  const [initialView] = useState(readNotebookListView);
+  const [sortMode, setSortMode] = useState<NotebookSort>(initialView.sort);
+  const [filterMode, setFilterMode] = useState<NotebookFilter>(initialView.filter);
+  useEffect(() => { writeNotebookListView({ sort: sortMode, filter: filterMode }); }, [sortMode, filterMode]);
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   // Moves the list's clock on (see useNotebookSearch) when a card opens over the list.

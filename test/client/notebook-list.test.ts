@@ -392,14 +392,18 @@ test('a card saved or reset after the list’s clock lists with the due cards at
   assert.deepEqual(titles(searching.dueGroups), ['just saved', 'overdue']);
 });
 
-test('the header line reads saved, reviewed today and to review, and the due block names what the filter lists', () => {
+test('the header line names what the filter lists, then reviewed today and to review; the due block names it too', () => {
   const noop = () => {};
-  const header = renderToStaticMarkup(createElement(NotebookHeader, {
-    headerRef: null, savedCount: 1532, reviewedToday: 12, toReviewCount: 340, isOnline: true, toolsMenu: null, empty: false,
-    compareMode: false, onToggleCompare: noop, filterMode: 'vocab', onCycleFilter: noop, sortMode: 'familiarity',
+  const header = (savedCount: number, filterMode: NotebookFilter) => renderToStaticMarkup(createElement(NotebookHeader, {
+    headerRef: null, savedCount, reviewedToday: 12, toReviewCount: 340, isOnline: true, toolsMenu: null, empty: false,
+    compareMode: false, onToggleCompare: noop, filterMode, onCycleFilter: noop, sortMode: 'familiarity',
     onCycleSort: noop, user: null, onSignIn: noop, onSignOut: noop, children: null,
   }));
-  assert.match(header, /<p class="text-xs text-slate-500 font-medium truncate">1532 saved · 12 reviewed today · 340 to review<\/p>/);
+  const line = (text: string) => `<p class="text-xs text-slate-500 font-medium truncate">${text}</p>`;
+  assert.ok(header(1532, 'vocab').includes(line('1532 words · 12 reviewed today · 340 to review')));
+  assert.ok(header(1, 'vocab').includes(line('1 word · 12 reviewed today · 340 to review')));
+  assert.ok(header(87, 'phrase').includes(line('87 phrases · 12 reviewed today · 340 to review')));
+  assert.ok(header(1619, 'all').includes(line('1619 items · 12 reviewed today · 340 to review')));
   const due = (count: number, filter: NotebookFilter) => renderToStaticMarkup(createElement(DueHeader, { count, filter }));
   assert.match(due(1, 'vocab'), />1 word to revisit</);
   assert.match(due(3, 'phrase'), />3 phrases to revisit</);
