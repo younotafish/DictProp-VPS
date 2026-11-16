@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { X, RotateCcw, Trash2, CheckCircle2, ChevronLeft, ChevronRight, Sparkles, Loader2 } from 'lucide-react';
-import { StoredItem, VocabCard } from '../types';
+import { StoredItem, VocabCard, type SRSData } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
+import { shouldReset } from '../services/undoRules';
 import { updateAfterRating } from '../services/fsrsScheduler';
 import { VocabCardDisplay } from './VocabCard';
 import { SpeechStyleToggle } from './SpeechStyleToggle';
@@ -64,6 +65,9 @@ const EMPTY_VOCAB = {} as VocabCard;
 /** How long a confirmation ('Next review in 3d') shows, and how long an armed delete waits for its confirming press. */
 const FLASH_MS = 1_600;
 const DELETE_CONFIRM_MS = 2_500;
+
+/** What Reset flashes: a meaning never reviewed has no progress to lose, so Reset leaves it as it is (planReset). */
+export const resetFlash = (srs: SRSData | undefined): string => (shouldReset(srs) ? 'Memory reset' : 'Nothing to reset yet');
 
 /**
  * The full review card for a saved word, shown in an overlay — opened by tapping a saved word in a
@@ -196,7 +200,7 @@ export const CardReviewPopup: React.FC<CardReviewPopupProps> = ({
   const handleReset = useCallback(() => {
     if (!currentSaved) return;
     onResetSRS(currentSaved.data.id);
-    showFlash('Memory reset');
+    showFlash(resetFlash(currentSaved.srs));
   }, [currentSaved, onResetSRS, showFlash]);
 
   const handleDelete = useCallback(() => {
