@@ -20,9 +20,9 @@ export function useWordShortcuts({ enabled, rootRef, ...handlers }: WordShortcut
     if (!enabled) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Typing or composing text isn't a shortcut, a dialog over the view (a confirm, the shortcut list, a
-      // search result) has the keys to itself, and a held key acts once rather than deleting card after card.
-      if (isTypingTarget(e.target) || isImeKey(e) || e.repeat || isDialogOpenOutside(rootRef.current)) return;
+      // Typing or composing text isn't a shortcut, and a dialog over the view (a confirm, the shortcut list, a
+      // search result) has the keys to itself. The key table ignores held keys.
+      if (isTypingTarget(e.target) || isImeKey(e) || isDialogOpenOutside(rootRef.current)) return;
       handleWordKey(e, handlersRef.current);
     };
 

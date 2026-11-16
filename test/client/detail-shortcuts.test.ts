@@ -3,16 +3,17 @@ import test from 'node:test';
 import {
   handleSentenceKey, handleWordKey, type CardKeyEvent, type SentenceKeyHandlers, type WordKeyHandlers,
 } from '../../views/detail/cardKeys.ts';
+import { handleNavKey, type NavKeyEvent } from '../../hooks/useKeyboardNavigation.ts';
 import type { StoredItem } from '../../types.ts';
 
-// views/detail/cardKeys.ts, the card view's letter shortcuts.
+// The card view's keys: views/detail/cardKeys.ts, its letter shortcuts, and useKeyboardNavigation's arrows and Enter.
 
-type Modifiers = Partial<Pick<CardKeyEvent, 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey'>>;
+type Modifiers = Partial<Pick<CardKeyEvent, 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey' | 'repeat'>>;
 
 /** A key press that records whether a shortcut kept it from the browser. */
 const press = (key: string, modifiers: Modifiers = {}) => {
   const event = {
-    key, shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, ...modifiers,
+    key, repeat: false, shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, ...modifiers,
     prevented: false,
     preventDefault() { event.prevented = true; },
   };
@@ -173,4 +174,32 @@ test('S saves the card as Cmd/Ctrl+S does, on a saved card too, where saving doe
     assert.equal(key.prevented, true);
   }
   assert.deepEqual(done, ['save apple', 'save apple']);
+});
+
+test('a held key acts once: letters and Enter do nothing more while held, and a held arrow keeps stepping', () => {
+  const done: string[] = [];
+  const held = (key: string, modifiers: Modifiers = {}) => press(key, { ...modifiers, repeat: true });
+  for (const key of ['d', 'e', 'r', ' ']) handleSentenceKey(held(key), sentenceOnScreen('A', done));
+  handleSentenceKey(held('R', { shiftKey: true }), sentenceOnScreen('A', done));
+  handleSentenceKey(held('2', { metaKey: true }), sentenceOnScreen('A', done));
+  for (const key of ['h', 'e', 'r', 's', 'd', 'a', ' ', '+']) handleWordKey(held(key), wordOnScreen('apple', done, { isSaved: true }));
+  assert.deepEqual(done, [], 'holding D deletes one card, when it is pressed, not card after card');
+
+  // The arrows and Enter (useKeyboardNavigation) follow the same rule.
+  const steps: string[] = [];
+  const handlers = { onArrowDown: () => steps.push('down'), onArrowLeft: () => steps.push('left'), onEnter: () => steps.push('enter') };
+  const nav = (key: string, repeat: boolean): NavKeyEvent & { prevented: boolean } => {
+    const event = {
+      key, repeat, metaKey: false, ctrlKey: false, prevented: false,
+      preventDefault() { event.prevented = true; }, stopImmediatePropagation() {},
+    };
+    return event;
+  };
+  const free = { typing: false, ime: false, guard: false };
+  const heldEnter = nav('Enter', true);
+  for (const event of [nav('Enter', false), heldEnter, heldEnter, nav('ArrowDown', false), nav('ArrowDown', true), nav('ArrowLeft', true)]) {
+    handleNavKey(event, free, handlers);
+  }
+  assert.deepEqual(steps, ['enter', 'down', 'down', 'left']);
+  assert.equal(heldEnter.prevented, true, 'a held Enter still keeps the browser\'s default off');
 });

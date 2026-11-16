@@ -1,16 +1,17 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type { StoredItem } from '../../types';
 import { getPlaybackState, pauseCurrent, resumeCurrent, speakWord } from '../../services/neuralTts';
+import { acceptKeyRepeat } from '../../components/keyboardTarget';
 
 /**
  * The card view's letter shortcuts, apart from React and the DOM so node tests can pin them. Each view's listener
- * (useSentenceShortcuts, useWordShortcuts) leaves alone keys being typed or composed, held keys and keys a dialog
- * over the view has, and hands every other key here with the handlers of the card on screen, read as the key is
- * pressed.
+ * (useSentenceShortcuts, useWordShortcuts) leaves alone keys being typed or composed and keys a dialog over the view
+ * has, and hands every other key here with the handlers of the card on screen, read as the key is pressed. A held
+ * key acts once, when pressed (acceptKeyRepeat), so holding D can't delete card after card.
  */
 
 /** What the shortcuts read from a key press. */
-export type CardKeyEvent = Pick<KeyboardEvent, 'key' | 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey' | 'preventDefault'>;
+export type CardKeyEvent = Pick<KeyboardEvent, 'key' | 'repeat' | 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey' | 'preventDefault'>;
 
 /** What sentence review's keys act with: the handlers of the sentence on screen and the flags that gate them. */
 export interface SentenceKeyHandlers {
@@ -34,6 +35,7 @@ export function handleSentenceKey(e: CardKeyEvent, handlers: SentenceKeyHandlers
     title, speakSentenceAt, readCurrentSentence, isSentencePreview, catalogSentencePreview, handleRemember,
     handleResetSRS, handleDeleteItem, isSentenceAutoPlaying, toggleSentenceAutoPlay,
   } = handlers;
+  if (!acceptKeyRepeat(e)) return;
 
   // Cmd/Ctrl+1–4: Read the corresponding example sentence aloud (neural voice)
   if ((e.metaKey || e.ctrlKey) && /^[1-4]$/.test(e.key)) {
@@ -114,6 +116,7 @@ export function handleWordKey(e: CardKeyEvent, handlers: WordKeyHandlers): void 
     handleDeleteItem, handleArchiveItem, isSaved, savedItemMatch, onUnarchive, isSentenceAutoPlaying,
     toggleSentenceAutoPlay, toggleAutoPlay, cycleSpeed,
   } = handlers;
+  if (!acceptKeyRepeat(e)) return;
 
   // Cmd/Ctrl+1–4: Read the corresponding example sentence aloud (neural voice)
   if ((e.metaKey || e.ctrlKey) && /^[1-4]$/.test(e.key)) {

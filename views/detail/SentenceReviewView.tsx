@@ -5,6 +5,7 @@ import { SentenceAnalysisView } from '../../components/SentenceAnalysisView';
 import { SessionPreload, type PreloadSession } from '../../components/SessionPreload';
 import { getMasteryColors } from '../../components/mastery';
 import { useEscapeLayer } from '../../components/escapeStack';
+import { isDialogOpenOutside } from '../../components/keyboardTarget';
 import { useOverlay } from '../../components/overlayStack';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { useKeyboardNavigation } from '../../hooks/useKeyboardNavigation';
@@ -303,13 +304,14 @@ export function SentenceReviewView({
   }, 50, !interactionLocked);
 
   // Keyboard navigation. Cmd+S saves nothing here (the card behind the sentence is its source word), but the
-  // hook still keeps it from opening the browser's Save dialog.
+  // hook still keeps it from opening the browser's Save dialog. A sheet or dialog above the view has the keys.
   useKeyboardNavigation({
     onArrowLeft: navLeft,
     onArrowRight: navRight,
     onArrowUp: navUp,
     onArrowDown: navDown,
     onEnter: handleEnterFromSelection,
+    guard: () => isDialogOpenOutside(rootRef.current),
     enabled: !interactionLocked,
   });
 

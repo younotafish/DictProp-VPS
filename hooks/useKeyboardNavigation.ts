@@ -6,16 +6,117 @@
 
 import { useEffect, RefObject } from 'react';
 import { useLatest } from './useStableValue';
-import { isTypingTarget } from '../components/keyboardTarget';
+import { acceptKeyRepeat, isImeKey, isTypingTarget } from '../components/keyboardTarget';
 
-interface KeyboardNavigationOptions {
+interface NavKeyHandlers {
   onArrowLeft?: () => void;
   onArrowRight?: () => void;
   onArrowUp?: () => void;
   onArrowDown?: () => void;
   onEnter?: () => void;
   onSave?: () => void; // Cmd+S
+}
+
+interface KeyboardNavigationOptions extends NavKeyHandlers {
+  /** True while a layer above the view (a sheet or a dialog) has the keys, so the view leaves them alone. */
+  guard?: () => boolean;
   enabled?: boolean;
+}
+
+/** What decides whether the view takes a key press. */
+export interface NavKeyContext {
+  /** The key goes into a text field, select or editable region. */
+  typing: boolean;
+  /** The input method is composing with it, like the Enter that picks a candidate. */
+  ime: boolean;
+  /** The view's guard said a layer above the view has the keys. */
+  guard: boolean;
+}
+
+/**
+ * Whether the view acts on a press of one of its keys: never while the key goes into text or an input method or a
+ * layer above the view has the keys, and for a held key only an arrow's repeats (acceptKeyRepeat), so holding Enter
+ * reads from the word once while holding ↓ keeps stepping.
+ */
+export function shouldHandleNavKey(event: Pick<KeyboardEvent, 'key' | 'repeat'>, { typing, ime, guard }: NavKeyContext): boolean {
+  return !typing && !ime && !guard && acceptKeyRepeat(event);
+}
+
+/** What the view's keys read from a key press. */
+export type NavKeyEvent = Pick<KeyboardEvent, 'key' | 'repeat' | 'metaKey' | 'ctrlKey' | 'preventDefault' | 'stopImmediatePropagation'>;
+
+/** One key press on the view, with the handlers of the card on screen. */
+export function handleNavKey(e: NavKeyEvent, context: NavKeyContext, handlers: NavKeyHandlers): void {
+  const { onArrowLeft, onArrowRight, onArrowUp, onArrowDown, onEnter, onSave } = handlers;
+  const act = shouldHandleNavKey(e, context);
+
+  // Cmd+S - Save; never the browser's Save Page dialog, even when the view leaves the key alone
+  if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+    e.preventDefault();
+    if (act) onSave?.();
+    return;
+  }
+
+  // Cmd+F is the app's search (GlobalSearch takes it), never the browser's Find
+  if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+    e.preventDefault();
+    return;
+  }
+
+  // The view's escape layer does the closing; this only keeps the browser's default action off.
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    return;
+  }
+
+  // A text field, the input method or a layer above the view (the search sheet, a confirm, the shortcut list) keeps
+  // the other keys, browser defaults and all: with the sheet open, ↑/↓ scroll its card, not the sentences behind it.
+  if (context.typing || context.ime || context.guard) return;
+
+  switch (e.key) {
+    case 'ArrowLeft':
+      if (onArrowLeft) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onArrowLeft();
+      }
+      break;
+
+    case 'ArrowRight':
+      if (onArrowRight) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onArrowRight();
+      }
+      break;
+
+    case 'ArrowUp':
+      if (onArrowUp) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onArrowUp();
+      }
+      break;
+
+    case 'ArrowDown':
+      if (onArrowDown) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onArrowDown();
+      }
+      break;
+
+    case 'Enter':
+      // Held, Enter reads from the word once: its repeats only keep the browser's default off.
+      e.preventDefault();
+      if (act) onEnter?.();
+      break;
+
+    case ' ':
+      // Space never scrolls the card, including the held repeats the letter shortcuts ignore.
+      e.preventDefault();
+      break;
+  }
 }
 
 export const useKeyboardNavigation = (options: KeyboardNavigationOptions) => {
@@ -27,77 +128,8 @@ export const useKeyboardNavigation = (options: KeyboardNavigationOptions) => {
     if (!enabled) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      const { onArrowLeft, onArrowRight, onArrowUp, onArrowDown, onEnter, onSave } = optionsRef.current;
-
-      // Don't intercept if user is typing in an input/textarea, or picking in a select
-      const isInputElement = isTypingTarget(e.target);
-
-      // Cmd+S - Save; never the browser's Save Page dialog, and not while typing
-      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-        e.preventDefault();
-        if (!isInputElement) onSave?.();
-        return;
-      }
-
-      // Cmd+F is the app's search (GlobalSearch takes it), never the browser's Find
-      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
-        e.preventDefault();
-        return;
-      }
-
-      // Skip the rest when in input fields (except Escape)
-      if (isInputElement && e.key !== 'Escape') {
-        return;
-      }
-
-      switch (e.key) {
-        case 'Escape':
-          // The view's escape layer does the closing; this only keeps the browser's default action off.
-          e.preventDefault();
-          break;
-
-        case 'ArrowLeft':
-          if (onArrowLeft) {
-            e.preventDefault();
-            e.stopImmediatePropagation();
-            onArrowLeft();
-          }
-          break;
-
-        case 'ArrowRight':
-          if (onArrowRight) {
-            e.preventDefault();
-            e.stopImmediatePropagation();
-            onArrowRight();
-          }
-          break;
-
-        case 'ArrowUp':
-          if (onArrowUp) {
-            e.preventDefault();
-            e.stopImmediatePropagation();
-            onArrowUp();
-          }
-          break;
-
-        case 'ArrowDown':
-          if (onArrowDown) {
-            e.preventDefault();
-            e.stopImmediatePropagation();
-            onArrowDown();
-          }
-          break;
-
-        case 'Enter':
-          e.preventDefault();
-          onEnter?.();
-          break;
-
-        case ' ':
-          // Space never scrolls the card, including the held repeats the letter shortcuts ignore.
-          e.preventDefault();
-          break;
-      }
+      const current = optionsRef.current;
+      handleNavKey(e, { typing: isTypingTarget(e.target), ime: isImeKey(e), guard: current.guard?.() ?? false }, current);
     };
 
     window.addEventListener('keydown', handleKeyDown);

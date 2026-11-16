@@ -7,6 +7,7 @@ import { EyesFreeZones } from '../../components/EyesFreeZones';
 import { SessionPreload, type PreloadSession } from '../../components/SessionPreload';
 import { getMasteryColors } from '../../components/mastery';
 import { useEscapeLayer } from '../../components/escapeStack';
+import { isDialogOpenOutside } from '../../components/keyboardTarget';
 import { useOverlay } from '../../components/overlayStack';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { useKeyboardNavigation, useWheelNavigation } from '../../hooks/useKeyboardNavigation';
@@ -256,13 +257,14 @@ export function WordDetailView(props: DetailViewBodyProps) {
     }
   }, 50, !detailInteractionLocked);
 
-  // Keyboard navigation
+  // Keyboard navigation; a sheet or dialog above the view has the keys.
   useKeyboardNavigation({
     onArrowLeft: handlePrevItem,
     onArrowRight: handleNextItem,
     onArrowUp: handlePrevGroup,
     onArrowDown: handleNextGroup,
     onSave: handleSaveShortcut,
+    guard: () => isDialogOpenOutside(rootRef.current),
     enabled: !showActionMenu && !detailInteractionLocked,
   });
 
