@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createElement, isValidElement, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { NotebookToolsPanel } from '../../views/notebook/NotebookToolsMenu.tsx';
+import ts from 'typescript';
+import { closeMenuForTool, NotebookToolsPanel } from '../../views/notebook/NotebookToolsMenu.tsx';
+import { readRepoFile } from '../support/paths.ts';
 
 // views/notebook/NotebookToolsMenu.tsx's panel, the rows the Notebook's ⋯ menu lists, rendered on the server.
 
@@ -64,17 +66,18 @@ test('while a batch import runs, its row is busy and disabled, so a second impor
   assert.match(renderPanel(), /lucide-list-plus/, 'the row\'s own icon, while no import runs');
 });
 
-test('a chosen tool runs after the menu closes with focus back on ⋯, so the sheet it opens gives focus back there', () => {
+test('a chosen tool runs after focus goes back to ⋯ and the menu closes, so the sheet it opens gives focus back there', () => {
   // The panel uses no hooks, so calling it returns its elements: each row's onSelect is the choice a click makes.
   const calls: string[] = [];
   const tool = (name: string) => () => { calls.push(name); };
+  const trigger = { focus: () => { calls.push('focus on ⋯'); } };
   const panel = NotebookToolsPanel({
     offline: false, onAnalyzeText: tool('Analyze text'), onBatchImport: tool('Batch import'), batchImportRunning: false,
     onImportJSON: tool('Import JSON'), onDownloadOfflineImages: tool('Download image pack'), onForceSync: tool('Sync now'),
     forceSyncRunning: false, onGenerateAllSpeech: tool('Generate speech cache'), speechGenerationRunning: false,
     onRestoreImagesToServer: tool('Restore server images'), imageRestoreRunning: false,
     onFindDuplicates: tool('Merge duplicates'), onShowShortcuts: tool('Gestures & shortcuts'),
-    onChosen: () => { calls.push('menu closed, focus on ⋯'); },
+    onChosen: () => closeMenuForTool(trigger, () => { calls.push('menu closed'); }),
   }) as ReactNode;
   const rows: ReactElement<{ label: string; onSelect: () => void }>[] = [];
   const walk = (node: unknown): void => {
@@ -86,5 +89,32 @@ test('a chosen tool runs after the menu closes with focus back on ⋯, so the sh
   walk(panel);
   assert.equal(rows.length, 9);
   for (const row of rows) row.props.onSelect();
-  assert.deepEqual(calls, rows.flatMap(row => ['menu closed, focus on ⋯', row.props.label]));
+  assert.deepEqual(calls, rows.flatMap(row => ['focus on ⋯', 'menu closed', row.props.label]));
+});
+
+test('the menu closes for a tool through closeMenuForTool, with its ⋯ button as the trigger', () => {
+  // The repo has no DOM to click the menu in, so its source shows what it passes: the JSX elements' attributes as written.
+  const file = 'views/notebook/NotebookToolsMenu.tsx';
+  const source = ts.createSourceFile(file, readRepoFile(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const elements: Array<{ tag: string; attributes: Map<string, string> }> = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      elements.push({
+        tag: node.tagName.getText(),
+        attributes: new Map(node.attributes.properties.filter(ts.isJsxAttribute).map(attribute => [
+          attribute.name.getText(),
+          attribute.initializer && ts.isStringLiteral(attribute.initializer) ? attribute.initializer.text : attribute.initializer?.getText() ?? 'true',
+        ])),
+      });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  const trigger = elements.find(element => element.attributes.get('aria-label') === 'Notebook tools');
+  assert.ok(trigger, 'the ⋯ button');
+  assert.equal(trigger.tag, 'button');
+  assert.equal(trigger.attributes.get('ref'), '{triggerRef}');
+  const panels = elements.filter(element => element.tag === 'NotebookToolsPanel');
+  assert.equal(panels.length, 1);
+  assert.match(panels[0].attributes.get('onChosen') ?? '', /^\{\(\) => closeMenuForTool\(triggerRef\.current, /);
 });

@@ -52,9 +52,18 @@ const MenuItem: React.FC<MenuItemProps> = ({ icon, label, onSelect, busy, disabl
 );
 
 type NotebookToolsPanelProps = NotebookToolsMenuProps & {
-  /** Runs before the chosen tool, to close the menu with focus back on ⋯. */
+  /** Runs before the chosen tool, to close the menu with focus back on ⋯ (closeMenuForTool). */
   onChosen: () => void;
 };
+
+/**
+ * Closes the menu for a chosen tool, focusing ⋯ (`trigger`) first: the row that had focus leaves with the menu, and a
+ * sheet the tool opens then takes ⋯ as its opener, so closing the sheet focuses ⋯ rather than the page.
+ */
+export function closeMenuForTool(trigger: { focus(): void } | null, close: () => void): void {
+  trigger?.focus();
+  close();
+}
 
 /**
  * What the open menu lists: the speech settings, then the tools as plain buttons in tab order, then the shortcut sheet.
@@ -127,13 +136,6 @@ export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = props => {
     };
   }, [showMaintenanceMenu]);
 
-  // Focus goes back to ⋯ before the chosen tool runs: the row that had it leaves with the menu, and a sheet the tool
-  // opens then takes ⋯ as its opener, so closing the sheet focuses ⋯ rather than the page.
-  const closeForTool = () => {
-    triggerRef.current?.focus();
-    setShowMaintenanceMenu(false);
-  };
-
   return (
     <div className="relative shrink-0" ref={maintenanceMenuRef}>
       <button
@@ -149,7 +151,7 @@ export const NotebookToolsMenu: React.FC<NotebookToolsMenuProps> = props => {
       </button>
       {showMaintenanceMenu && (
         <div id={panelId} className="absolute right-0 top-full mt-1 w-64 max-h-[70vh] overflow-y-auto bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
-          <NotebookToolsPanel {...props} onChosen={closeForTool} />
+          <NotebookToolsPanel {...props} onChosen={() => closeMenuForTool(triggerRef.current, () => setShowMaintenanceMenu(false))} />
         </div>
       )}
     </div>
