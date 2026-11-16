@@ -15,9 +15,13 @@ const NOW = 2_000_000;
 
 test('Real Life progress ids are stable and include the collection boundary', () => {
   const career = REAL_LIFE_COLLECTIONS[0].sentences[0];
+  // The line's catalog id, under which every user's synced progress on it is kept.
+  assert.equal(career.id, 'career-conversations:rapport-and-small-talk:01');
+  assert.equal(career.text, 'How was your weekend? Did you get a chance to unplug?');
   const item = createRealLifeProgressItem(career, 100);
   const data = item.data as SentenceData;
 
+  assert.equal(item.data.id, 'real-life-sentence:career-conversations:rapport-and-small-talk:01');
   assert.equal(item.data.id, realLifeProgressItemId(career.id));
   assert.equal(data.catalogKind, 'real-life');
   assert.equal(data.catalogCollectionId, 'career-conversations');

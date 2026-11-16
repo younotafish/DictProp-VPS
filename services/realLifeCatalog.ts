@@ -8,6 +8,8 @@ interface RealLifeSourceLink {
 }
 
 interface RawSentence {
+  /** The line's own number in its section ('07'); see buildCatalog. */
+  id: string;
   text: string;
   focus: string;
 }
@@ -63,6 +65,12 @@ function markFocus(text: string, focus: string): string {
   return `${text.slice(0, index)}{{${text.slice(index, index + focus.length)}}}${text.slice(index + focus.length)}`;
 }
 
+/**
+ * A line's id is `${collection.id}:${section.id}:${sentence.id}`, and every user's synced progress on the line is kept
+ * under it (real-life-sentence:<id>). So an id stays with its line and never passes to another: lines may be
+ * reordered, a new line takes the next number its section hasn't used, and a removed line's number is never reused.
+ * The server checks that every line has an id and that none repeats in its section.
+ */
 function buildCatalog(source: RawCatalog): RealLifeCollection[] {
   if (source.version !== 1 || !Array.isArray(source.collections)) {
     throw new Error('Real Life catalog is invalid');
@@ -72,10 +80,10 @@ function buildCatalog(source: RawCatalog): RealLifeCollection[] {
     let position = 0;
     const sections = collection.sections.map(section => ({
       ...section,
-      sentences: section.sentences.map((sentence, index) => {
+      sentences: section.sentences.map(sentence => {
         position += 1;
         return {
-          id: `${collection.id}:${section.id}:${String(index + 1).padStart(2, '0')}`,
+          id: `${collection.id}:${section.id}:${sentence.id}`,
           collectionId: collection.id,
           collectionTitle: collection.title,
           sectionId: section.id,

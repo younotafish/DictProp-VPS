@@ -38,12 +38,16 @@ for (const collection of catalog.collections) {
       if (!text || !focus || !text.toLocaleLowerCase('en-US').includes(focus.toLocaleLowerCase('en-US'))) {
         throw new Error(`${collection.id}/${section.id} sentence ${index + 1} is invalid`);
       }
+      // The line's own id, as the app and the server read it (services/realLifeCatalog.ts), never its position.
+      if (typeof entry.id !== 'string' || !entry.id.trim()) {
+        throw new Error(`${collection.id}/${section.id} sentence ${index + 1} has no id`);
+      }
       const lookupHash = sentenceLookupHash(text);
       if (seenLookupHashes.has(lookupHash)) {
         throw new Error(`${collection.id}/${section.id} duplicates a normalized sentence`);
       }
       seenLookupHashes.add(lookupHash);
-      const catalogSentenceId = `${collection.id}:${section.id}:${String(index + 1).padStart(2, '0')}`;
+      const catalogSentenceId = `${collection.id}:${section.id}:${entry.id}`;
       sentences.push(poolSentence({
         text,
         lookupHash,

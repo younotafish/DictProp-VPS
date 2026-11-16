@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 interface RawSentence {
+  /** The line's own number in its section; services/realLifeCatalog.ts says how ids are kept stable. */
+  id: string;
   text: string;
   focus: string;
 }
@@ -57,13 +59,17 @@ function buildCatalog(source: RawCatalog): Map<string, string> {
         throw new Error(`Real Life catalog contains an invalid section: ${section?.id || 'unknown'}`);
       }
       sectionIds.add(section.id);
+      const lineIds = new Set<string>();
       section.sentences.forEach((sentence, index) => {
-        if (typeof sentence?.text !== 'string' || !sentence.text.trim() || sentence.text.length > 2_000 ||
+        if (typeof sentence?.id !== 'string' || !sentence.id.trim() ||
+            typeof sentence.text !== 'string' || !sentence.text.trim() || sentence.text.length > 2_000 ||
             typeof sentence.focus !== 'string' || !sentence.focus.trim() ||
             !sentence.text.toLocaleLowerCase('en-US').includes(sentence.focus.toLocaleLowerCase('en-US'))) {
           throw new Error(`${collection.id}/${section.id} contains an invalid sentence at index ${index}`);
         }
-        const id = `${collection.id}:${section.id}:${String(index + 1).padStart(2, '0')}`;
+        if (lineIds.has(sentence.id)) throw new Error(`${collection.id}/${section.id} repeats sentence id ${sentence.id}`);
+        lineIds.add(sentence.id);
+        const id = `${collection.id}:${section.id}:${sentence.id}`;
         if (sentenceTexts.has(id)) throw new Error(`Real Life catalog duplicates sentence id ${id}`);
         sentenceTexts.set(id, sentence.text);
         sentenceCount += 1;
