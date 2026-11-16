@@ -234,6 +234,7 @@ export function repairIpa(value: string, word: string): string {
 }
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// eslint-disable-next-line no-control-regex -- NUL brackets the slots repairGeneratedExample puts in place of the markers it sets aside, as example text doesn't use it
 const MARKER_SLOT = /\u0000(\d+)\u0000/g;
 
 const wordsOf = (text: string): string[] => text.trim().toLowerCase().split(/\s+/).filter(Boolean);

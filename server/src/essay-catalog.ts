@@ -202,8 +202,8 @@ function loadPrivateCatalog(): typeof privateCache {
       throw new Error('Private essay catalog file is invalid');
     }
     signature = `${stat.mtimeMs}:${stat.size}`;
-  } catch (error: any) {
-    if (error?.code !== 'ENOENT') throw error;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
   }
   if (signature === privateCache.signature) return privateCache;
   if (signature === 'missing') {
