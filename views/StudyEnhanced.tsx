@@ -322,5 +322,13 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     );
   }
 
-  return <StudyDashboard items={items} reviewHistory={reviewHistory} onStart={startSession} onScroll={onScroll} />;
+  return (
+    <StudyDashboard
+      items={items}
+      reviewHistory={reviewHistory}
+      onStart={startSession}
+      interactionLocked={interactionLocked}
+      onScroll={onScroll}
+    />
+  );
 };

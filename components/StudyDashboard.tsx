@@ -1,10 +1,20 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, Clock, Flame, Target, TrendingUp, Trophy, Zap } from 'lucide-react';
 import { getItemTitle, type ReviewHistory, type StoredItem } from '../types';
 import { MASTERY_LEVELS, type MasteryKey } from '../services/srsAlgorithm';
 import { buildReviewQueue } from '../services/studySession';
-import { combineStudyStats, computeHistoryStats, computeItemStats, nextStudyClockChange } from '../services/studyStats';
+import { resolveDashboardKey } from '../services/studyKeys';
+import {
+  combineStudyStats,
+  computeHistoryStats,
+  computeItemStats,
+  nextStudyClockChange,
+  startCaption,
+  studyForecast,
+} from '../services/studyStats';
 import { useNow } from '../hooks/useNow';
+import { isDialogOpenOutside, isKeyboardFocusedControl, isTypingTarget } from './keyboardTarget';
+import { NextDueCaption } from './study/NextDueCaption';
 
 const SCROLL_KEY = 'study_dashboard_scroll';
 
@@ -22,6 +32,8 @@ interface StudyDashboardProps {
   items: StoredItem[];
   reviewHistory: ReviewHistory;
   onStart: (queue: StoredItem[]) => void;
+  /** Something covers the tab (the card view), which has the keys. */
+  interactionLocked?: boolean;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
 }
 
@@ -30,7 +42,7 @@ interface StudyDashboardProps {
  * runs, so grading a card never recomputes these numbers, and it returns to where it was scrolled. Its clock moves
  * on whenever the numbers would change with time, so what's due stays current while the tab is left open.
  */
-export const StudyDashboard = React.memo(function StudyDashboard({ items, reviewHistory, onStart, onScroll }: StudyDashboardProps) {
+export const StudyDashboard = React.memo(function StudyDashboard({ items, reviewHistory, onStart, interactionLocked = false, onScroll }: StudyDashboardProps) {
   const dashboardScrollRef = useRef<HTMLDivElement>(null);
   // The latest scroll position not yet saved, and the timer that saves it.
   const unsavedScrollRef = useRef<number | null>(null);
@@ -54,6 +66,29 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
   const today = new Date(now).setHours(0, 0, 0, 0);
   const historyStats = useMemo(() => computeHistoryStats(reviewHistory, today), [reviewHistory, today]);
   const stats = combineStudyStats(itemStats, historyStats);
+  // What 'All caught up' looks ahead to; while there is something to review it isn't shown.
+  const forecast = useMemo(() => (reviewQueue.length === 0 ? studyForecast(items, now) : null), [reviewQueue, items, now]);
+
+  // The session takes the cards due at the moment Start is pressed.
+  const canStart = reviewQueue.length > 0;
+  const start = useCallback(() => onStart(buildReviewQueue(items, Date.now())), [items, onStart]);
+  // On a laptop Enter presses Start, while nothing covers the tab.
+  useEffect(() => {
+    if (interactionLocked || !canStart) return;
+    const pressStart = (event: KeyboardEvent) => {
+      const action = resolveDashboardKey(event, {
+        canStart,
+        typing: isTypingTarget(event.target),
+        onControl: isKeyboardFocusedControl(event.target),
+        dialogOutside: isDialogOpenOutside(dashboardScrollRef.current),
+      });
+      if (!action) return;
+      event.preventDefault();
+      start();
+    };
+    window.addEventListener('keydown', pressStart);
+    return () => window.removeEventListener('keydown', pressStart);
+  }, [interactionLocked, canStart, start]);
 
   const saveScroll = () => {
     clearTimeout(scrollSaveTimerRef.current);
@@ -110,13 +145,19 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
             <div className="text-sm text-slate-500">Avg strength</div>
           </div>
         </div>
-        <button
-          onClick={() => onStart(reviewQueue)}
-          disabled={reviewQueue.length === 0}
-          className="h-12 px-5 rounded-lg bg-slate-900 text-white font-semibold hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed"
-        >
-          {reviewQueue.length > 0 ? 'Start review' : 'Nothing due'}
-        </button>
+        <div>
+          <button
+            onClick={start}
+            disabled={!canStart}
+            className="h-12 px-5 rounded-lg bg-slate-900 text-white font-semibold hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed"
+            aria-keyshortcuts={canStart ? 'Enter' : undefined}
+          >
+            {canStart ? `Review ${reviewQueue.length}` : 'All caught up'}
+          </button>
+          {canStart
+            ? <p className="mt-1 text-xs text-slate-500">{startCaption(reviewQueue, stats.due)}</p>
+            : <NextDueCaption forecast={forecast} />}
+        </div>
       </section>
 
       <section className="py-5 border-b border-slate-200 mb-2">

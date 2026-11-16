@@ -9,7 +9,10 @@ import {
   computeItemStats,
   computeStudyStats,
   countDueSpellings,
+  formatCountdown,
   nextStudyClockChange,
+  startCaption,
+  studyForecast,
 } from '../../services/studyStats.ts';
 import { LibraryCounts } from '../../views/detail/LibraryCounts.tsx';
 
@@ -258,4 +261,39 @@ test('the numbers next change with the clock when a reviewed card falls due, or 
   ];
   assert.equal(nextStudyClockChange(unchanged, NOW), tonight);
   assert.equal(nextStudyClockChange([{ ...vocab('bare', 'bare'), srs: undefined } as unknown as StoredItem], NOW), tonight);
+});
+
+test('with nothing to review, the forecast says when the next card falls due and how many will be due by tomorrow', () => {
+  const tonight = midnight(-1);
+  const items = [
+    vocab('a', 'run', { reviews: 2, due: NOW + 2 * HOUR + 10 * 60_000 }),
+    vocab('b', 'Run', { reviews: 1, due: NOW + 3 * HOUR }), // the same spelling counts once
+    vocab('c', 'walk', { reviews: 4, due: tonight }),
+    vocab('d', 'jump', { reviews: 1, due: tonight + 1 }),
+    vocab('e', 'fresh', { due: NOW + HOUR }), // never reviewed: new, not forecast
+    { ...vocab('f', 'kept', { reviews: 1, due: NOW + HOUR }), isArchived: true },
+  ];
+  assert.deepEqual(studyForecast(items, NOW), { nextDueAt: NOW + 2 * HOUR + 10 * 60_000, dueByTomorrow: 2 });
+  assert.deepEqual(studyForecast([vocab('d', 'jump', { reviews: 1, due: tonight + DAY })], NOW), { nextDueAt: tonight + DAY, dueByTomorrow: 0 });
+  assert.equal(studyForecast([vocab('e', 'fresh')], NOW), null, 'nothing reviewed is scheduled');
+  assert.equal(studyForecast([], NOW), null);
+});
+
+test('the Start caption says how many of the session\'s cards are due and new, and how many due wait after it', () => {
+  const due = Array.from({ length: 40 }, (_, i) => vocab(`d${i}`, `due-${i}`, { reviews: 1, due: NOW - HOUR }));
+  const fresh = Array.from({ length: 10 }, (_, i) => vocab(`n${i}`, `new-${i}`));
+  assert.equal(startCaption([...due, ...fresh], 40), '40 due · 10 new');
+  assert.equal(startCaption([...due, ...fresh], 110), '40 due · 10 new · 70 more after this');
+  assert.equal(startCaption(due.slice(0, 3), 3), '3 due');
+  assert.equal(startCaption(fresh, 0), '10 new');
+});
+
+test('a countdown gives its two largest units, leaving out a part that is 0, and never less than a minute', () => {
+  const MINUTE = 60_000;
+  const cases: [ms: number, label: string][] = [
+    [0, '1m'], [-5 * MINUTE, '1m'], [30_000, '1m'], [45 * MINUTE, '45m'], [44 * MINUTE + 1, '45m'], [59 * MINUTE + 1, '1h'],
+    [2 * HOUR, '2h'], [2 * HOUR + 10 * MINUTE, '2h 10m'], [23 * HOUR + 59 * MINUTE, '23h 59m'],
+    [DAY, '1d'], [3 * DAY + 4 * HOUR + 30 * MINUTE, '3d 4h'], [12 * DAY, '12d'],
+  ];
+  for (const [ms, label] of cases) assert.equal(formatCountdown(ms), label, String(ms));
 });

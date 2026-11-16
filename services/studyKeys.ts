@@ -1,6 +1,7 @@
 /**
- * The study session's keys as one pure table: what a key press does, given what the session shows. The view
- * (views/StudyEnhanced.tsx) reads the DOM facts it needs, asks resolveStudyKey, and carries out the action.
+ * The Study tab's keys as pure tables: what a key press does in a session, given what it shows (resolveStudyKey), and
+ * on the dashboard between sessions (resolveDashboardKey). The views (views/StudyEnhanced.tsx,
+ * components/StudyDashboard.tsx) read the DOM facts the tables need, ask them, and carry out the action.
  */
 
 import type { ReviewRating } from '../types';
@@ -40,6 +41,10 @@ export type StudyKeyAction =
 
 export type StudyKeyEvent = Pick<KeyboardEvent, 'key' | 'repeat' | 'metaKey' | 'ctrlKey' | 'altKey' | 'defaultPrevented'>;
 
+/** A key with a modifier, one a view already used, one typed, or one under a dialog outside the Study tab isn't the tab's. */
+const isOthersKey = (event: StudyKeyEvent, state: Pick<StudyKeyState, 'typing' | 'dialogOutside'>): boolean =>
+  event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || state.typing || state.dialogOutside;
+
 /** Keys 1-4 give the grades in the order of their buttons. */
 const RATING_KEYS: ReadonlyMap<string, ReviewRating> = new Map(RATINGS.map((rating, i) => [String(i + 1), rating]));
 
@@ -47,13 +52,12 @@ const RATING_KEYS: ReadonlyMap<string, ReviewRating> = new Map(RATINGS.map((rati
  * What a key does in a study session, or null when the session leaves it alone. The session owns 1-4 even
  * before the answer shows: an early press does nothing rather than switch tabs mid-session. U undoes the last
  * grade, and Space or Enter shows the answer unless the keyboard focused a control they should press; on the
- * summary Enter is Done, and R resumes a session ended early. While an undo is under way, grading and revealing wait: the undo is about to bring back
- * the card it undoes. A held key acts once, when pressed (acceptKeyRepeat); a held 1-4 stays the session's, so its
- * repeats don't switch tabs.
+ * summary Enter is Done, and R resumes a session ended early. While an undo is under way, grading and revealing
+ * wait: the undo is about to bring back the card it undoes. A held key acts once, when pressed (acceptKeyRepeat); a
+ * held 1-4 stays the session's, so its repeats don't switch tabs.
  */
 export function resolveStudyKey(event: StudyKeyEvent, state: StudyKeyState): StudyKeyAction | null {
-  if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return null;
-  if (state.typing || state.dialogOutside) return null;
+  if (isOthersKey(event, state)) return null;
   const firstPress = acceptKeyRepeat(event);
   const rating = RATING_KEYS.get(event.key);
   if (rating) {
@@ -67,4 +71,19 @@ export function resolveStudyKey(event: StudyKeyEvent, state: StudyKeyState): Stu
   if (event.key === 'Enter' && state.phase === 'summary' && !state.onControl) return { type: 'done' };
   if (event.key.toLowerCase() === 'r' && state.phase === 'summary' && state.canResume) return { type: 'resume' };
   return null;
+}
+
+/** What the dashboard between sessions knows when a key is pressed. */
+export type DashboardKeyState = Pick<StudyKeyState, 'typing' | 'onControl' | 'dialogOutside'> & {
+  /** There is something to review, so Start is live. */
+  canStart: boolean;
+};
+
+/**
+ * What a key does on the Study dashboard: Enter presses Start, once per press, unless the keyboard focused a control
+ * Enter should press instead. Every other key, the number keys that switch tabs among them, is left alone.
+ */
+export function resolveDashboardKey(event: StudyKeyEvent, state: DashboardKeyState): { type: 'start' } | null {
+  if (isOthersKey(event, state) || !acceptKeyRepeat(event)) return null;
+  return event.key === 'Enter' && state.canStart && !state.onControl ? { type: 'start' } : null;
 }

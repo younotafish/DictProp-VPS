@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveStudyKey, type StudyKeyEvent, type StudyKeyState } from '../../services/studyKeys.ts';
+import { resolveDashboardKey, resolveStudyKey, type DashboardKeyState, type StudyKeyEvent, type StudyKeyState } from '../../services/studyKeys.ts';
 
 const press = (key: string, modifiers: Partial<StudyKeyEvent> = {}): StudyKeyEvent => ({
   key, repeat: false, metaKey: false, ctrlKey: false, altKey: false, defaultPrevented: false, ...modifiers,
@@ -103,4 +103,20 @@ test('on the summary of a session ended early, R resumes it; elsewhere R is not 
   assert.equal(resolveStudyKey(press('r'), { ...ended, typing: true }), null);
   assert.equal(resolveStudyKey(press('r'), card({ phase: 'summary' })), null, 'a finished session has nothing to resume');
   assert.equal(resolveStudyKey(press('r'), card({ canResume: true })), null, 'not on a card');
+});
+
+test('on the dashboard Enter presses Start once per press, while there is something to review', () => {
+  const dashboard = (overrides: Partial<DashboardKeyState> = {}): DashboardKeyState =>
+    ({ canStart: true, typing: false, onControl: false, dialogOutside: false, ...overrides });
+  assert.deepEqual(resolveDashboardKey(press('Enter'), dashboard()), { type: 'start' });
+  assert.equal(resolveDashboardKey(press('Enter'), dashboard({ canStart: false })), null, 'All caught up');
+  assert.equal(resolveDashboardKey(held('Enter'), dashboard()), null, 'a held Enter, as from the summary\'s Done, starts nothing');
+  assert.equal(resolveDashboardKey(press('Enter'), dashboard({ onControl: true })), null, 'a control the keyboard focused');
+  assert.equal(resolveDashboardKey(press('Enter'), dashboard({ typing: true })), null);
+  assert.equal(resolveDashboardKey(press('Enter'), dashboard({ dialogOutside: true })), null, 'the search sheet over the tab');
+  for (const modifier of ['metaKey', 'ctrlKey', 'altKey', 'defaultPrevented'] as const) {
+    assert.equal(resolveDashboardKey(press('Enter', { [modifier]: true }), dashboard()), null, modifier);
+  }
+  // The number keys stay the tab bar's, and Space does nothing here.
+  for (const key of ['1', '2', '3', '4', ' ', 'u', 'r']) assert.equal(resolveDashboardKey(press(key), dashboard()), null, key);
 });

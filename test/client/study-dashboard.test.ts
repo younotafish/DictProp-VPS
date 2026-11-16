@@ -63,3 +63,27 @@ test('the dashboard counts what is due at the present time', t => {
   const items = [vocab('run', { reviews: 2, due: NOW - HOUR }), vocab('walk', { reviews: 1, due: NOW + HOUR }), vocab('jump', { reviews: 4, due: NOW })];
   assert.match(textOf(render(items)), /^Today's Study 2 Ready 2 Due/);
 });
+
+test('Start says how many cards it reviews, with how many are due and new and how many due wait after the session', t => {
+  t.mock.method(Date, 'now', () => NOW);
+  const due = Array.from({ length: 110 }, (_, i) => vocab(`due-${i}`, { reviews: 1, due: NOW - HOUR }));
+  const fresh = Array.from({ length: 12 }, (_, i) => vocab(`new-${i}`));
+  const markup = render([...due, ...fresh]);
+  assert.match(markup, /<button class="h-12 px-5 rounded-lg bg-slate-900 text-white font-semibold hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed" aria-keyshortcuts="Enter">Review 50<\/button><p class="mt-1 text-xs text-slate-500">40 due · 10 new · 70 more after this<\/p>/);
+  assert.match(textOf(markup), /50 Ready 110 Due/);
+});
+
+test('with nothing to review, Start is a disabled All caught up captioned with when the next card falls due', t => {
+  t.mock.method(Date, 'now', () => NOW);
+  const tonight = new Date(2026, 10, 17).getTime();
+  const items = [
+    vocab('run', { reviews: 2, due: NOW + 2 * HOUR + 10 * 60_000 }),
+    vocab('walk', { reviews: 1, due: NOW + 5 * HOUR }),
+    vocab('jump', { reviews: 3, due: tonight + 9 * HOUR }),
+  ];
+  const markup = render(items);
+  assert.match(markup, /<button disabled="" class="[^"]*">All caught up<\/button><p class="mt-1 text-xs text-slate-500">Next card due in 2h 10m · 2 by tomorrow<\/p>/);
+  assert.doesNotMatch(markup, /aria-keyshortcuts="Enter"/);
+  // Nothing due by tomorrow leaves the count out.
+  assert.match(render([vocab('jump', { reviews: 3, due: tonight + 9 * HOUR })]), />Next card due in 17h 30m<\/p>/);
+});

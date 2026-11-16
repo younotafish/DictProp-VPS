@@ -69,6 +69,57 @@ export function nextStudyClockChange(items: readonly StoredItem[], now: number):
   return next;
 }
 
+/** When the next reviewed card falls due, and how many spellings will be due by the coming midnight. */
+export interface StudyForecast {
+  nextDueAt: number;
+  dueByTomorrow: number;
+}
+
+/**
+ * What 'All caught up' looks ahead to: when the next reviewed card falls due, and how many distinct spellings will be
+ * due by the time tomorrow begins (the coming local midnight). Null when no reviewed card is scheduled after `now`.
+ */
+export function studyForecast(items: readonly StoredItem[], now: number): StudyForecast | null {
+  const midnight = new Date(now).setHours(24, 0, 0, 0);
+  let nextDueAt = Infinity;
+  const dueByMidnight = new Set<string>();
+  for (const item of items) {
+    const srs = item.srs;
+    if (!srs || !(srs.totalReviews > 0) || item.isDeleted || item.isArchived) continue;
+    if (srs.nextReview > now && srs.nextReview < nextDueAt) nextDueAt = srs.nextReview;
+    if (srs.nextReview <= midnight) {
+      const spelling = getItemSpelling(item);
+      if (spelling) dueByMidnight.add(spelling);
+    }
+  }
+  return nextDueAt === Infinity ? null : { nextDueAt, dueByTomorrow: dueByMidnight.size };
+}
+
+/**
+ * The line under 'Review 50': how many of the session's cards are due and how many new ('40 due · 10 new'), and, when
+ * more spellings are due (`dueTotal`, countDueSpellings) than the session holds, how many wait after it
+ * ('· 70 more after this'). A part that is 0 is left out.
+ */
+export function startCaption(queue: readonly StoredItem[], dueTotal: number): string {
+  const due = queue.filter(item => reviewsOf(item) > 0).length;
+  const fresh = queue.length - due;
+  return [
+    due > 0 && `${due} due`,
+    fresh > 0 && `${fresh} new`,
+    dueTotal > due && `${dueTotal - due} more after this`,
+  ].filter(Boolean).join(' · ');
+}
+
+/** A wait in its two largest units, a part that is 0 left out: '45m', '2h 10m', '3d 4h'; at least '1m'. */
+export function formatCountdown(ms: number): string {
+  const minutes = Math.max(1, Math.ceil(ms / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return minutes % 60 ? `${hours}h ${minutes % 60}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return hours % 24 ? `${days}d ${hours % 24}h` : `${days}d`;
+}
+
 /** The study dashboard's numbers from one pass over the items (and countDueSpellings'). */
 export function computeItemStats(items: readonly StoredItem[], now: number): ItemStats {
   const mastery: Record<MasteryKey, number> = { grandmaster: 0, mastered: 0, proficient: 0, learning: 0, struggling: 0, new: 0 };
