@@ -6,7 +6,6 @@ import test from 'node:test';
 import {
   exampleSentenceId, normalizeSentenceLookup, sentenceLookupHash, sentenceTextHash,
 } from '../src/sentence-lookup.js';
-import * as enrichment from '../src/sentence-enrichment.js';
 import { SERVER_DIR } from './support/paths.js';
 
 const cases: Array<[string, string]> = [
@@ -36,14 +35,6 @@ test('an example\'s id is its lookup hash cut to 40 characters, and its text has
   // An edit the lookup form ignores still changes the text hash.
   assert.equal(sentenceLookupHash('Keep going.'), sentenceLookupHash('keep  going.'));
   assert.notEqual(sentenceTextHash('Keep going.'), sentenceTextHash('keep  going.'));
-});
-
-test('the server\'s bundle validation and lookups still agree with this definition', () => {
-  // sentence-enrichment.ts keeps its own copy until it re-exports these; the two must not drift.
-  for (const [text] of cases) {
-    assert.equal(enrichment.normalizeSentenceLookup(text), normalizeSentenceLookup(text), text);
-    assert.equal(enrichment.sentenceLookupHash(text), sentenceLookupHash(text), text);
-  }
 });
 
 test('plain node loads the module, as the offline scripts will, so it can have no relative imports', () => {

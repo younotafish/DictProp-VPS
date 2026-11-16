@@ -1,6 +1,9 @@
-import { createHash } from 'crypto';
 import { isSentenceAnalysis, type SentenceAnalysis } from './sentence-analysis.js';
+import { exampleSentenceId, normalizeSentenceLookup, sentenceLookupHash, sentenceTextHash } from './sentence-lookup.js';
 import { isPositiveFinite, isRecord, isSha256, SAFE_IMAGE_PATH } from './validation-helpers.js';
+
+// The key a prepared sentence is stored and looked up by, as sentence-lookup.ts defines it.
+export { normalizeSentenceLookup, sentenceLookupHash };
 
 export interface SentenceEnrichmentEntry {
   id: string;
@@ -16,23 +19,6 @@ export interface SentenceEnrichmentBundle {
   version: 1;
   generatedAt: number;
   entries: SentenceEnrichmentEntry[];
-}
-
-export function normalizeSentenceLookup(value: string): string {
-  return String(value || '')
-    .replace(/\{\{([^{}]+)\}\}/g, '$1')
-    .replace(/\[\[([^\[\]]+)\]\]/g, '$1')
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u201c\u201d]/g, '"')
-    .replace(/[\u2013\u2014]/g, '-')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-export function sentenceLookupHash(value: string): string {
-  return createHash('sha256').update(normalizeSentenceLookup(value)).digest('hex');
 }
 
 export function validateSentenceEnrichmentBundle(value: unknown): string | null {
@@ -66,8 +52,8 @@ export function validateSentenceEnrichmentBundle(value: unknown): string | null 
     if (lookupHashes.has(entry.lookupHash)) return `entry ${index} duplicates lookupHash ${entry.lookupHash}`;
     lookupHashes.add(entry.lookupHash);
     if (entry.lookupHash !== sentenceLookupHash(entry.text)) return `entry ${index} lookupHash does not match text`;
-    if (entry.id !== `example-${entry.lookupHash.slice(0, 40)}`) return `entry ${index} id does not match lookupHash`;
-    if (!isSha256(entry.textHash) || entry.textHash !== createHash('sha256').update(entry.text).digest('hex')) {
+    if (entry.id !== exampleSentenceId(entry.lookupHash)) return `entry ${index} id does not match lookupHash`;
+    if (!isSha256(entry.textHash) || entry.textHash !== sentenceTextHash(entry.text)) {
       return `entry ${index} textHash is invalid`;
     }
     if (!isSentenceAnalysis(entry.analysis)) return `entry ${index} analysis is invalid`;
