@@ -203,7 +203,7 @@ It shows its header (the counts, the ⋯ menu and the user menu, without Compare
 
 From top to bottom:
 
-- the headword and its sense label ("noun: emotion"); a usage badge when the card has one (Modern American, Current general English, British only, Rare or dated, Specialized current usage), which a tap explains; the IPA (a tap says the word, a second tap stops it) and a YouGlish link;
+- the headword and its sense label ("noun: emotion"); a usage badge when the card has one (Modern American, Current general English, British only, Rare or dated, Specialized current usage), which a tap explains; the IPA (a tap says the word, a second tap stops it), a YouGlish link and, on a saved card, the practice pill (5.4);
 - the picture, beside the text on wide screens;
 - the Chinese and an English definition of up to 25 words;
 - links to Vocabulary.com, YouTube, TikTok, PlayPhrase, Wiktionary, Google Ngram and ChatGPT (opened with a prompt that asks for an illustrated explanation);
@@ -223,6 +223,7 @@ From top to bottom:
 ### 5.4 Actions
 
 - **Got it** (the header button, R, or a double-click or double tap on blank space) records Good; on an archived card, whose header offers Unarchive instead, R and the double-click or double tap do nothing. A "Remembered!" card shows "Next review tomorrow", "in 4 days" or "in ~2 months" for 1.5 seconds while that card is on screen. The same card counts once in 1.5 seconds; another card's Got it always counts.
+- **Practice** (the pill at the end of the IPA's row, or B) adds a saved card to Today's practice (8.1) with a triage Again, so it comes back in tomorrow's practice. On a card in practice the pill reads "Practicing", filled orange, and a press takes the card out as one you can say, with a triage Easy. Unsaved, archived and phrase cards have no pill. Each press offers Undo for 6 seconds ("Practicing “word”", "Can say “word”"), which takes that review back; when it can't (offline, still syncing, or the card has changed since), a rose notice says why for 4 seconds. The same card's second press within 0.7 seconds is ignored. Neither press counts toward Today's goal.
 - **Save** (the header's Save, S, ⌘S) only saves; pressing S on a saved card changes nothing.
 - **Delete** (the trash, D, the menu) and **Archive** (A, the menu) take the card out of the view at once, and the next card takes its place; **Unarchive** keeps it in view. Each offers Undo for 6 seconds ("Deleted “word”", "Archived “word”", "Unarchived “word”"), which puts the card back where it was.
 - **Reset** (Shift+R, the menu) makes a reviewed card new again, with Undo ("Reset “word”"); on a card never reviewed it does nothing. A second press of Delete, Archive or Reset within 0.7 seconds is ignored, and so are Got it, Delete, Archive and Reset within 0.7 seconds of Unarchive, whose place in the header Got it takes.
@@ -246,6 +247,7 @@ From top to bottom:
 | ↑ ↓ | Previous or next word |
 | R | Got it |
 | Shift+R | Reset memory strength |
+| B | Add the card to practice; press again to mark it as one you can say |
 | S, ⌘S | Save the card |
 | D | Delete the card |
 | A | Archive or unarchive |
@@ -271,16 +273,16 @@ A sentence lesson is the card view for sentences: saved sentences, Real Life lin
 
 - **Where it opens:** a row on the Sentences tab, a line in a Real Life collection or a sentence in an essay (the lesson walks that list in its on-screen order, from the tapped sentence); a collection's or essay's Study button; the search box's saved-sentence suggestions; and "Open sentence review" on a word card (over the card) or under a study answer.
 - Each sentence is paired with its source card, the word it came from; P and ⌘1-4 act on that card.
-- An unsaved example opened from a word card or under a study answer is a preview: it has no review pill, Reset, Delete or picture button, and its right-hand button is "Save sentence". One opened under a study answer shows no pill after it is saved either, nor the memorized count beside its memory.
+- An unsaved example opened from a word card or under a study answer is a preview: it has no review pill, practice pill, Reset, Delete or picture button, and its right-hand button is "Save sentence". One opened under a study answer shows no pill after it is saved either, nor the memorized count beside its memory.
 
 ### 6.2 The sentence page
 
 - **Header:** Back ("Sentences", "Real Life", "Essays" or "Word"); the analysis button, a spinner while the analysis loads; "i / N"; and a pill. Amber "K to review" counts the run's sentences never reviewed or due; it reads the same on every sentence, counts down as you mark them, and turns into a green "All reviewed" at zero.
 - **The sentence:** the studied expression in indigo on a light background; saved words and saved phrases of up to six words in indigo with a dotted underline; unsaved uncommon terms in green with a dotted underline; every other word plain.
 - **The connected-speech line.** Under the sentence, the analysis's natural American IPA in connected speech, shown even when it matches the dictionary form; screen readers call it "Natural American IPA (connected speech)". It isn't a word target, and a sentence without one shows no line.
-- **Under it:** a speaker; Copy ("Copy sentence (to paste into Meta AI)"); and on a Mac a ⌘ chip that lights while ⌘ is held, when hovered words show a ring.
+- **Under it:** a speaker; Copy ("Copy sentence (to paste into Meta AI)"); on a Mac a ⌘ chip that lights while ⌘ is held, when hovered words show a ring; and on a phone the practice pill (6.4) of the learner's own saved sentences, whose bottom row has no room for it.
 - **The picture**, when there is one, sits left of the sentence on wide screens and above it on phones. The front page has no translation; the analysis page does.
-- **Bottom row:** once the sentence has a review, its memory (badge, review count, streak, "N memorized in this list", next review) and Reset; Delete, for saved sentences only; and at the right end Got it, always the same size so nothing moves (a preview shows "Save sentence"). Clear | Casual and the auto-play button float at the bottom right, and the attach-picture button sits above the search button.
+- **Bottom row:** once the sentence has a review, its memory (badge, review count, streak, "N memorized in this list", next review; on a phone the review count and the streak are left out, so the row fits a 390 px screen) and Reset; Delete, for saved sentences only; from 640 px up, the practice pill (6.4) of the learner's own saved sentences with a translation; and at the right end Got it, always the same size so nothing moves (a preview shows "Save sentence"). Clear | Casual and the auto-play button float at the bottom right, and the attach-picture button sits above the search button.
 
 ### 6.3 Words in the sentence
 
@@ -301,6 +303,7 @@ The owner's design:
 - **A tap or click on blank space** (anything but a word or a control; the picture and the IPA line count as blank) plays or pauses the sentence, starts it again past 85%, and during auto-play pauses or resumes auto-play. It waits 320 ms to rule out a double tap.
 - **Got it:** a double tap on blank space or on the words, a double-click on blank space, R, or the button. It records Good and shows "Remembered!" with the next review; the sentence stays on screen. On a Real Life or essay line, the first Got it creates the line's record. The same sentence counts once in 1.5 seconds.
 - **Reset** (Shift+R) works as on word cards. **Delete** (D, or the trash) applies to saved sentences only; it acts at once and offers Undo. Real Life and essay lines can't be deleted.
+- **Practice** (the pill, or B) works as on word cards (5.4), for the learner's own saved sentences once they have a translation, which Today's cue shows; Real Life and essay lines, previews and untranslated sentences have none.
 - **Moving:** swipe up from the bottom of the page, or press ↓, for the next sentence; swipe down from the top, or press ↑, for the previous one. The new sentence opens at its top and is read aloud in its remembered voice; at the first or last sentence, the current one is read again. On a long sentence with a picture, the page scrolls to its end before a swipe moves on.
 - **Pages:** a swipe left, →, or a two-finger trackpad swipe opens the analysis page; a swipe right or ← returns to the sentence, and a swipe right on the sentence page closes the lesson.
 - **Esc** closes, in turn, the picture panel, the auto-play panel and the analysis page, then the lesson.
@@ -344,6 +347,7 @@ Saved sentences and Real Life or essay lines can take a picture: tap the picture
 | ⌘1-4 | Read example 1-4 of its word |
 | R | Got it (the sentence stays on screen) |
 | Shift+R | Reset memory strength |
+| B | Add a saved sentence to practice; press again to mark it as one you can say |
 | D | Delete a saved sentence |
 | Esc | Close a panel or the analysis page, then the sentence |
 
@@ -518,7 +522,7 @@ Notices are pills in one column at the bottom centre: above the tab bar on the t
 | Update | "Update ready" with Reload, or "Reload needed" | A new version waits until no card or popup is open; "Reload needed" (part of the app failed to load) shows at once |
 
 - A background job shows one result pill at a time, each with ×; a new result replaces the one showing. Reload reads "Saving…" while it sends pending changes (for up to 10 seconds), then reloads.
-- **What can be undone:** deleting, archiving and unarchiving a card; resetting a reviewed card (resetting a card never reviewed does nothing and offers nothing); Refresh with AI; removing a word from a phrase; and Clear all in the search results. Merging duplicates can't be undone.
+- **What can be undone:** deleting, archiving and unarchiving a card; resetting a reviewed card (resetting a card never reviewed does nothing and offers nothing); Refresh with AI; removing a word from a phrase; adding a card or saved sentence to practice, or taking it out as one you can say (whose review the undo takes back on the server, so that change goes out at once); and Clear all in the search results. Merging duplicates can't be undone.
 - **How undo works:** one offer shows at a time, and a new one closes the old, whose change then goes through. Undo, or ⌘Z (Ctrl+Z elsewhere) while the pill shows, takes the change back; ⌘Z doesn't act in a text field, whose own undo wins, or while a decision dialog is open. An offered change is saved on the device at once but kept from the server until the pill closes, then pushed at once. Signing out or reloading closes the offer first.
 
 ## 11. Sync and offline
