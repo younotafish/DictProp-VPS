@@ -371,6 +371,9 @@ export const trackServerContent = (
  * device's copy: `baseRevision`, the item's revision before the review, is the one the copy holds.
  * Otherwise the edits meet the server's copy in an ordinary merge, as a pull would: adopting only its
  * revision would hide its changes, and the next push would overwrite them.
+ * One schedule outranks the server's: a reset made here since (no reviews, and the reset's time as a newer review
+ * clock, SRSAlgorithm.reset). It can't be pushed while a review of its item waits in the outbox, so the server's
+ * copy never saw it; it stays, unsynced, for the next push.
  */
 export const reconcileReviewedItem = (
   local: StoredItem,
@@ -384,7 +387,8 @@ export const reconcileReviewedItem = (
         updatedAt: Math.max(local.updatedAt || 0, serverItem.updatedAt || 0),
       }
     : mergeItem(local, serverItem);
-  return { ...reconciled, srs: serverItem.srs, lastSyncedHash: getItemContentHash(serverItem) };
+  const resetSince = !local.srs?.totalReviews && (local.srs?.lastReviewDate || 0) > (serverItem.srs?.lastReviewDate || 0);
+  return { ...reconciled, srs: resetSince ? local.srs : serverItem.srs, lastSyncedHash: getItemContentHash(serverItem) };
 };
 
 /**
