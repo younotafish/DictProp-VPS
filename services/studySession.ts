@@ -14,7 +14,7 @@ import { HttpError } from './http';
 import { formatReviewInterval } from './reviewTime';
 import { sentenceReviewState } from './sentenceReviewState';
 import { createClozePrompt, pickExample } from './studyPrompt';
-import { isClassicStudyCard } from './studyStats';
+import { isClassicNewCard, isClassicStudyCard } from './studyStats';
 
 /** What a card's prompts and answer are made from. */
 export interface StudyContent {
@@ -96,20 +96,23 @@ export function listeningPrompt(item: StoredItem): string | null {
 }
 
 /**
- * A session's cards: up to `dueLimit` due cards, the most overdue first, one meaning per spelling. Study takes no new
- * cards, which enter through Today's sets, and none of Today's practice or the cards you can say (isClassicStudyCard).
+ * A session's cards: up to `dueLimit` due cards, the most overdue first, then up to `newLimit` new phrases, the oldest
+ * saved first, one meaning per spelling. New words enter through Today's sets instead, and Today's practice and the
+ * cards you can say stay with Today (isClassicStudyCard, isClassicNewCard).
  */
-export function buildReviewQueue(items: readonly StoredItem[], now = Date.now(), dueLimit = 40): StoredItem[] {
+export function buildReviewQueue(items: readonly StoredItem[], now = Date.now(), dueLimit = 40, newLimit = 10): StoredItem[] {
   const due = items
     .filter(item => isDueForReview(item, now) && isClassicStudyCard(item))
     .sort((a, b) => (a.srs?.nextReview || 0) - (b.srs?.nextReview || 0));
+  const fresh = items.filter(isClassicNewCard).sort((a, b) => a.savedAt - b.savedAt);
   const seenSpellings = new Set<string>();
-  return due.filter(item => {
+  const burySiblings = (list: StoredItem[], limit: number) => list.filter(item => {
     const spelling = getItemSpelling(item);
     if (!spelling || seenSpellings.has(spelling)) return false;
     seenSpellings.add(spelling);
     return true;
-  }).slice(0, dueLimit);
+  }).slice(0, limit);
+  return [...burySiblings(due, dueLimit), ...burySiblings(fresh, newLimit)];
 }
 
 /** The four grades, in the order of their buttons and of keys 1–4: the order the review events record them in. */

@@ -307,11 +307,14 @@ test('with nothing to review, the forecast says when the next card falls due and
   assert.equal(studyForecast([inLoop(vocab('p', 'p', { reviews: 1, due: NOW + HOUR }), 'practicing')], NOW), null);
 });
 
-test('the Start caption says how many of the session\'s cards are due, and how many due wait after it', () => {
+test('the Start caption says how many of the session\'s cards are due and new, and how many due wait after it', () => {
   const due = Array.from({ length: 40 }, (_, i) => vocab(`d${i}`, `due-${i}`, { reviews: 1, due: NOW - HOUR }));
+  const fresh = [vocab('n1', 'new-1'), vocab('n2', 'new-2')];
   assert.equal(startCaption(due, 40), '40 due');
   assert.equal(startCaption(due, 110), '40 due · 70 more after this');
   assert.equal(startCaption(due.slice(0, 3), 3), '3 due');
+  assert.equal(startCaption([...due, ...fresh], 110), '40 due · 2 new · 70 more after this');
+  assert.equal(startCaption(fresh, 0), '2 new');
 });
 
 test('classic Study takes cards reviewed before that are neither in Today\'s practice nor ones you can say', () => {

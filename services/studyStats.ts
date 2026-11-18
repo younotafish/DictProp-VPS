@@ -1,4 +1,4 @@
-import { getItemSpelling, type ReviewHistory, type StoredItem } from '../types';
+import { getItemSpelling, isPhraseItem, type ReviewHistory, type StoredItem } from '../types';
 import { loopStanding } from '../server/src/shared/practice';
 import { masteryLevelFor, type MasteryKey } from './srsAlgorithm';
 import { sentenceReviewState } from './sentenceReviewState';
@@ -49,10 +49,16 @@ const reviewsOf = (item: StoredItem) => item.srs?.totalReviews ?? 0;
 
 /**
  * Whether classic Study takes the card once it's due: a card reviewed before that is neither in Today's practice,
- * where it is practiced, nor one you can say, which is done (server/src/shared/practice.ts). New cards enter through
- * Today's sets instead, so Study never takes them.
+ * where it is practiced, nor one you can say, which is done (server/src/shared/practice.ts). A new card isn't due:
+ * new words enter through Today's sets, and Study introduces new phrases itself (isClassicNewCard).
  */
 export const isClassicStudyCard = (item: StoredItem): boolean => loopStanding(item.srs) === 'reviewed';
+
+/**
+ * Whether classic Study introduces the card itself: a phrase never reviewed. Today's loop takes new words and the
+ * learner's own sentences but no phrases, so without this a new phrase would never be studied.
+ */
+export const isClassicNewCard = (item: StoredItem): boolean => isPhraseItem(item) && !(reviewsOf(item) > 0);
 
 /**
  * How many distinct spellings are due: studied (not archived or deleted), reviewed before, and with their next
@@ -111,12 +117,18 @@ export function studyForecast(items: readonly StoredItem[], now: number): StudyF
 }
 
 /**
- * The line under 'Review 40': the session's cards, all due ('40 due'), and, when more spellings are due (`dueTotal`,
- * countDueSpellings) than the session holds, how many wait after it ('40 due · 70 more after this').
+ * The line under 'Review 42': how many of the session's cards are due and how many are new phrases ('40 due · 2 new'),
+ * and, when more spellings are due (`dueTotal`, countDueSpellings) than the session holds, how many wait after it
+ * ('· 70 more after this'). A part that is 0 is left out.
  */
 export function startCaption(queue: readonly StoredItem[], dueTotal: number): string {
-  const due = queue.length;
-  return dueTotal > due ? `${due} due · ${dueTotal - due} more after this` : `${due} due`;
+  const due = queue.filter(item => reviewsOf(item) > 0).length;
+  const fresh = queue.length - due;
+  return [
+    due > 0 && `${due} due`,
+    fresh > 0 && `${fresh} new`,
+    dueTotal > due && `${dueTotal - due} more after this`,
+  ].filter(Boolean).join(' · ');
 }
 
 /** A wait in its two largest units, a part that is 0 left out: '45m', '2h 10m', '3d 4h'; at least '1m'. */

@@ -84,7 +84,7 @@ function vocab(
   };
 }
 
-test('the review queue takes due cards, the most overdue first, one meaning per spelling, up to its limit, and no new cards', () => {
+test('the review queue takes due cards, the most overdue first, one meaning per spelling, up to its limit, and no new words', () => {
   const items = [
     vocab('lead-metal', 'lead', { sense: 'metal', reviews: 2, nextReview: 20 }),
     vocab('lead-guide', 'lead', { sense: 'guide', reviews: 2, nextReview: 10 }),
@@ -96,6 +96,25 @@ test('the review queue takes due cards, the most overdue first, one meaning per 
   // New cards enter through Today's sets.
   assert.deepEqual(buildReviewQueue(items, 1_000).map(item => item.data.id), ['lead-guide', 'other-due']);
   assert.deepEqual(buildReviewQueue(items, 1_000, 1).map(item => item.data.id), ['lead-guide']);
+});
+
+test('the review queue introduces new phrases itself, after the due cards, the oldest saved first, since Today takes no phrases', () => {
+  const phrase = (id: string, query: string, savedAt: number, totalReviews = 0): StoredItem => ({
+    type: 'phrase',
+    data: { id, query, translation: '', grammar: '', visualKeyword: '', pronunciation: '', timestamp: 0, vocabs: [] },
+    srs: { ...SRSAlgorithm.createNew(id, 'phrase'), totalReviews, nextReview: totalReviews ? 5_000 : 0 },
+    savedAt,
+  });
+  const items = [
+    phrase('newer', 'give up', 30),
+    vocab('due', 'other', { reviews: 1, nextReview: 15 }),
+    phrase('older', 'look into', 20),
+    phrase('reviewed', 'set off', 10, 2),
+    vocab('fresh-word', 'fresh', { savedAt: 1 }),
+    phrase('older-twin', 'give up', 25),
+  ];
+  assert.deepEqual(buildReviewQueue(items, 1_000).map(item => item.data.id), ['due', 'older', 'older-twin']);
+  assert.deepEqual(buildReviewQueue(items, 1_000, 40, 1).map(item => item.data.id), ['due', 'older']);
 });
 
 test('the review queue leaves Today\'s practice and the cards you can say to Today', () => {
