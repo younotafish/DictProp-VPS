@@ -24,7 +24,7 @@ export const MODE_TASK_TYPES: Readonly<Record<LoopMode, ReviewTaskType>> = { spe
 /** The most items a practice session takes; the rest wait for another session. */
 export const PRACTICE_SESSION_CAP = 30;
 /** How many other cards a missed item waits behind before it comes back (fewer only at the end of the run). */
-export const REQUEUE_GAP = 3;
+const REQUEUE_GAP = 3;
 
 /** A review the session recorded: its event, when it was given, and the item's review count once it is applied. */
 export interface OwnReview {

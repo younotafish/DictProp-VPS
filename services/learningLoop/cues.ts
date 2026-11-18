@@ -15,7 +15,7 @@ import { sentenceTranslation } from './standing';
 export type LoopMode = 'speak' | 'quiet';
 
 /** Days of stability from which an item's cue moves to level 2. */
-export const CUE_LEVEL_TWO_STABILITY = 6;
+const CUE_LEVEL_TWO_STABILITY = 6;
 
 /** A stretch of a sentence: plain text, or the studied expression (`target`), which a cue blanks and an answer marks. */
 export interface TextPart {
