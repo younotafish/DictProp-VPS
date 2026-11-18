@@ -57,6 +57,10 @@ const LAZY_ONLY = [
   'services/learningLoop/sessionStore.ts',
   'services/learningLoop/stats.ts',
   'services/learningLoop/themeMap.ts',
+  // The practice pill loads with the card view.
+  'views/detail/practiceToggle.ts',
+  'views/detail/usePracticeToggle.ts',
+  'views/detail/PracticePill.tsx',
 ];
 
 const ENTRY = 'index.tsx';
