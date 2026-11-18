@@ -1,5 +1,6 @@
 /**
- * The study tab: the progress dashboard between sessions (StudyDashboard) and the review session itself.
+ * Card review, classic Study as a sub-screen of Today (views/today/TodayView.tsx): the progress dashboard between
+ * sessions (StudyDashboard) and the review session itself.
  *
  * Review sessions use the same item-level FSRS state and authoritative event stream as quick review. This
  * component holds the session, its keys and its audio; each step of the session (start, grade, undo, cards passed
@@ -9,7 +10,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { StoredItem, getItemTitle, type ItemGroup, type ReviewHistory, type ReviewRating } from '../types';
-import { BrainCircuit } from 'lucide-react';
+import { ArrowLeft, BrainCircuit } from 'lucide-react';
 import {
   acceptFooterTap,
   applyUndoneGrade,
@@ -66,6 +67,8 @@ interface StudyEnhancedProps {
   onViewCards: (groups: ItemGroup[], groupIndex: number, itemIndex: number) => void;
   interactionLocked?: boolean;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
+  /** Back to Today's plan: the dashboard's Back, and Esc while no session runs. */
+  onBack?: () => void;
 }
 
 interface LastGrade extends SessionGrade {
@@ -120,6 +123,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
   onViewCards,
   interactionLocked = false,
   onScroll,
+  onBack,
 }) => {
   const [session, setSession] = useState<StudySession | null>(() => restoreSession(userId, items, Date.now()));
   // A restored session's last grade may still be in the outbox, so it comes back without its undo.
@@ -322,14 +326,16 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
     audio.prefetch(upcomingListeningPrompts(upcoming.session, upcoming.currentIndex, id => upcoming.itemsById.get(id)));
   }, [cardKey, audio, upcomingRef]);
 
-  // Escape leaves the answer box first, then ends the session on a card or closes the summary. It goes through the
-  // escape stack, so a search box or dialog opened over the session closes before the session does.
+  // Escape leaves the answer box first, then ends the session on a card or closes the summary, and between sessions
+  // goes back to Today's plan. It goes through the escape stack, so a search box or dialog opened over Card review
+  // closes before it does. Today registers no layer of its own while Card review shows.
   useEscapeLayer(() => {
     const active = document.activeElement;
-    if (active instanceof HTMLElement && isTypingTarget(active) && rootRef.current?.contains(active)) active.blur();
+    if (!session) onBack?.();
+    else if (active instanceof HTMLElement && isTypingTarget(active) && rootRef.current?.contains(active)) active.blur();
     else if (showingCard) endSession();
     else closeSession();
-  }, 0, !!session && !interactionLocked);
+  }, 0, (!!session || !!onBack) && !interactionLocked);
 
   // The session's keys (services/studyKeys.ts). One listener while the session has the keys, reading the
   // session and the handlers as they are now, so typing an answer doesn't register it again.
@@ -374,7 +380,12 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
 
   if (items.length === 0) {
     return (
-      <div className="h-full flex flex-col items-center justify-center p-8 text-center text-slate-500 bg-slate-50">
+      <div className="relative h-full flex flex-col items-center justify-center p-8 text-center text-slate-500 bg-slate-50">
+        {onBack && (
+          <button type="button" onClick={onBack} className="absolute left-4 top-4 grid h-11 w-11 place-items-center rounded-full text-slate-500 hover:bg-slate-200" aria-label="Back to Today">
+            <ArrowLeft size={20} />
+          </button>
+        )}
         <div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center mb-4">
           <BrainCircuit size={40} className="text-slate-400" />
         </div>
@@ -441,6 +452,7 @@ export const StudyEnhanced: React.FC<StudyEnhancedProps> = ({
       onStart={startSession}
       interactionLocked={interactionLocked}
       onScroll={onScroll}
+      onBack={onBack}
     />
   );
 };

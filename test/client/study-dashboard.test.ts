@@ -61,7 +61,7 @@ test('the weekly reviews and the 7-day chart\'s total count the same reviews', t
 test('the dashboard counts what is due at the present time', t => {
   t.mock.method(Date, 'now', () => NOW);
   const items = [vocab('run', { reviews: 2, due: NOW - HOUR }), vocab('walk', { reviews: 1, due: NOW + HOUR }), vocab('jump', { reviews: 4, due: NOW })];
-  assert.match(textOf(render(items)), /^Today's Study 2 Ready 2 Due/);
+  assert.match(textOf(render(items)), /^Card review 2 Ready 2 Due/);
 });
 
 test('Start says how many due cards it reviews and how many due wait after the session; new cards wait for Today\'s sets', t => {
@@ -82,7 +82,7 @@ test('Today\'s practice and the cards you can say stay out of Study\'s Ready, Du
     inLoop(vocab('walk', { reviews: 1, due: NOW - HOUR }), { practiceSince: NOW - DAY }),
     inLoop(vocab('jump', { reviews: 3, due: NOW - HOUR }), { sayableAt: NOW - DAY }),
   ];
-  assert.match(textOf(render(items)), /^Today's Study 1 Ready 1 Due/);
+  assert.match(textOf(render(items)), /^Card review 1 Ready 1 Due/);
   const later = [
     vocab('run', { reviews: 2, due: NOW + 3 * HOUR }),
     inLoop(vocab('walk', { reviews: 1, due: NOW + HOUR }), { practiceSince: NOW - DAY }),

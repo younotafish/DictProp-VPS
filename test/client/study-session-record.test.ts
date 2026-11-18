@@ -224,7 +224,7 @@ test('the study screen takes a session up at its card after a reload, and clears
   assert.match(restored, /<\/svg> Show answer<\/button>/);
 
   // Another user's record goes.
-  assert.match(render('user-2'), /Today&#x27;s Study/);
+  assert.match(render('user-2'), />Card review</);
   assert.equal(storage.getItem(STUDY_SESSION_KEY), null);
 
   // A record whose cards have all been reviewed elsewhere since has nothing left, and goes too.
@@ -233,7 +233,7 @@ test('the study screen takes a session up at its card after a reload, and clears
   assert.match(renderToStaticMarkup(createElement(StudyEnhanced, {
     userId: USER, items: reviewedElsewhere, reviewHistory: { recent: [], olderTimes: [], olderCount: 0 },
     onReview: async () => true, onUndoReview: async () => true, onOpenExampleSentence: () => {}, onViewCards: () => {},
-  })), /Today&#x27;s Study/);
+  })), />Card review</);
   assert.equal(storage.getItem(STUDY_SESSION_KEY), null);
 });
 

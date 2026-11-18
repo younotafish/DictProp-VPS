@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Clock, Flame, Target, TrendingUp, Trophy, Zap } from 'lucide-react';
+import { ArrowLeft, BarChart3, Clock, Flame, Target, TrendingUp, Trophy, Zap } from 'lucide-react';
 import { getItemTitle, type ReviewHistory, type StoredItem } from '../types';
 import { MASTERY_LEVELS, type MasteryKey } from '../services/srsAlgorithm';
 import { buildReviewQueue } from '../services/studySession';
@@ -37,14 +37,16 @@ interface StudyDashboardProps {
   /** Something covers the tab (the card view), which has the keys. */
   interactionLocked?: boolean;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
+  /** Back to Today's plan, of which Card review is a sub-screen. */
+  onBack?: () => void;
 }
 
 /**
- * The study tab between sessions: what's ready, and progress so far. It's only mounted while no session
+ * Card review between sessions: what's ready, and progress so far. It's only mounted while no session
  * runs, so grading a card never recomputes these numbers, and it returns to where it was scrolled. Its clock moves
  * on whenever the numbers would change with time, so what's due stays current while the tab is left open.
  */
-export const StudyDashboard = React.memo(function StudyDashboard({ items, reviewHistory, onStart, interactionLocked = false, onScroll }: StudyDashboardProps) {
+export const StudyDashboard = React.memo(function StudyDashboard({ items, reviewHistory, onStart, interactionLocked = false, onScroll, onBack }: StudyDashboardProps) {
   const dashboardScrollRef = useRef<HTMLDivElement>(null);
   // The latest scroll position not yet saved, and the timer that saves it.
   const unsavedScrollRef = useRef<number | null>(null);
@@ -135,7 +137,14 @@ export const StudyDashboard = React.memo(function StudyDashboard({ items, review
         onScroll?.(e);
       }}
     >
-      <h2 className="text-3xl font-bold text-slate-800 mb-6">Today&apos;s Study</h2>
+      <div className="mb-6 flex items-center gap-2">
+        {onBack && (
+          <button type="button" onClick={onBack} className="-ml-2 grid h-11 w-11 shrink-0 place-items-center rounded-full text-slate-500 hover:bg-slate-200" aria-label="Back to Today">
+            <ArrowLeft size={20} />
+          </button>
+        )}
+        <h2 className="text-3xl font-bold text-slate-800">Card review</h2>
+      </div>
 
       <section className="border-y border-slate-200 py-5 mb-6 flex flex-wrap items-center justify-between gap-5">
         <div className="flex items-center gap-8">
