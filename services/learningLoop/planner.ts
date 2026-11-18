@@ -16,8 +16,8 @@ const DAY_MS = 86_400_000;
 const RECENT_MS = 14 * DAY_MS;
 /** A theme a set was started from on this device within this time is held back, so the days vary. */
 export const SET_START_PENALTY_MS = 2 * DAY_MS;
-/** A theme with up to this many new items gives them all in one set; a bigger one is split into sets of 11 to 20. */
-export const MAX_SET_SIZE = 20;
+/** A theme with up to this many new items gives them all in one set; a bigger one is split into sets of 11 to 19. */
+const MAX_SET_SIZE = 20;
 /** The size a big theme's sets aim at. */
 const TARGET_SET_SIZE = 15;
 /** How many sets the plan simulates after today's. */
@@ -144,18 +144,15 @@ function orderSet(items: readonly StoredItem[], profileOf: ProfileOf): StoredIte
     if (group) group.push(item);
     else groups.set(key, [item]);
   }
-  // Each turn takes the part of speech with the most words left that isn't the one just taken; ties go to the one met first.
+  // Each turn takes the part of speech with the most words left that isn't the one just taken (unless no other is
+  // left); ties go to the one met first.
   const queues = [...groups.entries()].map(([key, words]) => ({ key, words, next: 0 }));
   const words: StoredItem[] = [];
   let last: string | undefined;
   for (let left = items.length - sentences.length; left > 0; left--) {
-    let best: (typeof queues)[number] | undefined;
-    for (const queue of queues) {
-      const remaining = queue.words.length - queue.next;
-      if (remaining === 0 || (queue.key === last && queues.some(other => other !== queue && other.next < other.words.length))) continue;
-      if (!best || remaining > best.words.length - best.next) best = queue;
-    }
-    if (!best) break;
+    const open = queues.filter(queue => queue.next < queue.words.length);
+    const choices = open.length > 1 ? open.filter(queue => queue.key !== last) : open;
+    const best = choices.reduce((most, queue) => (queue.words.length - queue.next > most.words.length - most.next ? queue : most));
     words.push(best.words[best.next++]);
     last = best.key;
   }
@@ -164,10 +161,10 @@ function orderSet(items: readonly StoredItem[], profileOf: ProfileOf): StoredIte
 
 /**
  * A set from a theme's new items, `candidates` newest saved first: two thirds of it from the newest end and the rest from
- * the oldest, so the backlog shrinks too. Filling skips an item that would share the set with one it interferes with:
- * another meaning of a spelling in the set (or a sentence asking for a word the set asks for, as its card or another
- * sentence of it does), or a card whose Chinese gloss shares a segment with a card in the set, or that lists one of
- * them as a synonym, or is listed as one. A skipped item stays in the pool for a later set.
+ * the oldest, so the backlog shrinks too. Filling skips an item that would interfere with one already in the set: one
+ * asking for the same word (another meaning of a spelling, a sentence beside its card, two sentences of one word), a
+ * card whose Chinese gloss shares a segment with one in the set, or a card that lists one in the set as a synonym or is
+ * listed as one. A skipped item stays in the pool for a later set.
  */
 function composeSet(candidates: readonly StoredItem[], profileOf: ProfileOf): StoredItem[] {
   const size = setSize(candidates.length);
@@ -310,14 +307,12 @@ export function planLoop({ items, themeOf, now, recentStarts, pin }: PlanInput):
   const starts: Record<string, number> = { ...recentStarts, [todayTheme]: now };
   const remaining = new Map(pools);
   const recent = new Map(recentCounts);
-  let picked = today;
+  let picked = { themeId: todayTheme, itemIds: today.itemIds };
   for (let step = 0; step < UP_NEXT_COUNT; step++) {
-    if (picked.themeId !== null) {
-      const taken = new Set(picked.itemIds);
-      const left = (remaining.get(picked.themeId) ?? []).filter(item => !taken.has(item.data.id));
-      remaining.set(picked.themeId, left);
-      recent.set(picked.themeId, left.filter(item => now - (item.savedAt || 0) < RECENT_MS).length);
-    }
+    const taken = new Set(picked.itemIds);
+    const left = (remaining.get(picked.themeId) ?? []).filter(item => !taken.has(item.data.id));
+    remaining.set(picked.themeId, left);
+    recent.set(picked.themeId, left.filter(item => now - (item.savedAt || 0) < RECENT_MS).length);
     const themeId = bestTheme(remaining, recent, starts, now);
     if (themeId === null) break;
     picked = { themeId, itemIds: composeSet(remaining.get(themeId) ?? [], profileOf).map(item => item.data.id) };

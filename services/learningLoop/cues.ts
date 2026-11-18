@@ -49,7 +49,14 @@ export type LoopAnswer =
     /** The level 2 cue's example, else the card's first; absent when it has none. */
     example?: { parts: TextPart[]; text: string };
   }
-  | { kind: 'sentence'; parts: TextPart[]; text: string; translation: string; /** Connected-speech IPA, when known. */ ipa?: string };
+  | {
+    kind: 'sentence';
+    parts: TextPart[];
+    text: string;
+    translation: string;
+    /** Connected-speech IPA, when the analysis has it. */
+    ipa?: string;
+  };
 
 /** An item as Today shows it in one mode: the cue and its prompt, the hint, and the answer. */
 export interface LoopCard {
@@ -158,9 +165,12 @@ function blankableExamples(card: VocabCard): TextPart[][] {
 function wordCard(item: StoredItem, card: VocabCard, mode: LoopMode): LoopCard {
   const chinese = maskAnswer(card.chinese ?? '', card.word, card.forms);
   const hint: LoopHint = { kind: 'letters', text: firstLetters(card.word.trim()) };
+  // The answer's example: the one the cue asked for, else the card's first, its word marked when it can be found.
   const answer = (example?: TextPart[]): LoopAnswer => {
     const first = (card.examples ?? []).find(text => typeof text === 'string' && text.trim() !== '');
-    const parts = example ?? (first ? markExpression(first, card.word, card.forms) ?? [{ text: stripSentenceMarkers(first), target: false }] : undefined);
+    const parts = example ?? (first === undefined
+      ? undefined
+      : markExpression(first, card.word, card.forms) ?? [{ text: stripSentenceMarkers(first), target: false }]);
     return {
       kind: 'word',
       word: card.word.trim(),
