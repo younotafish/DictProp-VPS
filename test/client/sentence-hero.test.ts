@@ -62,9 +62,9 @@ test('on a phone the practice pill ends the speaker row, after Copy; from 640 px
   for (const layout of ['centered', 'split'] as const) {
     const { row } = parts(render({ layout, practicePill }));
     // The Mac's ⌘ hint may come between, but it shows only from 640 px up, where the pill doesn't.
-    const pill = row.match(/<div class="flex sm:hidden"><button type="button" aria-pressed="true"[^>]*>.*?Practicing<\/button><\/div><\/div>$/);
+    const pill = row.match(/<div class="flex sm:hidden"><button type="button" aria-label="Stop practicing[^>]*>.*?Practicing<\/button><\/div><\/div>$/);
     assert.ok(pill, `${layout}: the pill ends the row, on phones only`);
     assert.ok(row.indexOf('title="Copy sentence (to paste into Meta AI)"') < pill.index!, `${layout}: after Copy`);
-    assert.doesNotMatch(parts(render({ layout })).row, /aria-pressed/, `${layout}: nothing without a pill`);
+    assert.doesNotMatch(parts(render({ layout })).row, /Practicing|to practice/, `${layout}: nothing without a pill`);
   }
 });

@@ -296,7 +296,8 @@ const COLOURS = /^(hover:)?(bg|text|border)-(white|slate|orange)/;
 
 test('"+ Practice" is an outlined toggle, not pressed, with the Target icon, never the Bookmark that means Save', () => {
   const markup = pill(out);
-  assert.match(markup, /^<button type="button" aria-pressed="false" aria-label="Add “braise” to practice" title="Add “braise” to practice \(B\)" class="/);
+  assert.match(markup, /^<button type="button" aria-label="Add “braise” to practice" title="Add “braise” to practice \(B\)" class="/);
+  assert.doesNotMatch(markup, /aria-pressed/, 'its name changes with the state, so it is no toggle');
   assert.match(markup, /<svg[^>]*class="lucide lucide-target text-orange-500" aria-hidden="true">/);
   assert.match(markup, /<\/svg>\+ Practice<\/button>$/);
   assert.doesNotMatch(markup, /lucide-bookmark/);
@@ -307,7 +308,7 @@ test('"+ Practice" is an outlined toggle, not pressed, with the Target icon, nev
 
 test('"Practicing" is the same toggle pressed and filled orange, whose name says a press marks it as one you can say', () => {
   const markup = pill(inPractice);
-  assert.match(markup, /^<button type="button" aria-pressed="true" aria-label="Stop practicing “braise”: marks it as one you can say" title="Stop practicing “braise”: marks it as one you can say \(B\)"/);
+  assert.match(markup, /^<button type="button" aria-label="Stop practicing “braise”: marks it as one you can say" title="Stop practicing “braise”: marks it as one you can say \(B\)"/);
   assert.match(markup, /<svg[^>]*class="lucide lucide-target" aria-hidden="true">/);
   assert.match(markup, /<\/svg>Practicing<\/button>$/);
   assert.deepEqual(classesOf(markup).filter(name => COLOURS.test(name)), [
@@ -337,14 +338,14 @@ test('on the word card the pill ends the IPA\'s row, which then wraps; without i
   };
   const plain = rowOf(renderToStaticMarkup(createElement(VocabCardDisplay, { data: withIpa })));
   assert.match(plain, /^<div class="flex items-center gap-2 mt-1 text-slate-500">/);
-  assert.doesNotMatch(plain, /aria-pressed/);
+  assert.doesNotMatch(plain, /to practice/);
 
   const withPill = rowOf(renderToStaticMarkup(createElement(VocabCardDisplay, {
     data: withIpa, afterPronunciation: createElement(PracticePill, { toggle: out, onPress: () => {} }),
   })));
   assert.match(withPill, /^<div class="flex items-center gap-2 mt-1 text-slate-500 flex-wrap">/);
   assert.ok(withPill.indexOf('/breɪz/') < withPill.indexOf('YouGlish'), 'the IPA, then YouGlish');
-  assert.ok(withPill.indexOf('YouGlish') < withPill.indexOf('aria-pressed="false"'), 'then the pill');
+  assert.ok(withPill.indexOf('YouGlish') < withPill.indexOf('aria-label="Add “braise” to practice"'), 'then the pill');
 });
 
 // The wiring, read from source: App hands both views the undo, each view hands the pill its item and its places, and B

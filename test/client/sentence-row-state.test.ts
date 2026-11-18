@@ -119,10 +119,10 @@ test('from 640 px up the practice pill sits between Delete and Got it, which kee
       ...(reviews > 0 ? ['Reset memory (Shift+R)'] : []), 'Delete sentence (D)', 'Add “She came clean.” to practice (B)', 'Remember (R)',
     ]);
     // Hidden below sm, where the lesson's speaker row shows it instead (SentenceHero), so the phone's row never changes.
-    assert.match(html, /<div class="mx-1 hidden sm:flex"><button type="button" aria-pressed="false"/);
+    assert.match(html, /<div class="mx-1 hidden sm:flex"><button type="button" aria-label="Add “She came clean.” to practice"/);
     assert.equal(buttonClasses(html, 'Got it'), GOT_IT);
   }
-  assert.doesNotMatch(rowFor('saved', false, 3), /aria-pressed/, 'nothing where the view passes no pill');
+  assert.doesNotMatch(rowFor('saved', false, 3), /to practice/, 'nothing where the view passes no pill');
 });
 
 const NOW = Date.UTC(2026, 10, 16, 9);

@@ -155,7 +155,7 @@ test('the practice pill beside Got it leaves the lesson row as tall as it was, s
     });
     for (const [, at] of INSETS) {
       for (const reviews of [0, 3]) {
-        assert.ok(lessonRow('saved', reviews, practicePill).includes('aria-pressed'), 'the row holds the pill');
+        assert.match(lessonRow('saved', reviews, practicePill), /to practice|Stop practicing/, 'the row holds the pill');
         assert.equal(rowTop(lessonRow('saved', reviews, practicePill), at), rowTop(lessonRow('saved', reviews), at));
       }
     }
