@@ -51,7 +51,7 @@ export function SentenceActionsRow({
   return (
     <div className="mt-2 flex items-center gap-2 text-xs">
       {mastery && masteryColors && (
-        <SrsStats srs={srs} mastery={mastery} colors={masteryColors} compact>
+        <SrsStats srs={srs} mastery={mastery} colors={masteryColors} compact brief>
           {memorizedLabel && (
             <span className="text-emerald-600 flex items-center gap-0.5" role="img" aria-label={memorizedLabel} title={memorizedLabel}>
               <CheckCircle2 size={12} />{memorizedCount}

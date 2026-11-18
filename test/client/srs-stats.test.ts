@@ -56,6 +56,14 @@ test('the compact row keeps every stat on one line and leaves the bar out on pho
   );
 });
 
+test('a brief row also leaves the review count and the streak out on phones, for the sentence lesson\'s row', t => {
+  t.mock.method(Date, 'now', () => NOW);
+  const markup = render({ srs: srs({}), mastery: learning, colors: getMasteryColors('amber'), compact: true, brief: true });
+  assert.match(markup, /<span class="hidden sm:inline text-slate-400 whitespace-nowrap">7×<\/span>/);
+  assert.match(markup, /<span class="text-orange-500 hidden sm:flex items-center gap-0\.5">/);
+  assert.match(markup, /<span class="text-slate-500 whitespace-nowrap">3d<\/span>$/, 'the next review stays');
+});
+
 test('the full row lets its badge and next review wrap, shows the bar everywhere, and puts its extras before the next review', t => {
   t.mock.method(Date, 'now', () => NOW);
   const markup = render({
