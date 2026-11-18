@@ -46,6 +46,10 @@ const LAZY_ONLY = [
   'components/textAnalyzerMarks.ts',
   'components/study/sessionAudio.ts',
   'components/swipeDirection.ts',
+  // Today's loop: everything but App's wiring loads with the Study tab's screen.
+  'services/api/learningLoop.ts',
+  'server/src/shared/practice.ts',
+  'server/src/shared/item-themes.ts',
 ];
 
 const ENTRY = 'index.tsx';

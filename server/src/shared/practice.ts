@@ -1,0 +1,113 @@
+// Today's practice membership: which items you're practicing and which you can say. It rides on the item's schedule
+// (three optional fields of srs) and changes only inside a review, so it is applied in the same step as FSRS on both
+// sides: the server's review apply (db/reviews.ts, inside its transaction) and the client's optimistic copy
+// (services/fsrsScheduler.ts). test/contracts/srs.test.ts runs the same task-typed reviews through both.
+//
+// The rules:
+// - a triage review rated again joins practice; rated easy, it marks the item one you can say; rated good (passive),
+//   it changes nothing;
+// - a practice attempt said aloud ('speak') rated good graduates the item to "can say it" once the schedule is solid:
+//   in review (not relearning), stability at least GRADUATION_STABILITY_DAYS, and at least GRADUATION_MIN_GAP_DAYS
+//   since the review before it. Nothing else graduates: a Got it, a classic Study grade or a Quiet ('recall') attempt
+//   only schedules;
+// - a review made before the item's last membership change (a device that was offline) schedules but leaves
+//   membership alone, so a stale decision can't undo a newer one.
+// Every membership change is a review, which advances lastReviewDate, so schedule merges order membership correctly.
+
+/** Days of FSRS stability a practice item needs before an unaided spoken success graduates it. */
+export const GRADUATION_STABILITY_DAYS = 21;
+/** Days since the previous review that the graduating success must come after. */
+export const GRADUATION_MIN_GAP_DAYS = 14;
+
+const DAY_MS = 86_400_000;
+/** ts-fsrs State.Review. */
+const FSRS_STATE_REVIEW = 2;
+
+/** The schedule fields practice membership reads and writes. All times are epoch milliseconds. */
+export interface PracticeSrs {
+  /** Present while the item is in practice: when it joined. */
+  practiceSince?: number;
+  /** Present once the item is one you can say: when that was decided or earned. */
+  sayableAt?: number;
+  /** When membership last changed; a review older than this leaves membership alone. */
+  practiceChangedAt?: number;
+  stability?: number;
+  fsrsState?: number;
+  lastReviewDate?: number;
+}
+
+/** What a review does to membership: join practice, mark sayable, or nothing. */
+export type PracticeTransition = 'join' | 'sayable' | 'none';
+
+/**
+ * The membership change a review makes. `previous` is the schedule before the review, `next` the scheduler's result
+ * for it; `eventTime` is when the review was made, `appliedAt` the time its schedule is stamped with.
+ */
+export function practiceTransition(
+  previous: PracticeSrs,
+  next: PracticeSrs,
+  taskType: string | undefined,
+  rating: string | undefined,
+  eventTime: number,
+  appliedAt: number,
+): PracticeTransition {
+  if ((previous.practiceChangedAt ?? 0) > eventTime) return 'none';
+  if (taskType === 'triage') {
+    if (rating === 'again') return 'join';
+    if (rating === 'easy') return 'sayable';
+    return 'none';
+  }
+  if (
+    taskType === 'speak' && rating === 'good' && next.practiceSince !== undefined &&
+    next.fsrsState === FSRS_STATE_REVIEW && (next.stability ?? 0) >= GRADUATION_STABILITY_DAYS &&
+    appliedAt - (previous.lastReviewDate ?? 0) >= GRADUATION_MIN_GAP_DAYS * DAY_MS
+  ) {
+    return 'sayable';
+  }
+  return 'none';
+}
+
+/**
+ * The scheduler's result with the review's membership change applied. Fields are deleted, never set to null or
+ * undefined, so a stored schedule never carries an empty membership key.
+ */
+export function applyPracticeMembership<T extends PracticeSrs>(
+  previous: PracticeSrs,
+  next: T,
+  taskType: string | undefined,
+  rating: string | undefined,
+  eventTime: number,
+  appliedAt: number,
+): T {
+  const transition = practiceTransition(previous, next, taskType, rating, eventTime, appliedAt);
+  if (transition === 'none') return next;
+  const result: T = { ...next, practiceChangedAt: appliedAt };
+  if (transition === 'join') {
+    result.practiceSince = previous.practiceSince ?? appliedAt;
+    delete result.sayableAt;
+  } else {
+    result.sayableAt = appliedAt;
+    delete result.practiceSince;
+  }
+  return result;
+}
+
+/** Where an item stands in Today's loop, from its schedule alone. */
+export type LoopStanding = 'new' | 'practicing' | 'sayable' | 'reviewed';
+
+export function loopStanding(srs: (PracticeSrs & { totalReviews?: number }) | undefined): LoopStanding {
+  if (!srs || !(Number(srs.totalReviews) > 0)) return srs?.practiceSince !== undefined ? 'practicing' : 'new';
+  if (srs.practiceSince !== undefined) return 'practicing';
+  if (srs.sayableAt !== undefined) return 'sayable';
+  return 'reviewed';
+}
+
+/** Whether a stored schedule's membership fields are well formed: absent, or a finite time at or after 0. */
+export function practiceFieldsValid(srs: Record<string, unknown>): boolean {
+  for (const key of ['practiceSince', 'sayableAt', 'practiceChangedAt'] as const) {
+    if (!(key in srs)) continue;
+    const value = srs[key];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return false;
+  }
+  return true;
+}

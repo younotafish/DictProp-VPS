@@ -126,6 +126,14 @@ export interface SRSData {
   fsrsState?: number;
   learningSteps?: number;
   scheduledDays?: number;
+
+  // Today's practice membership (server/src/shared/practice.ts), changed only by reviews. Absent keys mean "no".
+  /** In practice since this time. */
+  practiceSince?: number;
+  /** One you can say since this time. */
+  sayableAt?: number;
+  /** When membership last changed. */
+  practiceChangedAt?: number;
 }
 
 // Combined type for storage

@@ -32,7 +32,8 @@ export interface StudyContent {
 }
 
 /** The tasks a study session sets; 'quick' is the review popup's. */
-export type StudyTaskType = Exclude<ReviewTaskType, 'quick'>;
+/** Study's four prompts: the other task types belong to Got it ('quick') and Today's loop. */
+export type StudyTaskType = Extract<ReviewTaskType, 'meaning' | 'production' | 'cloze' | 'listening'>;
 
 /**
  * Whether a card is due: studied before, and its next review has come ('due' in services/sentenceReviewState.ts).
