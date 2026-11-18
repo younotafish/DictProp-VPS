@@ -50,6 +50,7 @@ test('the prompt lists every scene under its domain with its title, blurb and bo
     }
   }
   assert.match(THEME_SYSTEM_PROMPT, /most naturally say or hear it/);
+  assert.match(THEME_SYSTEM_PROMPT, /a setting or a role that has a scene of its own .* that scene wins/);
   assert.match(THEME_SYSTEM_PROMPT, /Never invent an id/);
   assert.match(THEME_SYSTEM_PROMPT, /\{"a":\[\{"i":1,"t":"scene-id"\}/);
   assert.equal(

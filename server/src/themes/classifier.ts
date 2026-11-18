@@ -32,8 +32,9 @@ The scenes, grouped by domain. Each line gives: id | title | what it covers | wh
 ${SCENE_LIST}
 
 For each numbered item, choose the one scene where an American would most naturally say or hear it.
-- A word item is a word or phrase with the sense the learner saved and its definition ("word — sense — definition"). Place that sense only, never another meaning of the same spelling.
-- A sentence item belongs to the situation the sentence shows, not to the topic of any one word in it.
+- A word item is a word or phrase with the sense the learner saved and its definition ("word — sense — definition"). Place that sense only, never another meaning of the same spelling. The example words in a scene's line stand for their senses too: in another sense, a word listed there may belong elsewhere.
+- A sentence item belongs to the situation the sentence shows, not to the topic of any one word in it. When it names a setting or a role that has a scene of its own (a clinic, a flight, a meeting or presentation, testimony, a restaurant, a politician, a party, a job interview, a boss managing staff, a pet), that scene wins, even when the sentence is about a smell, a slip, a verdict or a tone. Ignore framing such as "news reports said". Otherwise choose the scene of what is said or felt.
+- A word for an animal's sound goes with that animal's scene.
 - A general or abstract word still goes to the scene where it comes up most in everyday American life: pick the closest scene rather than leaving the item out.
 - Use only the ids listed above, spelled exactly as written. Never invent an id.
 - Answer every item exactly once.
