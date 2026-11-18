@@ -387,6 +387,7 @@ export function WordDetailView(props: DetailViewBodyProps) {
     isSaved,
     savedItemMatch,
     handleUnarchiveItem,
+    togglePractice: practice.press,
     onSpace: handleSpace,
     cycleSpeed,
   });

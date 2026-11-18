@@ -480,6 +480,7 @@ export function SentenceReviewView({
     handleRemember,
     handleResetSRS,
     handleDeleteItem,
+    togglePractice: practice.press,
     onSpace: handleSpace,
   });
 

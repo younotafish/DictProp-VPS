@@ -108,6 +108,17 @@ test('each change that shipped with this release has its row', () => {
   assert.ok(hasRow(at('trackpad'), ['Two-finger swipe ←/→'], 'In a sentence: the sentence or its analysis page'));
 });
 
+test('B adds the card or saved sentence on screen to practice, and pressed again marks it as one you can say', () => {
+  // views/detail/cardKeys.ts hands B to the practice pill's press (views/detail/usePracticeToggle.ts) in both views.
+  assert.ok(hasRow(section(mac, 'card').rows, ['B'], 'Add the card to practice; press again to mark it as one you can say'));
+  assert.ok(hasRow(section(mac, 'sentences').rows, ['B'], 'Add a saved sentence to practice; press again to mark it as one you can say'));
+  // Each sits right after Got it, the other decision about the item on screen.
+  for (const id of ['card', 'sentences'] as const) {
+    const keys = section(mac, id).rows.map(row => row.keys.join(' '));
+    assert.equal(keys.indexOf('B'), keys.indexOf('R') + 1, id);
+  }
+});
+
 test('during auto-play the blank-space tap or click, E and Space pause or resume it, and a long press opens its panel', () => {
   const during = 'during auto-play, pause or resume it';
   assert.ok(hasRow(section(phone, 'touch').rows, ['Tap'], `In a sentence, on blank space: play or pause, or at 85% or more start it again; ${during}`));
@@ -316,8 +327,8 @@ test('every key a key table acts on has a row in that table\'s section of the sh
 test('the cross-check sees the keys each table\'s own tests pin, and a modifier only where it changes the key', () => {
   const chords = (id: ShortcutSection['id']) => new Set(tableChords(KEY_TABLES.find(table => table.section === id)!.contexts).keys());
   const expected: Partial<Record<ShortcutSection['id'], string[]>> = {
-    card: ['H', 'P', 'E', 'R', 'Shift+R', 'S', 'D', 'A', 'Space', '+', '=', 'Mod+1', 'Mod+4'],
-    sentences: ['P', 'E', 'R', 'Shift+R', 'D', 'Space', 'Mod+1', 'Mod+4'],
+    card: ['H', 'P', 'E', 'R', 'Shift+R', 'B', 'S', 'D', 'A', 'Space', '+', '=', 'Mod+1', 'Mod+4'],
+    sentences: ['P', 'E', 'R', 'Shift+R', 'B', 'D', 'Space', 'Mod+1', 'Mod+4'],
     study: ['1', '4', 'U', 'Space', 'Enter', 'R'],
     search: ['←', '→', '↑', '↓', 'S', 'Shift+S', 'P', 'E', 'Space', 'Mod+1', 'Mod+4'],
     popup: ['←', '→', 'Space', 'P', 'E', 'R', 'Shift+R', 'D', 'Enter', 'Mod+1', 'Mod+4'],
@@ -327,6 +338,8 @@ test('the cross-check sees the keys each table\'s own tests pin, and a modifier 
     for (const key of keys) assert.ok(found.has(key), `${id}: ${key}`);
     for (const key of ['Mod+R', 'Mod+5', 'Esc', 'Tab']) assert.ok(!found.has(key), `${id}: no ${key}`);
   }
+  // Shift or Caps Lock leaves the practice pill's B alone, and ⌘B stays the browser's.
+  for (const id of ['card', 'sentences'] as const) assert.ok(!chords(id).has('Shift+B') && !chords(id).has('Mod+B'), id);
   // Shift and Caps Lock leave a card's A alone, and ⌘ leaves the search sheet's arrows alone.
   assert.ok(!chords('card').has('Shift+A'));
   assert.ok(!chords('search').has('Mod+←'));
