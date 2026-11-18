@@ -177,7 +177,8 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   │       ├── tts.ts         # /api/tts/* — cached clips and timings, generation, the backfill
 │   │       └── ai.ts          # /api/analyze, /api/compare, /api/extract-vocabulary, /api/transcribe
 │   └── package.json
-├── views/                     # Notebook, StudyEnhanced, SentencesView, RealLifeView, EssaysView, DetailView
+├── views/                     # Notebook, StudyEnhanced (Card review), SentencesView, RealLifeView, EssaysView, DetailView
+│   ├── today/                 # The Today tab: the plan, the themes browser, the set and practice player, their keys and audio
 │   ├── detail/                # The card view: SentenceReviewView, WordDetailView and their hooks
 │   ├── notebook/              # The Notebook's parts
 │   └── reading/               # The Real Life and Essays screens
