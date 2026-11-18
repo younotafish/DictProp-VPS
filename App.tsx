@@ -48,7 +48,7 @@ const DuplicatesModal = lazyScreen('duplicates-modal', () => import('./component
 const CardReviewPopup = lazyScreen('card-review-popup', () => import('./components/CardReviewPopup').then(module => ({ default: React.memo(module.CardReviewPopup) })));
 const KeyboardHelpModal = lazyScreen('keyboard-help', () => import('./components/KeyboardHelpModal').then(module => ({ default: module.KeyboardHelpModal })));
 const RefusedReviewsDialog = lazyScreen('refused-reviews', () => import('./components/RefusedReviewsDialog').then(module => ({ default: module.RefusedReviewsDialog })));
-const StudyEnhanced = lazyScreen('study', () => import('./views/StudyEnhanced').then(module => ({ default: React.memo(module.StudyEnhanced) })));
+const TodayView = lazyScreen('study', () => import('./views/today/TodayView').then(module => ({ default: React.memo(module.TodayView) })));
 const AppNavigation = lazyScreen('navigation', () => import('./components/AppNavigation').then(module => ({ default: React.memo(module.default) })));
 const SentencesView = lazyScreen('sentences', () => import('./views/SentencesView').then(module => ({ default: React.memo(module.SentencesView) })));
 const RealLifeView = lazyScreen('real-life', () => import('./views/RealLifeView').then(module => ({ default: React.memo(module.RealLifeView) })));
@@ -63,7 +63,7 @@ const StuckSyncPill = lazyScreen('stuck-sync', () => import('./components/JobPil
 const RefusedChangesNotice = lazyScreen('refused-changes', () => import('./components/RefusedChanges').then(module => ({ default: module.RefusedChangesNotice })));
 const TAB_SCREENS = {
   notebook: NotebookView,
-  study: StudyEnhanced,
+  study: TodayView,
   sentences: SentencesView,
   'real-life': RealLifeView,
   essays: EssaysView,
@@ -384,14 +384,18 @@ function SignedInApp({ user }: { user: AuthUser }) {
         </TabScreen>
 
         <TabScreen shown={currentView === 'study'}>
-          <StudyEnhanced
+          <TodayView
             userId={user.id}
-            items={studyItems}
+            items={library.savedItems}
+            studyItems={studyItems}
             reviewHistory={reviewHistory}
             onReview={updateSRS}
             onUndoReview={undoSRSReview}
             onOpenExampleSentence={handleOpenStudyExample}
             onViewCards={handleViewStoredItem}
+            onOpenSentence={handleViewSentence}
+            onLazyLoadImage={lazyLoadImage}
+            undoOffered={!!undoMessage}
             interactionLocked={!!detailContext}
             onScroll={handleScroll}
           />
