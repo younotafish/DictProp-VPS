@@ -78,6 +78,11 @@ test('a session\'s record keeps its place, choices and attempts, and comes back 
 
   const meeting = startSetSession('s2', { themeId: null, itemIds: ['x'] }, T0);
   assert.deepEqual(decodeLoopSession(encodeLoopSession(meeting, USER, T0), USER, T0)?.session, meeting);
+
+  // A choice made after the hint keeps that, so Back can keep Can say it closed.
+  const hinted = revealAnswer(takeHint(startSetSession('s3', { themeId: null, itemIds: ['x', 'y'] }, T0)));
+  const chosen = chooseInMeet(hinted, vocabItem('x', 'x'), 'passive', 'e-x', T0)!.advance(hinted);
+  assert.deepEqual(decodeLoopSession(encodeLoopSession(chosen, USER, T0), USER, T0)?.session, chosen);
 });
 
 test('a record is taken up only by its user, within 12 hours, and never from the future', () => {
@@ -109,6 +114,9 @@ test('a damaged record reads as none, whatever part of it is wrong', () => {
     ['a Meet past the set', withSession(good, session => { (session.meet as { index: number }).index = 3; })],
     ['a choice for an item not in the set', withSession(good, session => {
       (session.meet as { choices: Record<string, unknown> }).choices.zz = { choice: 'say', eventId: 'e', at: T0, totalReviews: 1 };
+    })],
+    ['a choice\'s hint that is neither absent nor true', withSession(good, session => {
+      (session.meet as { choices: Record<string, { hinted?: unknown }> }).choices.w1.hinted = false;
     })],
     ['an unknown choice', withSession(good, session => {
       (session.meet as { choices: Record<string, { choice: string }> }).choices.w1.choice = 'known';

@@ -37,6 +37,8 @@ export interface OwnReview {
 
 export interface MeetChoiceRecord extends OwnReview {
   choice: MeetChoice;
+  /** The hint showed before the choice, so Back brings the item back with Can say it still closed (meetChoiceOpen). */
+  hinted?: true;
 }
 
 /** One item's attempt in a run. */
@@ -311,10 +313,18 @@ export function takeHint<S extends LoopSession>(session: S): S {
 }
 
 /**
+ * Whether a Meet choice is open on the card shown. Can say it closes once the hint has shown: an item that needed a
+ * hint can't yet be said unaided, which is what Can say it claims, so it is practiced or kept passive instead.
+ */
+export const meetChoiceOpen = (session: Pick<LoopSession, 'hintShown'>, choice: MeetChoice): boolean =>
+  choice !== 'say' || !session.hintShown;
+
+/**
  * The choice made for the item being met, once its answer shows: the triage review to record now, and `advance`, which
  * keeps the choice (with the count its review leaves) and moves on, or, after Practice, keeps the card on its answer to
  * say it twice before Next (finishEncoding). Null when the item can't be chosen now: not the one being met, its answer
- * not shown, or no longer new (met elsewhere, deleted or archived), which settleSession then passes.
+ * not shown, the choice closed (meetChoiceOpen), or no longer new (met elsewhere, deleted or archived), which
+ * settleSession then passes.
  */
 export function chooseInMeet(
   session: SetSession,
@@ -324,10 +334,15 @@ export function chooseInMeet(
   now: number,
 ): { review: LoopReview; advance: (current: SetSession) => SetSession } | null {
   const itemId = item.data.id;
-  if (session.phase !== 'meet' || currentItemId(session) !== itemId || session.step !== 'answer' || !isMeetItemLive(item)) {
+  if (
+    session.phase !== 'meet' || currentItemId(session) !== itemId || session.step !== 'answer' ||
+    !meetChoiceOpen(session, choice) || !isMeetItemLive(item)
+  ) {
     return null;
   }
-  const record: MeetChoiceRecord = { choice, eventId, at: now, totalReviews: (Number(item.srs?.totalReviews) || 0) + 1 };
+  const record: MeetChoiceRecord = {
+    choice, eventId, at: now, totalReviews: (Number(item.srs?.totalReviews) || 0) + 1, ...(session.hintShown ? { hinted: true as const } : {}),
+  };
   const review: LoopReview = {
     itemId,
     rating: MEET_RATINGS[choice],
@@ -383,12 +398,14 @@ export function meetBackTarget(session: SetSession): MeetUndo | null {
 
 /**
  * The session once the undo of `target` (undoSRSReview of its event) has gone through: back at its item, the answer
- * showing, the choice gone and a round not yet answered set aside (it is made again when the Meet ends). An undo that
+ * showing (with the hint as it was), the choice gone and a round not yet answered set aside (it is made again when the
+ * Meet ends). An undo that
  * comes back after the session ended, or once another started, changes nothing. A failed undo changes nothing either:
  * the screen says why (studySession's undoFailureText) and stays.
  */
 export function applyMeetBack(current: SetSession | null, target: MeetUndo, now: number): SetSession | null {
-  if (!current || current.id !== target.sessionId || current.meet.choices[target.itemId]?.eventId !== target.eventId) return current;
+  const undone = current?.meet.choices[target.itemId];
+  if (!current || !undone || current.id !== target.sessionId || undone.eventId !== target.eventId) return current;
   const { [target.itemId]: _undone, ...choices } = current.meet.choices;
   return {
     ...current,
@@ -396,7 +413,7 @@ export function applyMeetBack(current: SetSession | null, target: MeetUndo, now:
     meet: { index: target.index, choices },
     round: { queue: [], index: 0, attempts: {} },
     step: 'answer',
-    hintShown: false,
+    hintShown: undone.hinted === true,
     promptStartedAt: now,
   };
 }

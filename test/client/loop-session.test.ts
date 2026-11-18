@@ -16,6 +16,7 @@ import {
   isRunItemLive,
   isSessionOver,
   meetBackTarget,
+  meetChoiceOpen,
   practiceQueue,
   reviewSessionId,
   revealAnswer,
@@ -169,6 +170,20 @@ test('a choice waits for the answer, and is refused for an item no longer new, d
   assert.equal(chooseInMeet(revealed, lib.get('w0')!, 'say', 'e', T0 + 1_000), null, 'met elsewhere meanwhile');
   assert.equal(chooseInMeet(revealed, { ...vocabItem('w0', 'word0'), isArchived: true }, 'say', 'e', T0), null);
   assert.equal(chooseInMeet({ ...revealed, phase: 'round' }, vocabItem('w0', 'word0'), 'say', 'e', T0), null);
+});
+
+test('once the hint has shown, Can say it stays closed for that item, also after Back, while Practice and Passive stay open', () => {
+  const lib = library(words(2));
+  const hinted = revealAnswer(takeHint(startSetSession('s1', { themeId: null, itemIds: ['w0', 'w1'] }, T0)));
+  assert.deepEqual((['practice', 'passive', 'say'] as const).map(choice => meetChoiceOpen(hinted, choice)), [true, true, false]);
+  assert.equal(chooseInMeet(hinted, lib.get('w0')!, 'say', 'e', T0 + 1_000), null);
+  const step = chooseInMeet(hinted, lib.get('w0')!, 'passive', 'e-1', T0 + 1_000)!;
+  lib.record(step.review);
+  const moved = settleSession(step.advance(hinted), lib.get, idMaker(), T0 + 1_000);
+  assert.deepEqual(moved.meet.choices.w0, { choice: 'passive', eventId: 'e-1', at: T0 + 1_000, totalReviews: 1, hinted: true });
+  assert.deepEqual([currentItemId(moved), meetChoiceOpen(moved, 'say')], ['w1', true], 'the next card starts without the hint');
+  const back = applyMeetBack(moved, meetBackTarget(moved)!, T0 + 2_000)!;
+  assert.deepEqual([currentItemId(back), back.step, back.hintShown, meetChoiceOpen(back, 'say')], ['w0', 'answer', true, false]);
 });
 
 test('the Meet passes items that are no longer new, deleted or archived, and its end starts the round over the items chosen for practice, in the order met', () => {

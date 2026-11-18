@@ -53,8 +53,9 @@ export function encodeLoopSession(session: LoopSession, userId: string, now: num
 
 function isChoice(value: unknown): value is MeetChoiceRecord {
   if (!isRecord(value)) return false;
-  const { choice, eventId, at, totalReviews } = value;
+  const { choice, eventId, at, totalReviews, hinted } = value;
   return (choice === 'practice' || choice === 'passive' || choice === 'say') && isId(eventId) && isTime(at) &&
+    (hinted === undefined || hinted === true) &&
     isCount(totalReviews) && totalReviews > 0;
 }
 
