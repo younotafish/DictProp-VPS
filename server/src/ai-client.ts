@@ -12,7 +12,8 @@ import { env } from './env.js';
 import { proxyFetch, type FetchLike } from './proxy-fetch.js';
 
 const DEEPINFRA_CHAT_URL = 'https://api.deepinfra.com/v1/openai/chat/completions';
-const DEEPSEEK_MODEL = 'deepseek-ai/DeepSeek-V4-Flash';
+/** The chat model every AI route asks; work that keeps what it said (the theme classifier) records it. */
+export const DEEPSEEK_MODEL = 'deepseek-ai/DeepSeek-V4-Flash';
 const DEFAULT_TEMPERATURE = 0.7;
 // One extra attempt for a transient failure (5xx, burst 429, network, malformed reply). Never for timeouts.
 const TRANSIENT_RETRIES = 1;
