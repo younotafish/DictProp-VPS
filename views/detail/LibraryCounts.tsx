@@ -9,7 +9,8 @@ export const LibraryCounts = React.memo(function LibraryCounts({ savedItems }: {
   const { memorizedCount, dueCount } = useMemo(() => ({
     // The meanings (one card each) at 70% memory or more, archived ones left out.
     memorizedCount: savedItems.filter(i => !i.isDeleted && !i.isArchived && (i.srs?.memoryStrength ?? 0) >= 70).length,
-    // Due as the Study dashboard counts it: reviewed before and due now. A never-reviewed card waits with the new ones.
+    // Due as the Study dashboard counts it: reviewed before and due now, Today's practice and the cards you can say left
+    // out. A never-reviewed card enters through Today's sets.
     dueCount: countDueSpellings(savedItems, Date.now()),
   }), [savedItems]);
   const memorizedLabel = `${memorizedCount} ${memorizedCount === 1 ? 'meaning' : 'meanings'} at 70% memory or more`;
