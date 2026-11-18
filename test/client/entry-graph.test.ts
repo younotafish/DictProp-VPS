@@ -61,7 +61,10 @@ const LAZY_ONLY = [
   'views/detail/practiceToggle.ts',
   'views/detail/usePracticeToggle.ts',
   'views/detail/PracticePill.tsx',
-  // Today's badge loads with the tab bar.
+  // Today's screens load with the Study tab's screen, and its badge with the tab bar.
+  'views/today/todayKeys.ts',
+  'views/today/todayModel.ts',
+  'views/today/loopAudio.ts',
   'views/today/practiceBadge.ts',
 ];
 
