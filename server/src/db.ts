@@ -41,6 +41,7 @@ export {
   applyReviewEvent,
   getReviewEvents,
   getReviewHistory,
+  getSetDays,
   undoReviewEvent,
   type AppliedReviewResult,
   type ReviewEvent,

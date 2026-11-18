@@ -1,16 +1,35 @@
 import { Hono } from 'hono';
-import { applyReviewEvent, getReviewHistory, undoReviewEvent } from '../db.js';
+import { applyReviewEvent, getReviewHistory, getSetDays, undoReviewEvent } from '../db.js';
 import type { AppEnv } from '../middleware/auth.js';
 import { readJsonObject } from '../middleware/json-body.js';
+import type { SetDaysResponse } from '../shared/review.js';
 import { checkStoredItem, isItemId, MAX_ID_LENGTH, parseReviewEvent, type ValidStoredItem } from '../validation.js';
 
 export const reviewRoutes = new Hono<AppEnv>();
+
+// Real UTC offsets run from 12 hours west to 14 east.
+const MAX_TZ_OFFSET_MINUTES = 14 * 60;
+
+/** Minutes east of UTC, or 0 (UTC) for a value that names no real offset. */
+function parseTzOffset(value: string | undefined): number {
+  const minutes = Number(value);
+  return Number.isInteger(minutes) && Math.abs(minutes) <= MAX_TZ_OFFSET_MINUTES ? minutes : 0;
+}
 
 reviewRoutes.get('/reviews/history', (c) => {
   const userId = c.get('user').id;
   const recentSince = Number(c.req.query('recentSince'));
   if (!Number.isFinite(recentSince) || recentSince < 0) return c.json({ error: 'Invalid recentSince parameter' }, 400);
   return c.json(getReviewHistory(userId, recentSince));
+});
+
+// Today's streak, for the days before today: per local day, how many items were first met in a set. A missing or
+// impossible offset reads as UTC instead of failing, since Today can't show its streak without an answer.
+reviewRoutes.get('/reviews/set-days', (c) => {
+  const userId = c.get('user').id;
+  const body: SetDaysResponse = { days: getSetDays(userId, parseTzOffset(c.req.query('tzOffset'))) };
+  c.header('Cache-Control', 'private, no-store');
+  return c.json(body);
 });
 
 // Atomically append an idempotent review event and advance the latest server schedule.

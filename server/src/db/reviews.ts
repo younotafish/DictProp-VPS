@@ -50,7 +50,7 @@ function rowToReviewEvent(row: ReviewEventColumns): ReviewEvent {
   };
 }
 
-const reviewStmts = {
+export const reviewStmts = {
   insert: db.prepare(`INSERT OR IGNORE INTO review_events
     (id, user_id, item_id, item_type, reviewed_at, previous_step, next_step, rating, task_type, duration_ms, session_id)
     VALUES (@id, @user_id, @item_id, @item_type, @reviewed_at, @previous_step, @next_step, @rating, @task_type, @duration_ms, @session_id)`),
@@ -60,6 +60,13 @@ const reviewStmts = {
     WHERE user_id = ? AND reviewed_at >= ? AND reviewed_at < ? AND undone_at IS NULL ORDER BY reviewed_at`).pluck(),
   countBefore: db.prepare(`SELECT COUNT(*) FROM review_events
     WHERE user_id = ? AND reviewed_at < ? AND undone_at IS NULL`).pluck(),
+  // An item first met in one of Today's sets: its choice (triage) made while it had no reviews, in a 'set:' session.
+  // The day is the review's date shifted by the asked offset, in milliseconds.
+  setDays: db.prepare(`SELECT date((reviewed_at + ?) / 1000, 'unixepoch') AS day, COUNT(DISTINCT item_id) AS items
+    FROM review_events
+    WHERE user_id = ? AND reviewed_at >= ? AND task_type = 'triage' AND previous_step = 0 AND session_id LIKE 'set:%'
+      AND undone_at IS NULL
+    GROUP BY day`),
   byId: db.prepare(`SELECT id, user_id, item_id, item_type, reviewed_at, previous_step, next_step, rating, task_type, duration_ms, session_id, undone_at
     FROM review_events WHERE id = ?`),
   insertItemSnapshot: db.prepare(`INSERT INTO review_event_items (event_id, item_id, previous_srs, applied_srs, base_revision, applied_revision)
@@ -93,6 +100,18 @@ export function getReviewHistory(userId: string, recentSince: number): ReviewHis
     olderTimes: reviewStmts.timesBetween.all(userId, recentSince - REVIEW_TIMES_REACH, recentSince) as number[],
     olderCount: reviewStmts.countBefore.get(userId, recentSince) as number,
   };
+}
+
+/** As far back as Today's streak reaches: a little over a year of days. */
+const SET_DAYS_REACH = 400 * 24 * 60 * 60 * 1000;
+
+/**
+ * For Today's streak: how many distinct items were first met in a set on each day of the last 400, as 'YYYY-MM-DD'
+ * under `tzOffsetMinutes` (minutes east of UTC, the device's own days). Undone reviews don't count.
+ */
+export function getSetDays(userId: string, tzOffsetMinutes: number, now = Date.now()): Record<string, number> {
+  const rows = reviewStmts.setDays.all(tzOffsetMinutes * 60_000, userId, now - SET_DAYS_REACH) as Array<{ day: string; items: number }>;
+  return Object.fromEntries(rows.map(row => [row.day, row.items]));
 }
 
 export interface AppliedReviewResult {
