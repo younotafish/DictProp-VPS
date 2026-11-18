@@ -15,7 +15,6 @@ import type { ReviewEvent, ReviewRating, ReviewTaskType, SRSData, StoredItem } f
 
 const USER = 'practice-fields-user';
 const MINUTE = 60_000;
-const DAY = 86_400_000;
 const wire = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const asClientItem = (item: StoredItemRecord): StoredItem => JSON.parse(JSON.stringify(item));
 const membershipOf = (srs: object | undefined) => Object.fromEntries(['practiceSince', 'sayableAt', 'practiceChangedAt']
@@ -129,4 +128,78 @@ test('a reset made here survives an undo of the review before it, which the serv
   assert.equal(pulled('undo-under-reset').srs.lastReviewDate, 0);
   push(reconciled);
   assert.equal(pulled('undo-under-reset').srs.lastReviewDate, now - MINUTE);
+});
+
+test('migrating or ensuring a schedule keeps its membership, whatever else it brings up to date', () => {
+  const practicing = { practiceSince: 5, practiceChangedAt: 5 };
+  // A fixed-schedule row from before display strength, and a never-reviewed sentence carrying a word's seed values.
+  const legacy = { id: 'legacy', type: 'vocab', nextReview: 9, interval: 1440, lastReviewDate: 5, totalReviews: 2, correctStreak: 2,
+    stability: 3, ...practicing } as SRSData;
+  const sentence = { ...SRSAlgorithm.createNew('sentence', 'sentence', 1), stability: 9, memoryStrength: 42, sayableAt: 7, practiceChangedAt: 7 };
+  assert.equal(SRSAlgorithm.needsMigration(legacy, 'vocab'), true);
+  assert.deepEqual(membershipOf(SRSAlgorithm.migrate(legacy)), practicing);
+  assert.deepEqual(membershipOf(SRSAlgorithm.ensure(legacy, 'legacy', 'vocab')), practicing);
+  assert.deepEqual(membershipOf(SRSAlgorithm.migrate(sentence)), { sayableAt: 7, practiceChangedAt: 7 });
+});
+
+test("a device's merge takes the winning schedule whole, membership included, by every rule it merges by", () => {
+  const at = (lastReviewDate: number, totalReviews: number, membership: Partial<SRSData>): SRSData =>
+    ({ ...SRSAlgorithm.createNew('merged', 'vocab', 1), lastReviewDate, totalReviews, ...membership });
+  const practicing = at(10, 2, { practiceSince: 10, practiceChangedAt: 10 });
+  const sayable = at(20, 3, { sayableAt: 20, practiceChangedAt: 20 });
+  const synced = (item: StoredItem, revision: number): StoredItem =>
+    ({ ...item, serverRevision: revision, lastSyncedHash: getItemContentHash(item) });
+
+  // A clean copy takes the server's schedule at a newer revision, even an older one (an undo elsewhere).
+  const clean = synced(vocabItem('merged', sayable), 1);
+  assert.deepEqual(membershipOf(mergeItem(clean, { ...vocabItem('merged', practicing), serverRevision: 2 }).srs), membershipOf(practicing));
+  // An unsynced copy keeps its newer review, and loses to the server's newer one.
+  const reviewedHere: StoredItem = { ...synced(vocabItem('merged', practicing), 1), srs: sayable };
+  assert.deepEqual(membershipOf(mergeItem(reviewedHere, { ...vocabItem('merged', practicing), serverRevision: 2 }).srs), membershipOf(sayable));
+  const editedHere: StoredItem = { ...synced(vocabItem('merged', practicing), 1), updatedAt: 5 };
+  assert.deepEqual(membershipOf(mergeItem(editedHere, { ...vocabItem('merged', sayable), serverRevision: 2 }).srs), membershipOf(sayable));
+  // A newer passive listen merges in beside it.
+  const listened = { ...vocabItem('merged', { ...practicing, lastExposureDate: 99 }), serverRevision: 2 };
+  const merged = mergeItem(clean, listened).srs;
+  assert.equal(merged.lastExposureDate, 99);
+  assert.deepEqual(membershipOf(merged), membershipOf(practicing));
+});
+
+test('the optimistic schedule a queued review left, laid over the library at launch, keeps its membership', () => {
+  const item = vocabItem('overlaid');
+  const { copy, event } = recordReview(item, 'again', 1_000, 'triage');
+  const [overlaid] = overlayPendingReviews([item], [{ event, itemIds: ['overlaid'], optimisticSrs: { overlaid: copy.srs } }]);
+  assert.deepEqual(membershipOf(overlaid.srs), { practiceSince: 1_000, practiceChangedAt: 1_000 });
+});
+
+test('membership made on one device reaches another through the review, a push and a pull, and an undo takes it back on both', () => {
+  upsertItem(vocabItem('round-trip'), USER);
+  const now = Date.now();
+  // Device A puts the item in practice; its outbox delivers the review.
+  let deviceA = pulled('round-trip');
+  const join = recordReview(deviceA, 'again', now - 3 * MINUTE, 'triage');
+  deviceA = deliver(join.copy, join.event);
+  assert.deepEqual(membershipOf(deviceA.srs), { practiceSince: now - 3 * MINUTE, practiceChangedAt: now - 3 * MINUTE });
+  assert.equal(isItemDirty(deviceA), false);
+  // A content edit on A carries the schedule in its push, and the server keeps the membership.
+  deviceA = push({ ...deviceA, data: { ...deviceA.data, mnemonic: 'my note' }, updatedAt: now - 2 * MINUTE });
+  // Device B pulls it, then gives it a Got it, which schedules but changes no membership.
+  let deviceB = pulled('round-trip');
+  assert.deepEqual(membershipOf(deviceB.srs), membershipOf(deviceA.srs));
+  const gotIt = recordReview(deviceB, 'good', now - MINUTE, 'quick');
+  deviceB = deliver(gotIt.copy, gotIt.event);
+  assert.equal(deviceB.srs.totalReviews, 2);
+  assert.deepEqual(membershipOf(deviceB.srs), membershipOf(deviceA.srs));
+  // B marks it as one it can say, then takes that back.
+  const sayable = recordReview(deviceB, 'easy', now, 'triage');
+  deviceB = deliver(sayable.copy, sayable.event);
+  assert.deepEqual(membershipOf(deviceB.srs), { sayableAt: now, practiceChangedAt: now });
+  const undone = undoReviewEvent(sayable.event.id, USER)!;
+  deviceB = reconcileReviewedItem(deviceB, asClientItem(undone.items[0]), undone.baseRevisions['round-trip']);
+  assert.deepEqual(membershipOf(deviceB.srs), membershipOf(deviceA.srs));
+  // A's next pull agrees.
+  const fromServer = pulled('round-trip');
+  deviceA = trackServerContent(mergeDatasets([deviceA], [fromServer]), [fromServer])[0];
+  assert.deepEqual(deviceA.srs, deviceB.srs);
+  assert.deepEqual(membershipOf(deviceA.srs), { practiceSince: now - 3 * MINUTE, practiceChangedAt: now - 3 * MINUTE });
 });

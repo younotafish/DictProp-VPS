@@ -15,3 +15,11 @@ test('the scripts repair exactly the SRS counters validation requires', () => {
     assert.equal(validateStoredItem(stored({ ...repaired, [field]: -1 })), `item.srs.${field} is invalid`, field);
   }
 });
+
+test("the scripts' rebuilt schedule keeps Today's practice membership as stored", () => {
+  const membership = { practiceSince: 5, practiceChangedAt: 5 };
+  const rebuilt = normalizedSrs({ type: 'vocab', data: { id: 'word' } }, { totalReviews: 2, lastReviewDate: 5, ...membership });
+  assert.equal(validateStoredItem(stored(rebuilt)), null);
+  assert.deepEqual({ practiceSince: rebuilt.practiceSince, practiceChangedAt: rebuilt.practiceChangedAt }, membership);
+  assert.equal('sayableAt' in rebuilt, false);
+});
