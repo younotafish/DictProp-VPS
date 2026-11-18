@@ -136,23 +136,30 @@ export interface PracticePressDeps {
 /**
  * The pill's press, which B shares. It records the change's review under a new event id and offers to take back that
  * review by the id, so a later press, or Got it, is never what an undo takes back. Ignored: the same item's press
- * within PRACTICE_PRESS_WINDOW_MS, and one while that item's undo is on its way, which would land on top of the review
+ * within PRACTICE_PRESS_WINDOW_MS; one while that item's last press is still being recorded and the pill still shows
+ * the standing it was made from (the first review loads the scheduler, which can outlast the window), which would
+ * record the same change twice; and one while that item's undo is on its way, which would land on top of the review
  * being taken back and so make the server refuse the undo.
  */
 export function createPracticePress(deps: PracticePressDeps): () => void {
   let last: { id: string; at: number } | null = null;
   const undoing = new Set<string>();
+  // Each item whose press is still being recorded, with the standing the press was made from.
+  const recording = new Map<string, boolean>();
   return () => {
     const toggle = deps.toggle();
-    if (!toggle || undoing.has(toggle.itemId)) return;
+    if (!toggle || undoing.has(toggle.itemId) || recording.get(toggle.itemId) === toggle.practicing) return;
     const now = deps.now();
     if (!acceptPracticePress(last, toggle.itemId, now)) return;
     last = { id: toggle.itemId, at: now };
 
     const { rating, undoMessage } = practiceChange(toggle);
     const eventId = deps.createId();
-    Promise.resolve(deps.record(toggle.itemId, rating, { taskType: 'triage', eventId }))
-      .catch(error => warn('Practice change failed:', error));
+    const { itemId, practicing } = toggle;
+    recording.set(itemId, practicing);
+    Promise.resolve(deps.record(itemId, rating, { taskType: 'triage', eventId }))
+      .catch(error => warn('Practice change failed:', error))
+      .finally(() => { if (recording.get(itemId) === practicing) recording.delete(itemId); });
     deps.offerUndo(undoMessage, () => {
       undoing.add(toggle.itemId);
       void undoPracticeChange(deps.undoReview, eventId, toggle.noun, deps.isOnline).then(failure => {

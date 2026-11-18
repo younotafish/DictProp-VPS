@@ -186,6 +186,45 @@ test('a press records a triage review under a new event id, with no session id, 
   assert.deepEqual(done.slice(2), ['record braise-1 easy {"taskType":"triage","eventId":"event-2"}', 'offer Can say “braise”']);
 });
 
+test('a press while the same item\'s last one is still being recorded, its pill unchanged, is ignored past the window too', async () => {
+  const harness = () => {
+    const done: string[] = [];
+    const finish: (() => void)[] = [];
+    const state = { toggle: out as PracticeToggle, clock: 50_000 };
+    const press = createPracticePress({
+      toggle: () => state.toggle,
+      // The first review loads the scheduler, which can take longer than the double-tap window.
+      record: (_itemId, rating) => { done.push(rating); return new Promise<void>(resolve => { finish.push(resolve); }); },
+      undoReview: () => Promise.resolve(true),
+      offerUndo: () => {},
+      showUndoFailure: () => {},
+      now: () => state.clock,
+      createId: () => 'event',
+      isOnline: () => true,
+    });
+    return { press, done, finish, state };
+  };
+
+  const landed = harness();
+  landed.press();
+  landed.state.clock += 2 * PRACTICE_PRESS_WINDOW_MS;
+  landed.press();
+  assert.deepEqual(landed.done, ['again'], 'the pill still shows the standing the first press was made from');
+  // Once the review lands on the device, the pill shows the new standing and a press counts again.
+  landed.state.toggle = inPractice;
+  landed.press();
+  assert.deepEqual(landed.done, ['again', 'easy']);
+
+  // A recording that ends without changing the pill (it failed) doesn't hold the next press back.
+  const failed = harness();
+  failed.press();
+  failed.state.clock += 2 * PRACTICE_PRESS_WINDOW_MS;
+  failed.finish[0]();
+  await settle();
+  failed.press();
+  assert.deepEqual(failed.done, ['again', 'again']);
+});
+
 test('another item\'s press counts at once, and a hidden pill\'s press does nothing', () => {
   const { press, done, state } = pressHarness(out);
   press();

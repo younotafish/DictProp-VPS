@@ -5,8 +5,9 @@ import { useNoticeSlot } from '../../components/noticeSlots';
 import { practicePillLabel, practicePillText, type PracticeToggle } from './practiceToggle';
 
 // One size and shape in both states, so a press changes only the colours: the width holds either text with room to
-// spare, and the pill is as tall as the lesson row's buttons less the same pulls (-my-1), so the row never grows.
-const PILL = '-my-1 inline-flex h-8 min-w-[6.75rem] shrink-0 items-center justify-center gap-1 rounded-full border px-3 text-xs font-semibold transition-colors';
+// spare, and the pill is as tall as the lesson row's buttons less the same pulls (-my-1), so the row never grows. An
+// invisible band above and below (the ::before) makes the touch target 44 px tall without moving anything.
+const PILL = "relative -my-1 inline-flex h-8 min-w-[6.75rem] shrink-0 items-center justify-center gap-1 rounded-full border px-3 text-xs font-semibold transition-colors before:absolute before:inset-x-0 before:-inset-y-1.5 before:content-['']";
 const OUT = 'border-slate-200 bg-white text-slate-600 hover:border-orange-300 hover:bg-orange-50 hover:text-orange-700';
 const IN = 'border-orange-500 bg-orange-500 text-white hover:border-orange-600 hover:bg-orange-600';
 
