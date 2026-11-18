@@ -96,6 +96,38 @@ jobs:
               db.close();
             })();
             NODE
+            echo '=== THEMES ==='
+            # Today's theme sweep: how much of the library has a theme, what the model gave up on, and how recent the
+            # last label is. Counts and the taxonomy's own ids only.
+            docker compose exec -T app node - <<'NODE' || true
+            const Database = require('/app/server/node_modules/better-sqlite3');
+            const db = new Database('/app/data/dictprop.db', { readonly: true });
+            const scalar = (sql, ...args) => Object.values(db.prepare(sql).get(...args))[0];
+            const hasTable = scalar(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'item_themes'`) === 1;
+            if (!hasTable) {
+              console.log(JSON.stringify({ itemThemes: 'no table yet' }));
+            } else {
+              const live = `JOIN items i ON i.id = t.item_id AND i.user_id = t.user_id AND i.is_deleted IS NOT 1 AND i.is_archived IS NOT 1`;
+              console.log(JSON.stringify({
+                eligibleItems: scalar(`SELECT COUNT(*) FROM items WHERE is_deleted IS NOT 1 AND is_archived IS NOT 1
+                  AND (type = 'vocab' OR (type = 'sentence' AND json_extract(data, '$.catalogKind') IS NULL
+                    AND id NOT LIKE 'real-life-sentence:%' AND id NOT LIKE 'essay-sentence:%'))`),
+                rows: scalar('SELECT COUNT(*) FROM item_themes'),
+                liveThemed: scalar(`SELECT COUNT(*) FROM item_themes t ${live} WHERE t.theme_id IS NOT NULL`),
+                liveGivenUp: scalar(`SELECT COUNT(*) FROM item_themes t ${live} WHERE t.theme_id IS NULL AND t.failures >= 3`),
+                liveMissedOnce: scalar(`SELECT COUNT(*) FROM item_themes t ${live} WHERE t.theme_id IS NULL AND t.failures BETWEEN 1 AND 2`),
+                taxonomyVersions: db.prepare('SELECT taxonomy_version AS version, COUNT(*) AS rows FROM item_themes GROUP BY 1').all(),
+                models: db.prepare('SELECT model, COUNT(*) AS rows FROM item_themes GROUP BY 1').all(),
+                maxSeq: scalar(`SELECT COALESCE(MAX(seq), 0) FROM item_themes`),
+                lastLabelledAt: new Date(scalar('SELECT COALESCE(MAX(classified_at), 0) FROM item_themes')).toISOString(),
+                labelledLastHour: scalar('SELECT COUNT(*) FROM item_themes WHERE classified_at >= ?', Date.now() - 60 * 60 * 1000),
+                themesInUse: scalar(`SELECT COUNT(DISTINCT theme_id) FROM item_themes WHERE theme_id IS NOT NULL`),
+                largestThemes: db.prepare(`SELECT t.theme_id AS theme, COUNT(*) AS items FROM item_themes t ${live}
+                  WHERE t.theme_id IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 12`).all(),
+              }));
+            }
+            db.close();
+            NODE
             echo '=== CONTAINERS ==='
             docker compose ps
             docker stats --no-stream || true

@@ -52,7 +52,7 @@ git add <files> && git commit -m "description" && git push vps main
 - After a healthy release the deploy removes the images no release runs. It never prunes the BuildKit cache while the app is live.
 - `check.yml` runs the same `npm run check` for pull requests only, since the deploy's verify job covers every push to main.
 - `dependency-audit.yml` runs `npm audit --omit=dev --audit-level=high` in `server/` every Monday at 06:17 UTC (or by hand). It fails, emailing the owner, while a high or critical advisory is open. It is not part of the deploy gate.
-- `recover-production.yml` restarts the app container and waits for its health check. `diagnose-production.yml` prints the disk, the database's storage counters, duplicate saved sentences, Docker storage and the containers, all read-only. Its log is public, so it prints counts and ids only.
+- `recover-production.yml` restarts the app container and waits for its health check. `diagnose-production.yml` prints the disk, the database's storage counters, duplicate saved sentences, Today's theme coverage (how much of the library the sweep has sorted, and how recently), Docker storage and the containers, all read-only. Its log is public, so it prints counts and ids only.
 
 To check deploy status:
 ```bash
