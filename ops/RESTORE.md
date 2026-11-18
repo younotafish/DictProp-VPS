@@ -91,7 +91,7 @@ When the disk or the VPS is gone, from an off-site copy:
 
 ## After any restore: every device
 
-Until backup lineage ships (critic-02 in the 2026-11-15 audit), the server can't tell that it has gone back in time. Every device that synced after the copy's snapshot holds edits and server revisions the restored server doesn't know, and syncing would mix the two libraries. On each device, before using the app: open dictprop.online, clear its site data (Safari: Settings > Apps > Safari > Advanced > Website Data; Chrome: the site's settings > Delete data), reload and sign in again. What that device changed after the snapshot, unsent reviews included, is part of what the restore loses.
+Until backup lineage ships (critic-02 in the 2026-11-15 audit), the server can't tell that it has gone back in time. Every device that synced after the copy's snapshot holds edits and server revisions the restored server doesn't know, and syncing would mix the two libraries. On each device, before using the app: open dictprop.online, clear its site data (Safari: Settings > Apps > Safari > Advanced > Website Data; Chrome: the site's settings > Delete data), reload and sign in again. What that device changed after the snapshot, unsent reviews included, is part of what the restore loses. Clearing the site data also drops Today's cached themes: a device fetches only the theme changes after its cursor, so it could otherwise keep themes from the lost hours once the restored server's sequence passes that cursor again.
 
 ## Disk space
 
