@@ -541,6 +541,9 @@ Notices are pills in one column at the bottom centre: above the tab bar on the t
 - Each review is written first to an outbox on the device (localStorage, one entry per review), then sent to the server, which applies it in one transaction. The review's id makes retries safe: a review sent twice counts once. Its time is kept between the card's last review and five minutes past the server's clock.
 - When the server refuses a review for good (for example, the card isn't on the server), the device drops it from the outbox, keeps the card's new schedule, which travels with the card, and shows the refused-reviews pill. View opens "Reviews the server refused": each word, when, and why ("The card isn’t on the server", "It clashed with a newer change"…), with Clear all. The user menu shows the count while any remain. A deleted Real Life or essay record comes back with its review instead of being refused.
 - Undoing a review works only while it is still the card's latest change.
+- A reset made while a review of the same card still waits in the outbox survives that review landing, or its undo: the reset stays on the device and goes with the next push.
+- A review dated before the card's last one, from a device whose clock runs behind, is scheduled from the last review's time, on the device and on the server alike.
+- Today's reviews take only their buttons' grades: a set's Practice, Passive and Can say it record Again, Good and Easy; practice records Again, Hard and Good. The server refuses any other pairing. Practice membership (in practice, or one you can say) changes only inside these reviews, so undoing one restores it too.
 
 ### 11.4 Offline
 
