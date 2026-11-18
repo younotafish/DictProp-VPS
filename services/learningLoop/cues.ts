@@ -1,6 +1,7 @@
-import { isVocabItem, type SentenceData, type StoredItem, type VocabCard } from '../../types';
+import { isSentenceItem, isVocabItem, type SentenceData, type StoredItem, type VocabCard } from '../../types';
 import { stripSentenceMarkers } from '../sentenceMarkers';
 import { connectedSpeechIpa } from '../sentencePronunciation';
+import { sentenceSourceResolver } from '../sentenceSource';
 import { maskAnswer, partOfSpeechOf } from '../studyPrompt';
 import { normalizeKey, splitForms } from '../wordMatch';
 import { sentenceTranslation } from './standing';
@@ -225,9 +226,21 @@ function sentenceCard(item: StoredItem, data: SentenceData, mode: LoopMode, sour
 }
 
 /**
+ * Each sentence's source-card forms (the card services/sentenceSource.ts finds for its word and sense), from a lookup
+ * built once over the library; undefined for a word card or a sentence whose word has no card.
+ */
+export function sourceFormsLookup(items: readonly StoredItem[]): (item: StoredItem) => string[] | undefined {
+  const sourceOf = sentenceSourceResolver(items);
+  return item => {
+    if (!isSentenceItem(item)) return undefined;
+    const source = sourceOf(item.data.sourceWord, item.data.sourceSense);
+    return source && isVocabItem(source) ? source.data.forms : undefined;
+  };
+}
+
+/**
  * The item as Today shows it in `mode`: a word card, or a saved sentence. A sentence's expression is its {{marked}}
- * part, else its source word or that word's forms, which come from the source card (`sourceForms`; see
- * services/sentenceSource.ts).
+ * part, else its source word or that word's forms, which come from the source card (`sourceForms`, sourceFormsLookup).
  */
 export function loopCard(item: StoredItem, mode: LoopMode, sourceForms?: string[]): LoopCard {
   return isVocabItem(item)

@@ -101,6 +101,22 @@ export function loopProgress(items: readonly StoredItem[], now: number): LoopPro
   return progress;
 }
 
+/**
+ * When today's practice count next changes with the clock alone: when the first practice item not reviewed today falls
+ * due, or at the next local midnight, when the items reviewed today wait no longer. Today re-plans then, and the tab's
+ * badge counts again.
+ */
+export function nextPracticeClockChange(items: readonly StoredItem[], now: number): number {
+  const todayStart = localDayStart(now);
+  let next = localDayStart(now, 1);
+  for (const item of items) {
+    const srs = item.srs;
+    if (!srs || srs.nextReview <= now || srs.nextReview >= next || (srs.lastReviewDate ?? 0) >= todayStart) continue;
+    if (isLoopEligible(item) && itemStanding(item) === 'practicing') next = srs.nextReview;
+  }
+  return next;
+}
+
 /** "Sorted" this week: the distinct items given their first review by a triage choice, in a set or with the toggle. */
 export function sortedThisWeek(history: ReviewHistory, now: number): number {
   const weekStart = localDayStart(now, -6);

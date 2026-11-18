@@ -8,6 +8,7 @@ import {
   isPracticeFirst,
   loopProgress,
   loopStreak,
+  nextPracticeClockChange,
   setDaysLoader,
   sortedThisWeek,
   todayAction,
@@ -124,4 +125,21 @@ test('the plan offers practice while any is due, then a set until the goal is me
   assert.equal(isDoneForToday(14, 0), false);
   assert.equal(isPracticeFirst(39), false);
   assert.equal(isPracticeFirst(40), true);
+});
+
+test('the practice count next changes when an item not reviewed today falls due, or at midnight', () => {
+  const tonight = localDayStart(NOW, 1);
+  const item = (id: string, nextReview: number, lastReviewDate = MIDNIGHT - DAY) =>
+    vocabItem(id, id, { srs: practicing(NOW - 9 * DAY, { nextReview, lastReviewDate }) });
+  assert.equal(nextPracticeClockChange([], NOW), tonight);
+  assert.equal(nextPracticeClockChange([item('a', NOW + 2 * HOUR), item('b', NOW + HOUR)], NOW), NOW + HOUR);
+  // Already due, due after midnight, reviewed today (its 10-minute step), or not in practice: nothing before midnight.
+  const unchanged = [
+    item('due', NOW - HOUR),
+    item('later', tonight + HOUR),
+    item('today', NOW + 10 * 60_000, MIDNIGHT + HOUR),
+    vocabItem('passive', 'passive', { srs: reviewed(MIDNIGHT - DAY, { nextReview: NOW + HOUR }) }),
+    { ...item('kept', NOW + HOUR), isArchived: true },
+  ];
+  assert.equal(nextPracticeClockChange(unchanged, NOW), tonight);
 });

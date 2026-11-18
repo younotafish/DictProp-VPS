@@ -7,6 +7,7 @@ import {
   loopCard,
   markExpression,
   SENTENCE_GOT_IT_RULE,
+  sourceFormsLookup,
 } from '../../services/learningLoop/cues.ts';
 import { maskAnswer } from '../../services/studyPrompt.ts';
 import { practicing, reviewed, sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
@@ -158,4 +159,21 @@ test('a sentence\'s level 2 cue is its translation and picture, and its hint the
   assert.deepEqual(card.cue, { kind: 'sentence', level: 2, translation: '她晒着太阳。', imageUrl: 'server:has_image:3' });
   assert.equal(card.hint.kind === 'cloze' && clozeText(card.hint.parts), 'She _____ the sun.');
   assert.equal('ipa' in card.answer, false, 'no pronunciation guide yet');
+});
+
+test('a sentence\'s source forms come from the card its word and sense name, through one lookup over the library', () => {
+  const items = [
+    vocabItem('run-verb', 'run out of', { sense: 'phrasal verb: use up', forms: ['ran out of', 'runs out of'] }),
+    vocabItem('run-other', 'run out of', { sense: 'phrasal verb: leave', forms: ['bolted'] }),
+    vocabItem('make-time', 'make time', { forms: ['making time'] }),
+  ];
+  const formsOf = sourceFormsLookup(items);
+  assert.deepEqual(formsOf(sentenceItem('s1', 'They ran out of milk.', { sourceWord: 'run out of', sourceSense: 'phrasal verb: use up' })), ['ran out of', 'runs out of']);
+  assert.deepEqual(formsOf(sentenceItem('s2', 'She is making time.', { sourceWord: 'making time' })), ['making time'], 'through a listed form');
+  assert.equal(formsOf(sentenceItem('s3', 'Nothing.', { sourceWord: 'absent' })), undefined);
+  assert.equal(formsOf(items[0]), undefined, 'a word card is its own source');
+  // Without a sense, the first card with the word: its forms find the expression to blank.
+  const sentence = sentenceItem('s4', 'They ran out of milk.', { sourceWord: 'run out of' });
+  const card = loopCard(sentence, 'speak', formsOf(sentence));
+  assert.equal(card.cue.kind === 'sentence' && card.cue.level === 1 && clozeText(card.cue.sentence), 'They _____ milk.');
 });
