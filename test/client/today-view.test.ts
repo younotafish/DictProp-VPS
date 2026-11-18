@@ -71,7 +71,7 @@ test('Today takes up its own kept session at its card when it is newer than clas
   keepSet(NOW - HOUR);
   const markup = render();
   assert.match(markup, /^<div class="h-full" data-today-mode="set">/);
-  assert.match(textOf(markup), new RegExp(`^${THEME.emoji} ${THEME.title} 1 / 3 Speak Say the word 词a Meaning of a\\. Hint Reveal`));
+  assert.match(textOf(markup), new RegExp(`^${THEME.emoji} ${THEME.title} 1 / 3 Speak Card 1 of 3 Say the word 词a Meaning of a\\. Hint Reveal`));
 });
 
 test('Today opens Card review on classic Study\'s kept session when that is the newer one', t => {
@@ -93,7 +93,7 @@ test('a kept practice session opens at its card in the mode it runs in', t => {
   })()), USER, NOW - HOUR);
   const markup = render();
   assert.match(markup, /^<div class="h-full" data-today-mode="practice">/);
-  assert.match(textOf(markup), /^Practice 1 \/ 2 Quiet Think of the word/);
+  assert.match(textOf(markup), /^Practice 1 \/ 2 Quiet Card 1 of 2 Think of the word/);
 });
 
 test('a kept session Today or Card review couldn\'t take up opens the plan instead', t => {

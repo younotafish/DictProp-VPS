@@ -51,6 +51,8 @@ test('the header has × to end, the set\'s theme or Practice, i / n with its bar
   assert.match(set, /style="width:20%"/);
   assert.match(set, /aria-label="Speak mode: switch to Quiet"/);
   assert.match(textOf(renderCard(WORD, { phase: 'round', position: 1, total: 4 })), /Round 1 \/ 4/);
+  assert.match(set, /<p class="sr-only" aria-live="polite">Card 2 of 5<\/p>/, 'a screen reader hears each new card');
+  assert.match(renderCard(WORD, { phase: 'round', position: 1, total: 4 }), /aria-live="polite">Round, card 1 of 4</);
   const practice = renderCard(WORD, { theme: null, phase: 'practice' }, 'quiet');
   assert.match(practice, /aria-label="End practice"/);
   assert.match(textOf(practice), /^Practice 2 \/ 5 Quiet/);

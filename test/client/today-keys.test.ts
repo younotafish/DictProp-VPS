@@ -130,9 +130,10 @@ test('⌘Z on a Mac, Ctrl+Z elsewhere, undoes like U, but leaves the app\'s undo
   for (const key of ['1', 'r', 'Enter', 'h']) assert.equal(resolve(key, card, { metaKey: true }), null, `⌘${key} is the browser's`);
 });
 
-test('on a summary Enter presses its primary button, R resumes a session ended early and U undoes the last answer', () => {
-  assert.deepEqual(resolve('Enter', SUMMARY), { type: 'primary' });
-  assert.equal(resolve('Enter', { ...SUMMARY, hasPrimary: false }), null);
+test('on a summary Enter presses its primary button, Resume for a session ended early; R resumes it too; U undoes the last answer', () => {
+  assert.deepEqual(resolve('Enter', SUMMARY), { type: 'resume' }, 'ended early, Resume is the primary button');
+  assert.deepEqual(resolve('Enter', { ...SUMMARY, canResume: false }), { type: 'primary' });
+  assert.equal(resolve('Enter', { ...SUMMARY, canResume: false, hasPrimary: false }), null);
   assert.equal(resolve('Enter', { ...SUMMARY, onControl: true }), null, 'a focused button presses itself');
   assert.deepEqual(resolve('r', SUMMARY), { type: 'resume' });
   assert.equal(resolve('r', { ...SUMMARY, canResume: false }), null, 'a finished session');

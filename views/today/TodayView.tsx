@@ -585,14 +585,15 @@ export function TodayView({
     onViewCards([group], 0, index);
   };
 
-  const themesStatus: ThemesStatus = themeState === null
-    ? (themesFailed ? 'offline' : 'loading')
-    : sorting === null && !themesFailed ? 'loading' : 'ready';
+  // A cached map whose refresh failed may be from before the server sorted more, so with no set in it the plan says the
+  // themes load online rather than that none is left.
+  const themesStatus: ThemesStatus = themesFailed ? 'offline' : themeState === null || sorting === null ? 'loading' : 'ready';
   const sortingShare = sorting && sorting.pending > 0 ? sortingPercent(themeState, sorting.pending) : null;
   const planCard = planCardModel({ progress, todayCount, historyLoaded, next: plan.today, themes: themesStatus, sortingPercent: sortingShare });
-  const actions: SummaryAction[] = session && showingSummary
-    ? summaryActions(session.kind, progress.practiceDue, todayCount, plan.today)
-    : [];
+  // A session ended early offers Resume first and Done, never another session, which would replace it with its place.
+  const actions: SummaryAction[] = !session || !showingSummary ? []
+    : over ? summaryActions(session.kind, progress.practiceDue, todayCount, plan.today)
+    : [{ kind: 'done' }];
 
   const summaryAction = (action: SummaryAction) => {
     if (action.kind === 'done') closeSession();

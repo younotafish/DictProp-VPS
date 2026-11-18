@@ -117,7 +117,10 @@ export function resolveTodayKey(event: TodayKeyEvent, state: TodayKeyState): Tod
   if (letter === 'u' && state.canUndo && !state.undoing) return { type: 'undo' };
 
   if (state.screen === 'summary') {
-    if (event.key === 'Enter' && !state.onControl && state.hasPrimary) return { type: 'primary' };
+    // A session ended early has Resume as its primary button.
+    if (event.key === 'Enter' && !state.onControl) {
+      return state.canResume ? { type: 'resume' } : state.hasPrimary ? { type: 'primary' } : null;
+    }
     return letter === 'r' && state.canResume ? { type: 'resume' } : null;
   }
 

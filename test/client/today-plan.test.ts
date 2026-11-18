@@ -136,7 +136,7 @@ test('the mode switch is a radio pair whose caption says what the mode asks for'
   assert.match(speak, /Say each answer aloud/);
   const quiet = renderPlan({}, { mode: 'quiet' });
   assert.match(quiet, /role="radio" aria-checked="true"[^>]*>.*?Quiet<\/button>/);
-  assert.match(quiet, /Think each answer · only Speak earns Can say it/);
+  assert.match(quiet, /Think each answer · quiet practice never earns Can say it/);
 });
 
 const row = (fields: Partial<ThemeRow> & Pick<ThemeRow, 'themeId' | 'theme'>): ThemeRow => ({
@@ -203,11 +203,12 @@ test('a practice summary counts first tries, hints and not yets, the recall rate
   assert.doesNotMatch(none, /Recall:|Can say it now/);
 });
 
-test('a session ended early offers Resume and the last answer\'s Undo above what to do next', () => {
-  const markup = renderSummary({ headline: 'Ended early · 6 of 14 met', canUndo: true, onResume: noop });
+test('a session ended early offers Resume as its primary button, the last answer\'s Undo above it, and Done', () => {
+  const markup = renderSummary({ headline: 'Ended early · 6 of 14 met', canUndo: true, onResume: noop, actions: [{ kind: 'done' }] });
   assert.match(textOf(markup), /Undo last answer Resume Done$/);
   assert.match(markup, /aria-keyshortcuts="U"/);
-  assert.match(markup, /aria-keyshortcuts="R"/);
+  assert.match(markup, /aria-keyshortcuts="Enter R" class="[^"]*bg-indigo-600/, 'Resume is the primary button');
+  assert.doesNotMatch(markup, /aria-keyshortcuts="Enter"[^>]*>Done/, 'Done is secondary');
   assert.match(textOf(renderSummary({ canUndo: true, undoing: true })), /Undoing…/);
   const failed = renderSummary({ canUndo: true, undoError: 'Couldn’t undo: you’re offline.' });
   assert.match(failed, /<p class="text-sm text-rose-700" role="alert">Couldn’t undo: you’re offline\.<\/p>/);

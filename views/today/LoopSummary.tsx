@@ -132,21 +132,25 @@ export function LoopSummary(props: LoopSummaryProps) {
           )}
           {props.undoError && <p className="text-sm text-rose-700" role="alert">{props.undoError}</p>}
           {props.onResume && (
-            <button type="button" onClick={props.onResume} aria-keyshortcuts="R" className={`${SECONDARY} inline-flex items-center justify-center gap-2`}>
+            <button type="button" onClick={props.onResume} aria-keyshortcuts="Enter R" className={`${PRIMARY} inline-flex items-center justify-center gap-2`}>
               <Play size={18} aria-hidden="true" /> Resume
             </button>
           )}
-          {actions.map((action, index) => (
-            <button
-              key={action.kind}
-              type="button"
-              onClick={() => props.onAction(action)}
-              aria-keyshortcuts={index === 0 ? 'Enter' : undefined}
-              className={index === 0 ? PRIMARY : SECONDARY}
-            >
-              {actionLabel(action)}
-            </button>
-          ))}
+          {actions.map((action, index) => {
+            // Resume, when offered, is the primary button; otherwise the first action is.
+            const primary = index === 0 && !props.onResume;
+            return (
+              <button
+                key={action.kind}
+                type="button"
+                onClick={() => props.onAction(action)}
+                aria-keyshortcuts={primary ? 'Enter' : undefined}
+                className={primary ? PRIMARY : SECONDARY}
+              >
+                {actionLabel(action)}
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>

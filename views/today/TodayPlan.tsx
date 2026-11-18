@@ -103,7 +103,8 @@ export function ModeSwitch({ mode, onChange }: { mode: LoopMode; onChange: (mode
         {option('quiet', 'Quiet', Brain)}
       </div>
       <p className="text-xs text-slate-500">
-        {mode === 'speak' ? 'Say each answer aloud' : 'Think each answer · only Speak earns Can say it'}
+        {/* Practice earns Can say it only aloud; meeting an item you already say in daily life is your call in either. */}
+        {mode === 'speak' ? 'Say each answer aloud' : 'Think each answer · quiet practice never earns Can say it'}
       </p>
     </div>
   );

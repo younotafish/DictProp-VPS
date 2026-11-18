@@ -143,6 +143,8 @@ export function LoopPlayer(props: LoopPlayerProps) {
         >
           <div className="h-full rounded-full bg-indigo-500 transition-[width] duration-300" style={{ width: `${share * 100}%` }} />
         </div>
+        {/* A screen reader hears each new card, which otherwise arrives without moving focus. */}
+        <p className="sr-only" aria-live="polite">{`${phase === 'round' ? 'Round, card' : 'Card'} ${props.position} of ${props.total}`}</p>
       </header>
 
       {/* Each card starts scrolled to its top; a long answer scrolls here while the footer stays put. */}
