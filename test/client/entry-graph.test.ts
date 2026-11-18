@@ -50,6 +50,13 @@ const LAZY_ONLY = [
   'services/api/learningLoop.ts',
   'server/src/shared/practice.ts',
   'server/src/shared/item-themes.ts',
+  'services/learningLoop/standing.ts',
+  'services/learningLoop/cues.ts',
+  'services/learningLoop/planner.ts',
+  'services/learningLoop/session.ts',
+  'services/learningLoop/sessionStore.ts',
+  'services/learningLoop/stats.ts',
+  'services/learningLoop/themeMap.ts',
 ];
 
 const ENTRY = 'index.tsx';
