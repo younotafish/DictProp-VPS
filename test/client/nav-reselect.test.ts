@@ -22,7 +22,7 @@ test('a tap on the tab showing scrolls it up, and at its top focuses its search 
   assert.equal(tap({ scrollTop: 400 }), 'scroll-top');
   assert.equal(tap({ scrollTop: 0 }), 'focus-search');
   assert.equal(tap({ scrollTop: 1 }), 'focus-search', 'a pixel off still counts as the top');
-  assert.equal(tap({ scrollTop: 0, hasSearch: false }), 'ignore', 'Study, Real Life and Essays have no search box');
+  assert.equal(tap({ scrollTop: 0, hasSearch: false }), 'ignore', 'Today, Real Life and Essays have no search box');
   assert.equal(tap({ scrollTop: 400, hasSearch: false }), 'scroll-top');
 });
 

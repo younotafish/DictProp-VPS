@@ -61,6 +61,8 @@ const LAZY_ONLY = [
   'views/detail/practiceToggle.ts',
   'views/detail/usePracticeToggle.ts',
   'views/detail/PracticePill.tsx',
+  // Today's badge loads with the tab bar.
+  'views/today/practiceBadge.ts',
 ];
 
 const ENTRY = 'index.tsx';

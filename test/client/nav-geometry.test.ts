@@ -50,7 +50,7 @@ test('cssLength refuses what it cannot read, and stylesheet values the browser w
 });
 
 type NavProps = ComponentProps<typeof AppNavigation>;
-const nav: NavProps = { currentView: 'notebook', onNavigate: () => {}, sentenceDueCount: 3, onKeyboardHelp: () => {}, covered: false, onFocus: () => {} };
+const nav: NavProps = { currentView: 'notebook', onNavigate: () => {}, sentenceDueCount: 3, items: [], onKeyboardHelp: () => {}, covered: false, onFocus: () => {} };
 const classOf = (html: string, tag: string) => html.match(new RegExp(`<${tag}[^>]*? class="([^"]*)"`))![1].split(/\s+/);
 /** A Tailwind spacing class's length: 0.25rem a step (pt-1 is 4px). */
 const spacing = (classes: string[], utility: string) => {
