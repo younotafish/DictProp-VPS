@@ -344,7 +344,8 @@ export const VocabCardDisplay = memo(function VocabCardDisplay({
           {data.usageAudit && (
             <UsageBadge audit={data.usageAudit} expanded={showUsageReason} onToggle={() => setShowUsageReason(current => !current)} />
           )}
-          <div className={`flex items-center gap-2 mt-1 text-slate-500${afterPronunciation ? ' flex-wrap' : ''}`}>
+          {/* With the practice pill the row may wrap; the taller gap keeps the pill's touch band off the line above. */}
+          <div className={`flex items-center gap-2 mt-1 text-slate-500${afterPronunciation ? ' flex-wrap gap-y-3' : ''}`}>
             {data.ipa && (
               <PronunciationBlock
                 text={data.word}

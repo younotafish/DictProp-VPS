@@ -272,10 +272,34 @@ test('while an item\'s undo is on its way a press on it waits, since it would ma
   state.clock += PRACTICE_PRESS_WINDOW_MS;
   press();
   assert.equal(done.filter(line => line.startsWith('record')).length, 1, 'no review while the undo is on its way');
+  await settle(); // the undo asks once the press's review is recorded
   answer(true);
   await settle();
   press();
   assert.equal(done.filter(line => line.startsWith('record')).length, 2, 'and the next press counts once it settles');
+});
+
+test('an undo waits for its press\'s review to be recorded, so it never asks for an event the outbox lacks', async () => {
+  const asked: string[] = [];
+  let recorded = () => {};
+  const undos: (() => void)[] = [];
+  const press = createPracticePress({
+    toggle: () => out,
+    record: () => new Promise<void>(resolve => { recorded = resolve; }),
+    undoReview: async eventId => { asked.push(eventId); return true; },
+    offerUndo: (_message, onUndo) => { undos.push(onUndo); },
+    showUndoFailure: () => {},
+    now: () => 0,
+    createId: () => 'event-1',
+    isOnline: () => true,
+  });
+  press();
+  undos[0]();
+  await settle();
+  assert.deepEqual(asked, [], 'the review is still being recorded');
+  recorded();
+  await settle();
+  assert.deepEqual(asked, ['event-1']);
 });
 
 test('a review that fails to record is noted, not thrown, and the undo is still offered', async t => {
@@ -382,7 +406,7 @@ test('on the word card the pill ends the IPA\'s row, which then wraps; without i
   const withPill = rowOf(renderToStaticMarkup(createElement(VocabCardDisplay, {
     data: withIpa, afterPronunciation: createElement(PracticePill, { toggle: out, onPress: () => {} }),
   })));
-  assert.match(withPill, /^<div class="flex items-center gap-2 mt-1 text-slate-500 flex-wrap">/);
+  assert.match(withPill, /^<div class="flex items-center gap-2 mt-1 text-slate-500 flex-wrap gap-y-3">/);
   assert.ok(withPill.indexOf('/breɪz/') < withPill.indexOf('YouGlish'), 'the IPA, then YouGlish');
   assert.ok(withPill.indexOf('YouGlish') < withPill.indexOf('aria-label="Add “braise” to practice"'), 'then the pill');
 });

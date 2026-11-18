@@ -157,12 +157,13 @@ export function createPracticePress(deps: PracticePressDeps): () => void {
     const eventId = deps.createId();
     const { itemId, practicing } = toggle;
     recording.set(itemId, practicing);
-    Promise.resolve(deps.record(itemId, rating, { taskType: 'triage', eventId }))
+    const recorded = Promise.resolve(deps.record(itemId, rating, { taskType: 'triage', eventId }))
       .catch(error => warn('Practice change failed:', error))
       .finally(() => { if (recording.get(itemId) === practicing) recording.delete(itemId); });
+    // An undo waits for the change to be recorded, so it never asks for an event the outbox doesn't hold yet.
     deps.offerUndo(undoMessage, () => {
       undoing.add(toggle.itemId);
-      void undoPracticeChange(deps.undoReview, eventId, toggle.noun, deps.isOnline).then(failure => {
+      void recorded.then(() => undoPracticeChange(deps.undoReview, eventId, toggle.noun, deps.isOnline)).then(failure => {
         undoing.delete(toggle.itemId);
         if (failure) deps.showUndoFailure(failure);
       });
