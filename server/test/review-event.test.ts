@@ -18,6 +18,22 @@ test('a review event keeps its known fields and drops anything else', () => {
   assert.deepEqual(parseReviewEvent(full), expected);
 });
 
+test("Today's task types take only the ratings their buttons give, and always name one; the others take any or none", () => {
+  const allowed = { triage: ['again', 'good', 'easy'], speak: ['again', 'hard', 'good'], recall: ['again', 'hard', 'good'] };
+  for (const [taskType, ratings] of Object.entries(allowed)) {
+    for (const rating of ['again', 'hard', 'good', 'easy']) {
+      const parsed = parseReviewEvent({ ...event, taskType, rating });
+      assert.equal(parsed !== null, ratings.includes(rating), `${taskType} ${rating}`);
+    }
+    assert.equal(parseReviewEvent({ ...event, taskType }), null, `${taskType} without a rating`);
+  }
+  for (const taskType of ['meaning', 'production', 'cloze', 'listening', 'quick', undefined]) {
+    for (const rating of ['again', 'hard', 'good', 'easy', undefined]) {
+      assert.notEqual(parseReviewEvent({ ...event, taskType, rating }), null, `${taskType} ${rating}`);
+    }
+  }
+});
+
 test('a review event with any field out of bounds is refused', () => {
   for (const invalid of [
     null, [], 'event',

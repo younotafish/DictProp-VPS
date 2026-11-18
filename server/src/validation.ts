@@ -1,7 +1,8 @@
 import type { ItemWrite, ReviewEvent } from './db.js';
 import { LOCAL_IMAGE_ENRICHMENT_PROVIDER } from './local-enrichment-markers.js';
 import { isSentenceAnalysis } from './sentence-analysis.js';
-import { isReviewRating, isReviewTaskType } from './shared/review.js';
+import { practiceFieldsValid } from './shared/practice.js';
+import { isRatingAllowedForTask, isReviewRating, isReviewTaskType } from './shared/review.js';
 import { isUsageAudit } from './shared/usage-audit.js';
 import {
   isFiniteNonNegative,
@@ -29,6 +30,9 @@ export function parseReviewEvent(value: unknown): ReviewEvent | null {
   if (!Number.isInteger(nextStep) || (nextStep as number) < 0) return null;
   if (rating !== undefined && !isReviewRating(rating)) return null;
   if (taskType !== undefined && !isReviewTaskType(taskType)) return null;
+  // Today's task types each take only the ratings their buttons give, so a review that pairs one with another rating
+  // is refused rather than scheduled as something the learner never chose.
+  if (!isRatingAllowedForTask(taskType, rating)) return null;
   if (durationMs !== undefined &&
       (!Number.isInteger(durationMs) || (durationMs as number) < 0 || (durationMs as number) > MAX_REVIEW_DURATION_MS)) {
     return null;
@@ -118,6 +122,7 @@ export function validateStoredItem(value: unknown): string | null {
   for (const field of REQUIRED_SRS_FIELDS) {
     if (!isFiniteNonNegative(value.srs[field])) return `item.srs.${field} is invalid`;
   }
+  if (!practiceFieldsValid(value.srs)) return 'item.srs practice membership is invalid';
   if (value.srs.lastExposureDate !== undefined && !isFiniteNonNegative(value.srs.lastExposureDate)) {
     return 'item.srs.lastExposureDate is invalid';
   }

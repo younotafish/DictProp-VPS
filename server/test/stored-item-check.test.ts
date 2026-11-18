@@ -38,6 +38,18 @@ test('a batch is accepted whole or refused with the reason for its first bad ite
   );
 });
 
+test("a schedule's practice membership is absent, or each field a finite time at or after 0", () => {
+  const item = vocab('lucid-practice');
+  const withSrs = (fields: Record<string, unknown>) => ({ ...item, srs: { ...item.srs, ...fields } });
+  assert.equal(validateStoredItem(withSrs({ practiceSince: 5, practiceChangedAt: 5 })), null);
+  assert.equal(validateStoredItem(withSrs({ sayableAt: 0, practiceChangedAt: 0 })), null);
+  for (const field of ['practiceSince', 'sayableAt', 'practiceChangedAt']) {
+    for (const invalid of [-1, Infinity, NaN, '5', null]) {
+      assert.equal(validateStoredItem(withSrs({ [field]: invalid })), 'item.srs practice membership is invalid', `${field} ${invalid}`);
+    }
+  }
+});
+
 test('production imports accept Codex and Claude advanced-enrichment markers', () => {
   const wordSrs = srs('word', 'vocab');
   const enriched = withAdvancedEnrichment(completeVocab);
