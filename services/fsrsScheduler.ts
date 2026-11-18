@@ -11,10 +11,12 @@
  * first bundle, so each side holds one, and both need ts-fsrs, so neither can live in server/src/shared/. KEEP
  * THE SCHEDULER CONFIG, toFsrsCard AND fromFsrsCard IDENTICAL: test/contracts/srs.test.ts runs the same reviews
  * through both copies and compares every schedule field, or each review would visibly jump after the next sync.
+ * Today's practice membership needs no copy: both apply the same import-free step from server/src/shared/practice.ts.
  */
 
 import { Rating, State, createEmptyCard, fsrs, type Card, type CardInput, type Grade } from 'ts-fsrs';
-import { SRSData, type ReviewRating } from '../types';
+import { applyPracticeMembership } from '../server/src/shared/practice';
+import { SRSData, type ReviewRating, type ReviewTaskType } from '../types';
 import { SRSAlgorithm } from './srsAlgorithm';
 
 const scheduler = fsrs({
@@ -71,10 +73,16 @@ function fromFsrsCard(previous: SRSData, card: Card, rating: ReviewRating, revie
   };
 }
 
-export function updateAfterRating(srs: SRSData, rating: ReviewRating, now = Date.now()): SRSData {
-  const card = toFsrsCard(srs, now);
-  const result = scheduler.next(card, new Date(now), ratingMap[rating]);
-  return fromFsrsCard(srs, result.card, rating, now);
+/**
+ * The schedule after a review made at `now`, with the review's practice membership applied. It is stamped `now`, or
+ * the last review's time when that is later (a device whose clock runs behind the one that made it): a schedule's
+ * clock only moves forward, and ts-fsrs refuses a review dated a day before the last one. The server stamps the same
+ * way (server/src/srs.ts), and `now`, the review's own time, decides whether it predates the last membership change.
+ */
+export function updateAfterRating(srs: SRSData, rating: ReviewRating, now = Date.now(), taskType?: ReviewTaskType): SRSData {
+  const stampedAt = Math.max(now, Number(srs.lastReviewDate) || 0);
+  const result = scheduler.next(toFsrsCard(srs, stampedAt), new Date(stampedAt), ratingMap[rating]);
+  return applyPracticeMembership(srs, fromFsrsCard(srs, result.card, rating, stampedAt), taskType, rating, now, stampedAt);
 }
 
 export function previewRatings(srs: SRSData, now = Date.now()): Record<ReviewRating, SRSData> {

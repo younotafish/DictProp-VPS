@@ -174,7 +174,9 @@ const applyReviewTransaction = writeTransaction((
     Math.min(incoming.reviewedAt, serverNow + 5 * 60 * 1000),
   );
   const rating = incoming.rating || 'good';
-  const nextSrs = advanceReviewSrs(baseSrs, reviewedAt, rating);
+  // Scheduled at the clamped time, while the review's own time decides whether it predates the item's last change of
+  // practice membership: a decision made offline before a newer one elsewhere schedules but leaves membership alone.
+  const nextSrs = advanceReviewSrs(baseSrs, reviewedAt, rating, incoming.taskType, incoming.reviewedAt);
   const event: ReviewEvent = {
     id: incoming.id,
     itemId: target.id,

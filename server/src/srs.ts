@@ -5,14 +5,19 @@
  * out of its first bundle, so each side holds a copy, and both need ts-fsrs, so neither can live in shared/. KEEP
  * THE SCHEDULER CONFIG, toFsrsCard AND fromFsrsCard IDENTICAL: test/contracts/srs.test.ts runs the same reviews
  * through both copies and compares every schedule field, or each review would visibly jump after the next sync.
+ * Today's practice membership needs no copy: both apply the same import-free step from shared/practice.ts.
  */
 import { Rating, State, createEmptyCard, fsrs, type Card, type CardInput, type Grade } from 'ts-fsrs';
-import type { ReviewRating } from './shared/review.js';
+import { applyPracticeMembership, type PracticeSrs } from './shared/practice.js';
+import type { ReviewRating, ReviewTaskType } from './shared/review.js';
 
 export type { ReviewRating };
 
-/** The fields of a stored schedule that a review reads. Rows from the fixed-schedule era lack the FSRS ones. */
-export interface SrsLike {
+/**
+ * The fields of a stored schedule that a review reads, Today's practice membership among them. Rows from the
+ * fixed-schedule era lack the FSRS ones.
+ */
+export interface SrsLike extends PracticeSrs {
   nextReview?: number;
   interval?: number;
   lastReviewDate?: number;
@@ -103,8 +108,21 @@ function fromFsrsCard<T extends SrsLike>(previous: T, card: Card, rating: Review
   };
 }
 
-/** Server-authoritative FSRS v6 transition; defaults legacy clients to Good. Other fields of `srs` carry over. */
-export function advanceReviewSrs<T extends SrsLike>(srs: T, reviewedAt: number, rating: ReviewRating = 'good'): T & ScheduledSrs {
-  const result = scheduler.next(toFsrsCard(srs, reviewedAt), new Date(reviewedAt), ratingMap[rating]);
-  return fromFsrsCard(srs, result.card, rating, reviewedAt);
+/**
+ * Server-authoritative FSRS v6 transition with the review's practice membership (shared/practice.ts) applied;
+ * defaults legacy clients to Good. Other fields of `srs` carry over. The schedule is stamped `reviewedAt`, or the
+ * last review's time when that is later: a schedule's clock only moves forward, and ts-fsrs refuses a review dated a
+ * day before the last one. `eventTime` is when the review was made (the client's own time, which db/reviews.ts also
+ * clamps for the stamp), and decides whether the review predates the item's last change of membership.
+ */
+export function advanceReviewSrs<T extends SrsLike>(
+  srs: T,
+  reviewedAt: number,
+  rating: ReviewRating = 'good',
+  taskType?: ReviewTaskType,
+  eventTime = reviewedAt,
+): T & ScheduledSrs {
+  const stampedAt = Math.max(reviewedAt, Number(srs.lastReviewDate) || 0);
+  const result = scheduler.next(toFsrsCard(srs, stampedAt), new Date(stampedAt), ratingMap[rating]);
+  return applyPracticeMembership(srs, fromFsrsCard(srs, result.card, rating, stampedAt), taskType, rating, eventTime, stampedAt);
 }

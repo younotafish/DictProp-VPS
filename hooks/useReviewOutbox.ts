@@ -137,7 +137,7 @@ export function useReviewOutbox(
 
     const targetTitle = getItemTitle(targetItem).toLowerCase().trim();
     const baseSRS = SRSAlgorithm.ensure(targetItem.srs, targetItem.data.id, targetItem.type);
-    const updatedSRS = updateAfterRating(baseSRS, rating, now);
+    const updatedSRS = updateAfterRating(baseSRS, rating, now, context?.taskType);
     // An item the server has never stored travels with its review as a seed (services/reviewOutbox).
     const seedItem = reviewSeed(targetItem, baseSRS, catalogSeed);
     const reviewEvent: ReviewEvent = {
