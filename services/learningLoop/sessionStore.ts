@@ -64,18 +64,25 @@ function isAttempt(value: unknown): value is Attempt {
   const { tries, hinted, outcome, eventId, at, totalReviews } = value;
   if (!isCount(tries, 3) || typeof hinted !== 'boolean' || !isId(eventId)) return false;
   if (outcome === undefined) return tries <= 1 && at === undefined && totalReviews === undefined;
-  // Good is the first try's; Hard the first try's with the hint or the second's; Again the second's, then the look.
-  const triesFit = outcome === 'good' ? tries === 1 : outcome === 'hard' ? tries === 1 || tries === 2 : outcome === 'again' && tries >= 2;
+  // Good is the first try's without the hint; Hard the first try's with it or the second's; Again the second's, then the
+  // look.
+  const triesFit = outcome === 'good' ? tries === 1 && !hinted
+    : outcome === 'hard' ? tries === 1 || tries === 2
+    : outcome === 'again' && tries >= 2;
   return triesFit && isTime(at) && isCount(totalReviews) && totalReviews > 0;
 }
 
-/** A run whose queue holds only the session's items, each with its attempt, and whose place is within it. */
+/**
+ * A run whose queue holds only the session's items, each with its attempt and every attempt's item in it (an item comes
+ * back by appearing again), and whose place is within it.
+ */
 function isRun(value: unknown, itemIds: ReadonlySet<string>): value is PracticeRun {
   if (!isRecord(value)) return false;
   const { queue, index, attempts } = value;
   if (!Array.isArray(queue) || queue.length > 3 * MAX_SESSION_ITEMS || !isRecord(attempts) || !isCount(index, queue.length)) return false;
   const attemptIds = Object.keys(attempts);
-  return attemptIds.every(id => itemIds.has(id) && isAttempt(attempts[id])) &&
+  const queued = new Set<unknown>(queue);
+  return attemptIds.every(id => itemIds.has(id) && queued.has(id) && isAttempt(attempts[id])) &&
     queue.every(id => typeof id === 'string' && Object.hasOwn(attempts, id));
 }
 
@@ -102,11 +109,12 @@ function decodeSession(value: unknown, now: number): LoopSession | null {
   if (!isRecord(meet) || !isCount(meet.index, itemIds.length) || !isRecord(meet.choices) || !isRun(round, ids)) return null;
   const choices = meet.choices;
   if (!Object.keys(choices).every(choiceId => ids.has(choiceId) && isChoice(choices[choiceId]))) return null;
-  // The round is made when the Meet ends, from the items chosen for practice.
-  const roundIds = Object.keys(round.attempts);
+  // The round is made when the Meet ends, from exactly the items chosen for practice.
+  const roundIds = new Set(Object.keys(round.attempts));
+  const practiceIds = Object.keys(choices).filter(choiceId => (choices[choiceId] as MeetChoiceRecord).choice === 'practice');
   const roundFits = phase === 'meet'
-    ? roundIds.length === 0
-    : roundIds.every(roundId => (choices[roundId] as MeetChoiceRecord | undefined)?.choice === 'practice');
+    ? roundIds.size === 0 && round.queue.length === 0
+    : roundIds.size === practiceIds.length && practiceIds.every(practiceId => roundIds.has(practiceId));
   if (!roundFits) return null;
   return {
     kind,

@@ -130,6 +130,17 @@ test('a damaged record reads as none, whatever part of it is wrong', () => {
     ['an outcome the tries can\'t give', withSession(good, session => {
       (session.round as { attempts: Record<string, unknown> }).attempts.w0 = { tries: 2, hinted: true, outcome: 'good', eventId: 'e', at: T0, totalReviews: 2 };
     })],
+    ['Good with the hint', withSession(good, session => {
+      (session.round as { attempts: Record<string, unknown> }).attempts.w0 = { tries: 1, hinted: true, outcome: 'good', eventId: 'e', at: T0, totalReviews: 2 };
+    })],
+    ['a Practice choice left out of the round', withSession(good, session => {
+      (session.meet as { choices: Record<string, { choice: string }> }).choices.w1.choice = 'practice';
+    })],
+    ['an attempt whose item isn\'t queued', withSession(good, session => {
+      const round = session.round as { queue: string[]; index: number };
+      round.queue = round.queue.filter(id => id !== 'w0');
+      round.index = 0;
+    })],
     ['an outcome without its time', withSession(good, session => {
       (session.round as { attempts: Record<string, unknown> }).attempts.w0 = { tries: 1, hinted: false, outcome: 'good', eventId: 'e' };
     })],
