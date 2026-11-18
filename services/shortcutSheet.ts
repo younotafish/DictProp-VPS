@@ -170,7 +170,7 @@ const SECTIONS: readonly ShortcutSection[] = [
       { keys: ['U'], label: 'Undo the last answer; meeting items, go back to the last choice' },
       { keys: ['Mod', 'Z'], label: 'The same as U, unless the Undo pill shows: then it undoes what the pill offers' },
       { keys: ['Esc'], label: 'End the session early, to its summary; on a summary or in All themes, back to the plan' },
-      { keys: ['Enter'], label: 'On a summary: its first button' },
+      { keys: ['Enter'], label: 'On a summary: its first button, Resume for a session ended early' },
       { keys: ['R'], label: 'On the summary of a session ended early: take it up again' },
     ],
   },

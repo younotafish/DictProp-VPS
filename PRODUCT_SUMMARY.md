@@ -456,7 +456,7 @@ The Today tab is a daily loop over the library: each day a themed set of new ite
 
 - A practice session takes the practice due today, up to 30, and runs them like a set's round, in the mode chosen: Speak records a spoken review, which can earn Can say it; Quiet records a silent one. Each card's dots fill as its memory grows toward Can say it, and Got it reads "can say it" when it would earn it.
 - **The summary:** First try, With a hint and Not yet counts, "Recall: 67% on the first try", the items you can say now, then "Practice N more" while practice is still due, else "Start a set", and Done.
-- **Ending and keeping:** × or Esc ends a set or practice session early, to its summary, with Resume (R); before anything was done it goes straight back to the plan. A session is kept on the device for 12 hours and comes back at its card after a reload; when a Card review session is kept too, the newer one opens and the plan offers the other ("Resume set: 🍳 Cooking at home · 4 of 15").
+- **Ending and keeping:** × or Esc ends a set or practice session early, to its summary, whose first button is Resume (Enter or R), then Done, which ends the session for good; it offers no new session there, which would replace this one. Before anything was done, × goes straight back to the plan. A session is kept on the device for 12 hours and comes back at its card after a reload; when a Card review session is kept too, the newer one opens and the plan offers the other ("Resume set: 🍳 Cooking at home · 4 of 15").
 
 ### 8.6 Today's keys
 
@@ -475,7 +475,7 @@ The Today tab is a daily loop over the library: each day a themed set of new ite
 | U | Undo the last answer; meeting items, go back to the last choice |
 | ⌘Z | The same as U, unless the Undo pill shows: then it undoes what the pill offers |
 | Esc | End the session early, to its summary; on a summary or in All themes, back to the plan |
-| Enter | On a summary: its first button |
+| Enter | On a summary: its first button, Resume for a session ended early |
 | R | On the summary of a session ended early: take it up again |
 
 Keys 1-3 stay with the session while it shows, so they never switch tabs.
