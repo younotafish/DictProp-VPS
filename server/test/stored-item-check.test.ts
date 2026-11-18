@@ -38,15 +38,22 @@ test('a batch is accepted whole or refused with the reason for its first bad ite
   );
 });
 
-test("a schedule's practice membership is absent, or each field a finite time at or after 0", () => {
+test("a schedule's practice membership is absent, or each field a finite time at or after 0, one state at a time, with its change time", () => {
   const item = vocab('lucid-practice');
   const withSrs = (fields: Record<string, unknown>) => ({ ...item, srs: { ...item.srs, ...fields } });
   assert.equal(validateStoredItem(withSrs({ practiceSince: 5, practiceChangedAt: 5 })), null);
   assert.equal(validateStoredItem(withSrs({ sayableAt: 0, practiceChangedAt: 0 })), null);
+  assert.equal(validateStoredItem(withSrs({ practiceChangedAt: 7 })), null, 'a change time alone is harmless');
   for (const field of ['practiceSince', 'sayableAt', 'practiceChangedAt']) {
     for (const invalid of [-1, Infinity, NaN, '5', null]) {
-      assert.equal(validateStoredItem(withSrs({ [field]: invalid })), 'item.srs practice membership is invalid', `${field} ${invalid}`);
+      assert.equal(
+        validateStoredItem(withSrs({ [field]: invalid, practiceChangedAt: field === 'practiceChangedAt' ? invalid : 1 })),
+        'item.srs practice membership is invalid', `${field} ${invalid}`,
+      );
     }
+  }
+  for (const incoherent of [{ practiceSince: 5, sayableAt: 6, practiceChangedAt: 6 }, { practiceSince: 5 }, { sayableAt: 5 }]) {
+    assert.equal(validateStoredItem(withSrs(incoherent)), 'item.srs practice membership is invalid', JSON.stringify(incoherent));
   }
 });
 

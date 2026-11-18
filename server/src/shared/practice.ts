@@ -102,12 +102,18 @@ export function loopStanding(srs: (PracticeSrs & { totalReviews?: number }) | un
   return 'reviewed';
 }
 
-/** Whether a stored schedule's membership fields are well formed: absent, or a finite time at or after 0. */
+/**
+ * Whether a stored schedule's membership fields are well formed: each absent or a finite time at or after 0, never in
+ * practice and sayable at once, and either one with the time it changed, which the stale-event guard reads. Only
+ * applyPracticeMembership writes them, and it always leaves them so.
+ */
 export function practiceFieldsValid(srs: Record<string, unknown>): boolean {
   for (const key of ['practiceSince', 'sayableAt', 'practiceChangedAt'] as const) {
     if (!(key in srs)) continue;
     const value = srs[key];
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return false;
   }
-  return true;
+  const practicing = 'practiceSince' in srs;
+  const sayable = 'sayableAt' in srs;
+  return !(practicing && sayable) && (!(practicing || sayable) || 'practiceChangedAt' in srs);
 }
