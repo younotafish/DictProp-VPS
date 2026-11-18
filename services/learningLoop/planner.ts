@@ -4,6 +4,7 @@ import { sentenceSourceResolver } from '../sentenceSource';
 import { partOfSpeechOf } from '../studyPrompt';
 import { normalizeKey } from '../wordMatch';
 import { isLoopEligible, isOwnSentence, itemStanding, localDayKey, sentenceTranslation } from './standing';
+import { DAILY_SET_GOAL } from './stats';
 
 // Today's planner: which theme today's set comes from, what the set holds and in what order, the sets up next, and the
 // numbers the themes browser shows. Pure and deterministic: the same library, theme map, clock and device state give
@@ -16,9 +17,9 @@ const DAY_MS = 86_400_000;
 const RECENT_MS = 14 * DAY_MS;
 /** A theme a set was started from on this device within this time is held back, so the days vary. */
 export const SET_START_PENALTY_MS = 2 * DAY_MS;
-/** A theme with up to this many new items gives them all in one set; a bigger one is split into sets of 11 to 19. */
+/** A theme with up to this many new items gives them all in one set; a bigger one is split into sets of 12 to 23. */
 const MAX_SET_SIZE = 20;
-/** The size a big theme's sets aim at. */
+/** The size a big theme's sets aim at; none is smaller than the day's goal (DAILY_SET_GOAL). */
 const TARGET_SET_SIZE = 15;
 /** How many sets the plan simulates after today's. */
 const UP_NEXT_COUNT = 3;
@@ -79,18 +80,19 @@ export interface PlanInput {
 
 /**
  * How many items a set takes from a theme with `size` new items: all of them up to 20; beyond that the theme is split
- * into m = max(2, round(size / 15)) sets of equal size, ceil(size / m) each.
+ * into m sets of equal size, ceil(size / m) each, as near 15 as keeps every set at the day's goal of 12 or more:
+ * m = min(round(size / 15), floor(size / 12)). So 21 to 23 items stay one set, and one set always meets the goal.
  */
 export function setSize(size: number): number {
   if (size <= MAX_SET_SIZE) return Math.max(0, size);
-  const sets = Math.max(2, Math.round(size / TARGET_SET_SIZE));
+  const sets = Math.max(1, Math.min(Math.round(size / TARGET_SET_SIZE), Math.floor(size / DAILY_SET_GOAL)));
   return Math.ceil(size / sets);
 }
 
 /**
  * How strongly a theme asks to be today's: 3 points per new item saved in the last two weeks (up to 20) plus a quarter
  * point per new item (up to 60), less 100 when a set was started from it on this device in the last two days and less
- * 30 when it has fewer than eight new items, too few for a day's goal.
+ * 30 when it has fewer new items than the day's goal, so its set alone wouldn't meet it.
  */
 export function themeScore(
   theme: { themeId: string; size: number; recentCount: number },
@@ -100,7 +102,7 @@ export function themeScore(
   let score = 3 * Math.min(theme.recentCount, 20) + Math.min(theme.size, 60) / 4;
   const started = Object.hasOwn(recentStarts, theme.themeId) ? recentStarts[theme.themeId] : undefined;
   if (started !== undefined && now - started < SET_START_PENALTY_MS) score -= 100;
-  if (theme.size < 8) score -= 30;
+  if (theme.size < DAILY_SET_GOAL) score -= 30;
   return score;
 }
 

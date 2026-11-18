@@ -4,6 +4,7 @@ import type { StoredItem } from '../../types.ts';
 import { THEMES } from '../../server/src/shared/item-themes.ts';
 import { glossSegments, planLoop, setSize, SET_START_PENALTY_MS, themeScore, type PlanInput } from '../../services/learningLoop/planner.ts';
 import { localDayKey } from '../../services/learningLoop/standing.ts';
+import { DAILY_SET_GOAL } from '../../services/learningLoop/stats.ts';
 import { DAY, HOUR, practicing, reviewed, sayable, sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
 
 const NOW = new Date(2026, 10, 18, 15, 0).getTime();
@@ -23,9 +24,12 @@ function plan(items: StoredItem[], themeOf: Record<string, string>, extra: Parti
 
 const inTheme = (items: StoredItem[], theme: string) => Object.fromEntries(items.map(item => [item.data.id, theme]));
 
-test('a theme with up to 20 new items gives them all; a bigger one is split into equal sets near 15', () => {
-  const cases: [size: number, set: number][] = [[0, 0], [1, 1], [8, 8], [20, 20], [21, 11], [30, 15], [37, 19], [38, 13], [60, 15], [61, 16], [1000, 15]];
+test('a theme with up to 20 new items gives them all; a bigger one is split into equal sets near 15, none below the day\'s goal', () => {
+  const cases: [size: number, set: number][] = [
+    [0, 0], [1, 1], [8, 8], [20, 20], [21, 21], [23, 23], [24, 12], [30, 15], [37, 19], [38, 13], [60, 15], [61, 16], [1000, 15],
+  ];
   for (const [size, set] of cases) assert.equal(setSize(size), set, String(size));
+  for (let size = 21; size <= 500; size++) assert.ok(setSize(size) >= DAILY_SET_GOAL && setSize(size) <= 23, String(size));
 });
 
 test('a theme scores for its recent saves and its size, and is held back after a recent set or when too small', () => {
@@ -35,7 +39,8 @@ test('a theme scores for its recent saves and its size, and is held back after a
   assert.equal(themeScore(theme, { [A]: NOW - DAY }, NOW), 3 * 5 + 30 / 4 - 100);
   assert.equal(themeScore(theme, { [A]: NOW - SET_START_PENALTY_MS }, NOW), 3 * 5 + 30 / 4, 'two days on, no longer');
   assert.equal(themeScore(theme, { [B]: NOW }, NOW), 3 * 5 + 30 / 4, 'another theme\'s set');
-  assert.equal(themeScore({ ...theme, size: 7, recentCount: 0 }, {}, NOW), 7 / 4 - 30);
+  assert.equal(themeScore({ ...theme, size: 11, recentCount: 0 }, {}, NOW), 11 / 4 - 30, 'too few for the day\'s goal');
+  assert.equal(themeScore({ ...theme, size: 12, recentCount: 0 }, {}, NOW), 12 / 4);
   assert.equal(themeScore({ ...theme, themeId: 'constructor' }, {}, NOW), 22.5, 'starts are looked up as own keys');
 });
 

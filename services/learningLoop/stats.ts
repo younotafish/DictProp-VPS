@@ -7,8 +7,11 @@ import { isLoopEligible, isOwnSentence, isPracticeDue, itemStanding, localDayKey
 // plan's one primary button offers. Pure; the Today screen passes the library, the review history (the server's recent
 // reviews merged with this device's outbox, as useReviewHistory holds it) and the set days the server counted.
 
-/** New items to meet in sets each day: one set. */
-export const DAILY_SET_GOAL = 15;
+/**
+ * New items to meet in sets each day: one set. The owner's minimum is a set a day, and the planner never splits a theme
+ * into sets smaller than this (planner.ts setSize), so any one of its sets meets the goal.
+ */
+export const DAILY_SET_GOAL = 12;
 /** From this many practice items due, the plan puts practice first and the set row says so (the load governor). */
 export const PRACTICE_FIRST_AT = 40;
 /** How far back a streak can reach: as far as the set-days endpoint counts. */
