@@ -143,6 +143,8 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   ├── refusedReviews.ts      # Reviews the server refused, kept for the refused-reviews notice
 │   ├── audio/                 # Speech playback: the player, clip store, warmers, auto-play, media session, voices
 │   ├── notebook/              # The Notebook's list view, search ranking, search box and JSON import
+│   ├── learningLoop/          # Today's loop as pure modules: eligibility, cues, the planner, set and practice sessions,
+│   │                          #   their store, stats and streak, and the theme map's sync
 │   ├── appUpdate.ts           # New-version detection and the flush-then-reload flow
 │   ├── libraryImages.ts       # Image marker helpers for lazy and offline images
 │   ├── mergeDuplicates.ts     # Duplicate-card merging
@@ -160,12 +162,15 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   │   ├── shared/            # Import-free code the client, the server and the offline scripts all run
 │   │   ├── ai/                # The AI routes' prompts, card generation and repair, and output sanitizers
 │   │   ├── tts/               # The speech cache: synthesis, clips, the casual respelling and the backfill
+│   │   ├── themes/            # Today's themes: the classifier's input, prompt and boundary notes, and the sweep
 │   │   └── routes/
 │   │       ├── auth.ts        # /api/auth/* — Google OAuth login + session
 │   │       ├── items.ts       # GET /api/items, GET /api/items/:id, PUT /api/items
 │   │       ├── item-images.ts # GET/PUT /api/items/:id/image, GET /api/items/images/manifest
 │   │       ├── import.ts      # POST /api/import
-│   │       ├── reviews.ts     # POST /api/reviews/apply, POST /api/reviews/:id/undo, GET /api/reviews/history
+│   │       ├── reviews.ts     # POST /api/reviews/apply, POST /api/reviews/:id/undo, GET /api/reviews/history and
+│   │       │                  #   GET /api/reviews/set-days (the days with a Today set, for the streak)
+│   │       ├── themes.ts      # GET /api/themes: theme rows after a seq, and the sweep's progress
 │   │       ├── sentence-enrichments.ts  # POST /api/sentence-enrichments/lookup and its images
 │   │       ├── comparisons.ts # GET/PUT /api/comparisons
 │   │       ├── essays.ts      # GET /api/essays/catalog
@@ -217,6 +222,8 @@ Images are stored as binary blobs in the server `image_blobs`/`item_images` tabl
 - `GET /api/items/:id/image` — binary image endpoint used by lazy loading
 - `POST /api/import` — bulk import endpoint (used for Firebase migration)
 
+Today's theme for each saved word and own sentence lives in the `item_themes` table, outside item data. Its seq comes from `sync_meta.theme_seq` and moves only when a theme changes, so a device fetches `GET /api/themes?after=<its cursor>` and gets only the changes.
+
 ### IMPORTANT: Response size awareness
 The full dataset with images is ~150MB. NEVER return all items with images in a single response — the browser will hang parsing it. That is why item JSON carries only image markers and `GET /api/items` refuses `images=true`.
 
@@ -260,6 +267,17 @@ Enrichment runs on this Mac (`scripts/offline/`, LaunchAgent `com.dictprop.incre
 
 ### Stale Closure Prevention
 `hooks/useLibrary.ts` owns `latestItemsRef`. Every library change goes through `updateItems()`/`replaceItem()`, which set the ref before returning, so the next handler, IndexedDB write or push sees the change. Always read `latestItemsRef.current` in event handlers and async work, not a closure-captured `savedItems`.
+
+### Today's loop
+- Practice membership (`srs.practiceSince`, `sayableAt`, `practiceChangedAt`) rides on the schedule and changes only inside a review: Today's task types `triage`, `speak` and `recall` with their allowed grades (`server/src/shared/review.ts`), through `applyPracticeMembership` (`server/src/shared/practice.ts`). The server applies it in `applyReviewEvent`, the device optimistically in `updateAfterRating`, and undo restores it with the snapshot. Never set those fields anywhere else.
+- A set's choices count toward the day's goal and the streak only as `triage` reviews in a `set:<id>` session; every other review (the card view's toggle included) passes no `set:` session id.
+- The theme sweep (`server/src/themes/sweep.ts`) runs inside the server process with DeepSeek through the AI client:
+  - it starts a minute after the server starts, half a minute after a save or import, and when `GET /api/themes` finds work waiting;
+  - it sorts thirty items a request, new items first, one request at a time;
+  - it pauses for 15 minutes on a spent balance, a refused key or three failed batches;
+  - the shutdown stops it first.
+
+  An item the model can't place three times stays Unsorted until its word, sense or text changes, or the taxonomy does. The taxonomy (`server/src/shared/item-themes.ts`) is closed: changing its scenes means bumping `THEME_TAXONOMY_VERSION`. Then the items whose scene left the list are sorted again (and those the model gave up on get three more tries), and each device fetches its theme rows afresh.
 
 ### Sharing code between client and server
 - Runtime code both sides run lives in `server/src/shared/` and imports nothing, so the client bundle, the server and plain-node offline scripts all load it (see its README for the import forms). The client reaches the rest of `server/src` only through `import type` / `export type`, which the bundler erases.
