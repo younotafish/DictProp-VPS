@@ -10,6 +10,7 @@ import { SearchToasts } from '../../components/search/SearchToasts.tsx';
 import { SentenceActionsRow } from '../../views/detail/SentenceActionsRow.tsx';
 import { SentencePlaybackControls } from '../../views/detail/SentencePlaybackControls.tsx';
 import { SentenceImageFab } from '../../views/detail/SentenceImageAttach.tsx';
+import { PracticePill } from '../../views/detail/PracticePill.tsx';
 import { sentenceRowState } from '../../views/detail/sentenceRowState.ts';
 import { arbitraryValue, cssLength, readRootVars } from '../support/cssLength.ts';
 import { readRepoFile } from '../support/paths.ts';
@@ -55,8 +56,11 @@ const bannerClasses = (() => {
 })();
 
 type RowProps = ComponentProps<typeof SentenceActionsRow>;
-/** The lesson row as sentence review renders it for a catalog line or a saved sentence, reviewed or not, or an example. */
-const lessonRow = (kind: 'catalog' | 'saved' | 'example', reviews: number) => {
+/**
+ * The lesson row as sentence review renders it for a catalog line or a saved sentence, reviewed or not, or an example;
+ * on wider screens a saved sentence's row also holds the practice pill.
+ */
+const lessonRow = (kind: 'catalog' | 'saved' | 'example', reviews: number, practicePill?: RowProps['practicePill']) => {
   const preview = kind === 'example';
   const srs = { ...SRSAlgorithm.createNew('s1', 'sentence', 0), totalReviews: reviews };
   const state = sentenceRowState({ catalog: kind === 'catalog', preview, totalReviews: reviews });
@@ -64,7 +68,7 @@ const lessonRow = (kind: 'catalog' | 'saved' | 'example', reviews: number) => {
   const props: RowProps = {
     srs, mastery, masteryColors: mastery ? getMasteryColors(mastery.color) : null, memorizedCount: 3, preview,
     catalog: kind === 'catalog', catalogKind: kind === 'catalog' ? 'real-life' : undefined, onRemember: () => {},
-    onSaveSentence: () => {}, onReset: state.showReset ? () => {} : undefined, onDelete: () => {},
+    onSaveSentence: () => {}, onReset: state.showReset ? () => {} : undefined, onDelete: () => {}, practicePill,
   };
   return renderToStaticMarkup(createElement(SentenceActionsRow, props));
 };
@@ -140,6 +144,20 @@ test('the lesson row\'s buttons top out 2rem above the banner\'s padding, which 
     const padding = Math.max(8, at.insetBottom);
     for (const [kind, reviews] of [['saved', 0], ['saved', 3], ['catalog', 0], ['catalog', 1], ['example', 0]] as const) {
       assert.equal(rowTop(lessonRow(kind, reviews), at), padding + 32, `${kind} with ${reviews} reviews, inset ${at.insetBottom}`);
+    }
+  }
+});
+
+test('the practice pill beside Got it leaves the lesson row as tall as it was, so the floats above it keep their bands', () => {
+  for (const practicing of [false, true]) {
+    const practicePill = createElement(PracticePill, {
+      toggle: { itemId: 's1', practicing, name: 'She came clean.', noun: 'sentence' }, onPress: () => {},
+    });
+    for (const [, at] of INSETS) {
+      for (const reviews of [0, 3]) {
+        assert.ok(lessonRow('saved', reviews, practicePill).includes('aria-pressed'), 'the row holds the pill');
+        assert.equal(rowTop(lessonRow('saved', reviews, practicePill), at), rowTop(lessonRow('saved', reviews), at));
+      }
     }
   }
 });

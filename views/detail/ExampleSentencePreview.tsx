@@ -20,8 +20,8 @@ export function ExampleSentencePreview({ viewProps, requestId, sourceGroup, sent
   const {
     onSave, onPatchItem, onDelete, onArchive, onUnarchive, onResetSRS, savedItems, savedSentenceItems,
     onSearch, onRefresh,
-    onLazyLoadImage, onUpdateSRS, onCompare, comparisons, onOpenComparison, onSaveSentence, isSentenceSaved, isVocabSaved,
-    onRemoveVocabFromPhrase, findSaved, onOpenCard, interactionLocked, onAttachImage,
+    onLazyLoadImage, onUpdateSRS, onUndoReview, onOfferUndo, onCompare, comparisons, onOpenComparison, onSaveSentence,
+    isSentenceSaved, isVocabSaved, onRemoveVocabFromPhrase, findSaved, onOpenCard, interactionLocked, onAttachImage,
   } = viewProps;
   const reviewKey = `example-sentence:${requestId}`;
   return (
@@ -55,6 +55,8 @@ export function ExampleSentencePreview({ viewProps, requestId, sourceGroup, sent
         onRefresh={onRefresh}
         onLazyLoadImage={onLazyLoadImage}
         onUpdateSRS={onUpdateSRS}
+        onUndoReview={onUndoReview}
+        onOfferUndo={onOfferUndo}
         onCompare={onCompare}
         comparisons={comparisons}
         onOpenComparison={onOpenComparison}

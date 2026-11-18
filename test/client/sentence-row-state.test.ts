@@ -10,6 +10,7 @@ import { lessonReviewPill, memorizedCount, sentenceRowState } from '../../views/
 import { resolveSentenceUnderReview } from '../../views/detail/sentenceUnderReview.ts';
 import { SentenceActionsRow } from '../../views/detail/SentenceActionsRow.tsx';
 import { SentenceHeaderRow } from '../../views/detail/SentenceHeaderRow.tsx';
+import { PracticePill } from '../../views/detail/PracticePill.tsx';
 import { readRepoFile } from '../support/paths.ts';
 
 // Sentence review's bottom row (views/detail/sentenceRowState.ts and SentenceActionsRow.tsx): it goes by the
@@ -106,6 +107,22 @@ test('an unsaved example offers Save sentence at the right end, at Got it\'s siz
     '-my-1 flex min-h-9 items-center gap-1 rounded-lg px-4 text-sm font-bold text-white transition-colors bg-indigo-600 hover:bg-indigo-700',
   );
   assert.equal(rightButtons(rowFor('example', true, 0, { onSaveSentence: undefined })).length, 0, 'nothing without a way to save');
+});
+
+test('from 640 px up the practice pill sits between Delete and Got it, which keeps its size and place; a phone\'s row has none', () => {
+  const practicePill = createElement(PracticePill, {
+    toggle: { itemId: 's1', practicing: false, name: 'She came clean.', noun: 'sentence' }, onPress: () => {},
+  });
+  for (const reviews of [0, 3]) {
+    const html = rowFor('saved', false, reviews, { practicePill });
+    assert.deepEqual(rightButtons(html), [
+      ...(reviews > 0 ? ['Reset memory (Shift+R)'] : []), 'Delete sentence (D)', 'Add “She came clean.” to practice (B)', 'Remember (R)',
+    ]);
+    // Hidden below sm, where the lesson's speaker row shows it instead (SentenceHero), so the phone's row never changes.
+    assert.match(html, /<div class="mx-1 hidden sm:flex"><button type="button" aria-pressed="false"/);
+    assert.equal(buttonClasses(html, 'Got it'), GOT_IT);
+  }
+  assert.doesNotMatch(rowFor('saved', false, 3), /aria-pressed/, 'nothing where the view passes no pill');
 });
 
 const NOW = Date.UTC(2026, 10, 16, 9);

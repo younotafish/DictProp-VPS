@@ -389,3 +389,17 @@ test('the word card\'s pill acts on its saved copy, sits after the IPA, and take
   assert.equal(jsxAttributes(file, 'VocabCardDisplay')[0].get('afterPronunciation'), '{practicePill}');
   assert.equal(jsxAttributes(file, 'PracticeNotice')[0].get('message'), '{practice.undoFailure}');
 });
+
+test('the sentence lesson\'s pill skips previews, sits beside Got it and, on a phone, in the speaker row, and takes B', () => {
+  const file = sourceOf('views/detail/SentenceReviewView.tsx');
+  assert.deepEqual(calls(file, 'usePracticeToggle'), [
+    'usePracticeToggle({ item: isSentencePreview ? undefined : currentSentence ?? undefined, onUpdateSRS, onUndoReview, onOfferUndo, })',
+  ]);
+  assert.equal(jsxAttributes(file, 'SentenceActionsRow')[0].get('practicePill'), '{practicePill}');
+  assert.match(readRepoFile('views/detail/SentenceReviewView.tsx'), /onCopy: \(\) => \{ void handleCopySentence\(\); \},\n\s*practicePill,\n\s*\} : null;/, 'both hero layouts');
+  assert.equal(jsxAttributes(file, 'PracticeNotice')[0].get('message'), '{practice.undoFailure}');
+  // A word card's example, reviewed over the card, gets the undo too.
+  const example = jsxAttributes(sourceOf('views/detail/ExampleSentencePreview.tsx'), 'SentenceReviewView')[0];
+  assert.equal(example.get('onUndoReview'), '{onUndoReview}');
+  assert.equal(example.get('onOfferUndo'), '{onOfferUndo}');
+});

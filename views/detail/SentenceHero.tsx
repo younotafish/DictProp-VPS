@@ -32,6 +32,8 @@ interface SentenceHeroProps {
   onSpeakerToggle?: () => void;
   copyState: SentenceCopyState;
   onCopy: () => void;
+  /** The practice pill (PracticePill), in the speaker row on phones only, whose bottom row has no room for it. */
+  practicePill?: React.ReactNode;
 }
 
 /** What the connected-speech IPA line says to a screen reader, and on hover. */
@@ -39,13 +41,14 @@ const CONNECTED_IPA_LABEL = 'Natural American IPA (connected speech)';
 
 /**
  * The sentence under review, the page's hero, with its connected-speech IPA under it when the analysis has one, then
- * its speaker, copy button and (on a Mac) the Command-click hint. Words play from where they're tapped or clicked and
- * look themselves up with a two-finger tap or Command/Ctrl-click; the handlers come from the view. The IPA line sits
- * outside the sentence's element, so it's no word and no part of a selection to look up.
+ * its speaker, copy button, (on a Mac) the Command-click hint and (on a phone) the practice pill. Words play from where
+ * they're tapped or clicked and look themselves up with a two-finger tap or Command/Ctrl-click; the handlers come from
+ * the view. The IPA line sits outside the sentence's element, so it's no word and no part of a selection to look up.
  */
 export function SentenceHero({
   layout, text, sourceWord, connectedIpa, findSaved, onOpenCard, onSearchWord, commandHeld,
   onWordTouchStartCapture, onWordClickCapture, onSentencePointerDownCapture, onListened, onSpeakerToggle, copyState, onCopy,
+  practicePill,
 }: SentenceHeroProps) {
   const { isMobile, isMacDesktop } = PLATFORM;
   const split = layout === 'split';
@@ -112,6 +115,7 @@ export function SentenceHero({
             <kbd className="font-sans">⌘</kbd>
           </span>
         )}
+        {practicePill && <div className="flex sm:hidden">{practicePill}</div>}
       </div>
     </>
   );

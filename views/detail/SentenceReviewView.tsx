@@ -50,6 +50,8 @@ import { useSentenceActions } from './useSentenceActions';
 import { useSentenceGestures } from './useSentenceGestures';
 import { useSelectionLookup } from './useSelectionLookup';
 import { useSentenceShortcuts } from './useSentenceShortcuts';
+import { usePracticeToggle } from './usePracticeToggle';
+import { PracticeNotice, PracticePill } from './PracticePill';
 import type { SentenceReviewViewProps } from './types';
 
 /**
@@ -73,6 +75,8 @@ export function SentenceReviewView({
   onSearch,
   onLazyLoadImage,
   onUpdateSRS,
+  onUndoReview,
+  onOfferUndo,
   onSaveSentence,
   sentenceItems,
   followIds,
@@ -445,6 +449,14 @@ export function SentenceReviewView({
     onUpdateSRS, tryRemember, showRemembered,
   });
 
+  // The practice pill, on the learner's own saved sentences: a preview has no library copy to practice, and the pill
+  // itself leaves out catalog lines and sentences not yet translated (practiceToggleFor). The row beside Got it has no
+  // room for it on a phone, so there it sits in the speaker row under the sentence (SentenceActionsRow, SentenceHero).
+  const practice = usePracticeToggle({
+    item: isSentencePreview ? undefined : currentSentence ?? undefined, onUpdateSRS, onUndoReview, onOfferUndo,
+  });
+  const practicePill = practice.toggle && <PracticePill toggle={practice.toggle} onPress={practice.press} />;
+
   // On a laptop, a phrase selected in the sentence and Cmd/Ctrl-clicked inside the selection looks itself up whole.
   const selectionLookup = useSelectionLookup({ findSaved, onOpenCard, onSearch: searchWithContext });
 
@@ -488,6 +500,7 @@ export function SentenceReviewView({
     onSpeakerToggle: isSentenceAutoPlaying ? autoPlayReader.togglePause : undefined,
     copyState: sentenceCopy,
     onCopy: () => { void handleCopySentence(); },
+    practicePill,
   } : null;
 
   return (
@@ -568,6 +581,7 @@ export function SentenceReviewView({
               } : undefined}
               onReset={sentenceRow.showReset ? handleResetSRS : undefined}
               onDelete={handleDeleteItem}
+              practicePill={practicePill}
             />
           </div>
         </div>
@@ -616,6 +630,7 @@ export function SentenceReviewView({
       />
       {/* The Remembered! confirmation, shown only while the sentence it confirms is on screen */}
       {toast && toast.id === currentSentence?.data.id && <RememberToast intervalDays={toast.intervalDays} />}
+      <PracticeNotice message={practice.undoFailure} />
 
       {/* Attach-image FAB (sentence mode only), in the right rail 4rem above the search button (see SentenceImageFab).
           Hidden while its own paste panel is open. */}
