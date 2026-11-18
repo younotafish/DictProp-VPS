@@ -14,6 +14,7 @@ import { HttpError } from './http';
 import { formatReviewInterval } from './reviewTime';
 import { sentenceReviewState } from './sentenceReviewState';
 import { createClozePrompt, pickExample } from './studyPrompt';
+import { isClassicStudyCard } from './studyStats';
 
 /** What a card's prompts and answer are made from. */
 export interface StudyContent {
@@ -31,7 +32,6 @@ export interface StudyContent {
   ipa?: string;
 }
 
-/** The tasks a study session sets; 'quick' is the review popup's. */
 /** Study's four prompts: the other task types belong to Got it ('quick') and Today's loop. */
 export type StudyTaskType = Extract<ReviewTaskType, 'meaning' | 'production' | 'cloze' | 'listening'>;
 
@@ -95,26 +95,21 @@ export function listeningPrompt(item: StoredItem): string | null {
   return selectReviewTask(item) === 'listening' ? getStudyContent(item).example : null;
 }
 
-export function buildReviewQueue(
-  items: readonly StoredItem[],
-  now = Date.now(),
-  dueLimit = 40,
-  newLimit = 10,
-): StoredItem[] {
+/**
+ * A session's cards: up to `dueLimit` due cards, the most overdue first, one meaning per spelling. Study takes no new
+ * cards, which enter through Today's sets, and none of Today's practice or the cards you can say (isClassicStudyCard).
+ */
+export function buildReviewQueue(items: readonly StoredItem[], now = Date.now(), dueLimit = 40): StoredItem[] {
   const due = items
-    .filter(item => isDueForReview(item, now))
+    .filter(item => isDueForReview(item, now) && isClassicStudyCard(item))
     .sort((a, b) => (a.srs?.nextReview || 0) - (b.srs?.nextReview || 0));
-  const fresh = items
-    .filter(item => (item.srs?.totalReviews || 0) === 0)
-    .sort((a, b) => a.savedAt - b.savedAt);
   const seenSpellings = new Set<string>();
-  const burySiblings = (list: StoredItem[], limit: number) => list.filter(item => {
+  return due.filter(item => {
     const spelling = getItemSpelling(item);
     if (!spelling || seenSpellings.has(spelling)) return false;
     seenSpellings.add(spelling);
     return true;
-  }).slice(0, limit);
-  return [...burySiblings(due, dueLimit), ...burySiblings(fresh, newLimit)];
+  }).slice(0, dueLimit);
 }
 
 /** The four grades, in the order of their buttons and of keys 1–4: the order the review events record them in. */
