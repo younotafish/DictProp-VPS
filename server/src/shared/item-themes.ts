@@ -32,7 +32,7 @@ type DomainRow = readonly [id: string, title: string, emoji: string, scenes: rea
 const DOMAIN_ROWS: readonly DomainRow[] = [
   ['food', 'Food and drink', '🍽️', [
     ['cooking-at-home', 'Cooking at home', '🍳', 'Prepping and cooking in your own kitchen: tools, cuts and techniques'],
-    ['grocery-run', 'Grocery shopping', '🛒', 'Produce, herbs, cheese, deli counters, condiments and pantry staples'],
+    ['grocery-shopping', 'Grocery shopping', '🛒', 'Produce, herbs, cheese, deli counters, condiments and pantry staples'],
     ['tastes-and-appetites', 'Tastes and appetites', '😋', 'How food tastes, feels and smells, and how much you can eat'],
     ['eating-out', 'Eating out', '🍴', 'Restaurants and cafes: reservations, waits, tables, ordering and the check'],
     ['dishes-and-cuisines', 'Dishes and cuisines', '🌮', 'Named dishes from Mexican, Japanese, Italian and American diner menus'],
@@ -40,7 +40,7 @@ const DOMAIN_ROWS: readonly DomainRow[] = [
     ['drinks-and-nightlife', 'Drinks and nightlife', '🍸', 'Wine, bars, clubs and raves; getting drunk or high'],
   ]],
   ['home', 'Home life', '🏠', [
-    ['fixing-things', 'Fixing things at home', '🔧', 'DIY repairs, tools, wiring and plumbing, damage, pests and things that break'],
+    ['fixing-things-at-home', 'Fixing things at home', '🔧', 'DIY repairs, tools, wiring and plumbing, damage, pests and things that break'],
     ['renovating-and-decorating', 'Renovating and decorating', '🛋️', 'Remodels, contractors, furniture, linens and decor'],
     ['cleaning-and-laundry', 'Cleaning and laundry', '🧹', 'Chores, dirt, mold, messes, stains and doing the wash'],
     ['plants-and-gardening', 'Plants and gardening', '🌱', 'Houseplants, flowers, trees, lawns and yard work'],
@@ -50,7 +50,7 @@ const DOMAIN_ROWS: readonly DomainRow[] = [
     ['living-with-pets', 'Living with pets', '🐕', 'Dogs, cats, pet sitters, shedding and strays'],
   ]],
   ['social', 'Family and social life', '👪', [
-    ['family-life', 'Family and kids', '👶', 'Relatives, pregnancy, babies, raising kids, babysitting and family ties'],
+    ['family-and-kids', 'Family and kids', '👶', 'Relatives, pregnancy, babies, raising kids, babysitting and family ties'],
     ['dating-and-marriage', 'Dating and marriage', '💞', 'Crushes, flings, breakups, toxic relationships and married life'],
     ['sex-and-intimacy', 'Sex and intimacy', '🔞', 'Desire, sex, nudity and reproduction, said plainly or politely'],
     ['friends-and-falling-out', 'Friends and falling out', '🫂', 'Hanging out, loyalty, bailing, betrayal, feuds and making up'],
@@ -164,8 +164,8 @@ const DOMAIN_ROWS: readonly DomainRow[] = [
   ]],
   ['talk', 'Talking and opinions', '💬', [
     ['how-people-talk', 'How people talk', '🗣️', 'Rambling, barking, mumbling, deadpan, crude talk and raising a topic'],
-    ['lying-and-pretending', 'Honesty, lies and BS', '🤥', 'Being frank or evasive, spinning, lying, faking, and calling out BS'],
-    ['telling-a-story', 'Stories and memories', '📖', 'Recounting what happened, anecdotes, tall tales, remembering and forgetting'],
+    ['honesty-lies-and-bs', 'Honesty, lies and BS', '🤥', 'Being frank or evasive, spinning, lying, faking, and calling out BS'],
+    ['stories-and-memories', 'Stories and memories', '📖', 'Recounting what happened, anecdotes, tall tales, remembering and forgetting'],
     ['gossip-and-scandal', 'Gossip and scandal', '🤫', 'Rumors, secrets, leaks, whistleblowers and scandals that blow up'],
     ['arguing-a-point', 'Arguing a point', '🙋', 'Giving opinions, making a case, agreeing, disagreeing and conceding'],
     ['persuading-and-negotiating', 'Persuading and negotiating', '🤝', 'Talking someone around, pestering, pressuring, tempting, haggling and deals'],
@@ -188,7 +188,7 @@ const DOMAIN_ROWS: readonly DomainRow[] = [
   ['describing', 'Describing things', '🔍', [
     ['size-and-amount', 'Size and amount', '📏', 'How big, heavy, many, much or very: colossal, hefty, legion, utterly'],
     ['shape-and-position', 'Shape and position', '📐', 'Crescents, rims, layers, gaps, and where things sit, lean or lie around'],
-    ['colors-shine-and-texture', 'Colors, light and texture', '🎨', 'Colors, glow, glitter, sheen, blur, patterns and the look of a design'],
+    ['colors-light-and-texture', 'Colors, light and texture', '🎨', 'Colors, glow, glitter, sheen, blur, patterns and the look of a design'],
     ['sounds-and-smells', 'Sounds and smells', '👂', 'Clatters, squeaky hinges, crisp audio, crowd noise and foul odors'],
     ['moving-around', 'Moving around', '🏃', 'Darting, staggering, swaying, bumping into things, going in and out'],
     ['handling-things', 'Handling things', '✋', 'Grabbing, letting go, cramming, twisting, unfurling and rummaging'],
