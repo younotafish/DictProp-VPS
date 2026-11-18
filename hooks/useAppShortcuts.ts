@@ -10,7 +10,7 @@ import type { UndoOfferState } from './useUndoOffer';
 export const TAB_KEYS: ReadonlyMap<string, ViewState> = new Map([['1', 'notebook'], ['2', 'sentences'], ['3', 'study']]);
 
 /**
- * The app-wide keys: 1, 2 and 3 are taps on the Notebook, Sentences and Study tabs (`navigate`: one switches tabs, or
+ * The app-wide keys: 1, 2 and 3 are taps on the Notebook, Sentences and Today tabs (`navigate`: one switches tabs, or
  * on the tab showing scrolls it up and then focuses its search box), Escape closes what's on top, ? lists the
  * gestures and shortcuts, and ⌘Z (Ctrl+Z off a Mac) takes back what the undo pill offers. The card view's own keys are in
  * useKeyboardNavigation, which only the card view loads.

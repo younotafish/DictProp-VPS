@@ -1,7 +1,8 @@
 /**
- * The Study tab's keys as pure tables: what a key press does in a session, given what it shows (resolveStudyKey), and
- * on the dashboard between sessions (resolveDashboardKey). The views (views/StudyEnhanced.tsx,
- * components/StudyDashboard.tsx) read the DOM facts the tables need, ask them, and carry out the action.
+ * Card review's keys (classic Study, inside the Today tab) as pure tables: what a key press does in a session, given what
+ * it shows (resolveStudyKey), and on the dashboard between sessions (resolveDashboardKey). The views
+ * (views/StudyEnhanced.tsx, components/StudyDashboard.tsx) read the DOM facts the tables need, ask them, and carry out
+ * the action.
  */
 
 import type { ReviewRating } from '../types';
@@ -52,7 +53,7 @@ export type StudyKeyAction =
 
 export type StudyKeyEvent = Pick<KeyboardEvent, 'key' | 'repeat' | 'metaKey' | 'ctrlKey' | 'altKey' | 'defaultPrevented'>;
 
-/** A key with a modifier, one a view already used, one typed, or one under a dialog outside the Study tab isn't the tab's. */
+/** A key with a modifier, one a view already used, one typed, or one under a dialog outside Card review isn't Card review's. */
 const isOthersKey = (event: StudyKeyEvent, state: Pick<StudyKeyState, 'typing' | 'dialogOutside'>): boolean =>
   event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || state.typing || state.dialogOutside;
 
