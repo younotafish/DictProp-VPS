@@ -161,8 +161,11 @@ export const remainingMs = (ctx: AiRequestContext): number => Math.max(0, ctx.de
 export interface ChatRequest {
   system: string;
   user: string;
+  /** The reply's token cap; with reasoning on, the model's thinking counts toward it too. */
   maxTokens: number;
   temperature?: number;
+  /** Turns on the model's thinking first (DeepInfra's reasoning_effort): slower, and better at careful judgments. */
+  reasoningEffort?: 'low' | 'medium' | 'high';
   label?: string;
 }
 
@@ -253,6 +256,7 @@ function createChatCaller(options: ChatClientOptions) {
         messages: [{ role: 'system', content: request.system }, { role: 'user', content: request.user }],
         ...(format === 'json' ? { response_format: { type: 'json_object' } } : {}),
         temperature: request.temperature ?? DEFAULT_TEMPERATURE,
+        ...(request.reasoningEffort ? { reasoning_effort: request.reasoningEffort } : {}),
         ...(withMaxTokens ? { max_tokens: request.maxTokens } : {}),
       }),
       signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(window)]),

@@ -1,4 +1,4 @@
-// The theme classifier: one chat request sorts up to sixty saved words and sentences into the shared taxonomy's scenes
+// The theme classifier: one chat request sorts up to thirty saved words and sentences into the shared taxonomy's scenes
 // (shared/item-themes.ts). The sweep (sweep.ts) runs it over the library, and a script can run it on a holdout to check
 // its quality: classifyThemeBatch takes the chat client as a parameter. The whole prompt is in this file, so it can be
 // tuned in one place.
@@ -7,13 +7,20 @@ import { isThemeId, THEME_DOMAINS } from '../shared/item-themes.js';
 import { THEME_BOUNDARIES } from './boundaries.js';
 import type { ThemeItem } from './input.js';
 
-/** Items per request: a few thousand tokens of items beside the taxonomy, and a reply well inside its token cap. */
-export const THEME_BATCH_SIZE = 60;
-// One request's budget, its retry included.
-const BATCH_BUDGET_MS = 90_000;
-// An answer is about 15 tokens, so this fits sixty with room to spare; a reply cut off at the cap loses its whole
-// request, whose items then go back in halves.
-const MAX_REPLY_TOKENS = 2_000;
+/**
+ * Items per request. With the model thinking first, batches of thirty took 265 s over the 400-item holdout and agreed
+ * with two Claude labellers' consensus (370 items) on 83.5% of scenes and 88.4% of domains, against about 80% and 84%
+ * without thinking at any batch size (gate runs, 2026-11-18). Two Claude labellers agreed with each other on 92.5% of
+ * scenes and 94% of domains, so the model reaches nine-tenths of that ceiling.
+ */
+export const THEME_BATCH_SIZE = 30;
+// The model thinks before it answers: worth the time for choices between neighbouring scenes.
+const REASONING_EFFORT = 'medium';
+// One request's budget, its retry included: the slowest holdout request took 24 s.
+const BATCH_BUDGET_MS = 180_000;
+// The thinking counts toward the cap (about 1,100 tokens a request on the holdout) beside about 15 tokens an answer,
+// so this leaves wide room; a reply cut off at the cap loses its whole request, whose items then go back in halves.
+const MAX_REPLY_TOKENS = 16_000;
 // The same items should land in the same scenes every time.
 const TEMPERATURE = 0.1;
 
@@ -126,6 +133,7 @@ export async function classifyThemeBatch(
         user: themeUserPrompt(positions.map(position => items[position])),
         maxTokens: MAX_REPLY_TOKENS,
         temperature: TEMPERATURE,
+        reasoningEffort: REASONING_EFFORT,
         label: 'theme classifier',
         accept: (reply) => {
           const given = readThemeReply(reply, positions.length);

@@ -8,7 +8,7 @@ export interface ThemeItem {
   text: string;
 }
 
-/** Enough of a definition to tell the sense apart, with room for sixty items in a request. */
+/** Enough of a definition to tell the sense apart, short enough to keep a request of thirty items small. */
 export const MAX_DEFINITION_CHARS = 160;
 /** A long sentence's opening sets its scene. */
 export const MAX_SENTENCE_CHARS = 260;

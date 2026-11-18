@@ -14,6 +14,7 @@ interface ChatRequest {
   messages: Array<{ role: string; content: string }>;
   response_format?: { type: string };
   temperature: number;
+  reasoning_effort?: string;
   max_tokens?: number;
 }
 
@@ -60,7 +61,7 @@ test('the prompt lists every scene under its domain with its title, blurb and bo
   );
 });
 
-test('a complete answer sorts the batch in one request, asked of DeepSeek in JSON mode at a low temperature', async () => {
+test('a complete answer sorts the batch in one request, asked of DeepSeek in JSON mode at a low temperature, thinking first', async () => {
   const h = harness([reply({ a: [{ i: 2, t: B }, { i: '1', t: ` ${A} ` }, { i: 3, t: A }] })]);
   const result = await classifyThemeBatch(words(3), h.chat);
   assert.deepEqual(result, { themes: [A, B, A], unanswered: [] });
@@ -69,7 +70,8 @@ test('a complete answer sorts the batch in one request, asked of DeepSeek in JSO
   assert.equal(request.model, DEEPSEEK_MODEL);
   assert.deepEqual(request.response_format, { type: 'json_object' });
   assert.equal(request.temperature, 0.1);
-  assert.equal(request.max_tokens, 2_000);
+  assert.equal(request.reasoning_effort, 'medium');
+  assert.equal(request.max_tokens, 16_000);
   assert.equal(request.messages[0].content, THEME_SYSTEM_PROMPT);
   assert.deepEqual(h.asked(0), ['word 0', 'word 1', 'word 2']);
 });
