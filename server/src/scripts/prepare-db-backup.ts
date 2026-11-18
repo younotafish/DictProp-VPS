@@ -17,8 +17,10 @@ const { default: Database } = await import('better-sqlite3');
 const { backupBeforeWrite } = await import('../import-support.js');
 
 // What a restored copy is checked against: the accounts, the library with its reviews and images, the example
-// enrichments and the saved comparisons. A table the database doesn't have is left out.
-const COUNTED_TABLES = ['users', 'items', 'review_events', 'item_images', 'image_blobs', 'sentence_enrichments', 'comparisons'];
+// enrichments, the saved comparisons and Today's themes. A table the database doesn't have is left out.
+const COUNTED_TABLES = [
+  'users', 'items', 'review_events', 'item_images', 'image_blobs', 'sentence_enrichments', 'comparisons', 'item_themes',
+];
 
 // Both writers name a copy for the moment they started it, pre-<operation>-<time>.db and dictprop-<time>-<sha>.db,
 // which is when its snapshot was taken; the file's own time is when the copy was finished.

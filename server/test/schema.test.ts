@@ -7,6 +7,8 @@ const { db } = await import('../src/db.js');
 const { stmts } = await import('../src/db/items.js');
 const { imageStmts } = await import('../src/db/images.js');
 const { orphanStmts, userStmts } = await import('../src/db/users.js');
+const { reviewStmts } = await import('../src/db/reviews.js');
+const { themeStmts } = await import('../src/db/item-themes.js');
 
 // items and users as the server first created them in March 2026, with indexes the schema has since retired.
 const MARCH_TABLES = `
@@ -156,4 +158,15 @@ test('statements search the indexes that remain instead of scanning tables', () 
   assert.match(plan(userStmts.findByGoogleId.source, 'g'), /SEARCH users USING INDEX sqlite_autoindex_users_2/);
   assert.match(plan(orphanStmts.items.source, 'user'), /SEARCH items USING (COVERING )?INDEX idx_items_user_/);
   assert.match(plan(orphanStmts.images.source, 'user'), /SEARCH item_images USING (COVERING )?INDEX idx_item_images_user_versions/);
+  // Today's streak reads a year of the user's reviews by time.
+  assert.match(plan(reviewStmts.setDays.source, 0, 'user', 0), /SEARCH review_events USING INDEX idx_review_events_user_time \(user_id=\? AND reviewed_at>\?\)/);
+  // The theme sweep walks the items by rowid, without sorting, and finds each theme row by its key; clients' deltas
+  // read the theme rows in seq order.
+  const candidates = plan(themeStmts.candidates.source, 'user', 0, 500);
+  assert.match(candidates, /SEARCH items USING INTEGER PRIMARY KEY \(rowid>\?\)/);
+  assert.match(candidates, /SEARCH themes USING INDEX sqlite_autoindex_item_themes_1 \(user_id=\? AND item_id=\?\)/);
+  assert.doesNotMatch(candidates, /TEMP B-TREE/);
+  const deltas = plan(themeStmts.changedAfter.source, 'user', 0, 10);
+  assert.match(deltas, /SEARCH item_themes USING INDEX idx_item_themes_user_seq \(user_id=\? AND seq>\? AND seq<\?\)/);
+  assert.doesNotMatch(deltas, /TEMP B-TREE/);
 });

@@ -17,7 +17,7 @@ saveItem(owner.id, 'placid', 'vocab', { word: 'placid' });
 addItemImage(owner.id, 'serene');
 storeExample('A serene lake at dawn.', { translation: 'A calm lake.' }, png('lake'));
 const COUNTS = {
-  users: 1, items: 2, review_events: 0, item_images: 1, image_blobs: 2, sentence_enrichments: 1, comparisons: 0,
+  users: 1, items: 2, review_events: 0, item_images: 1, image_blobs: 2, sentence_enrichments: 1, comparisons: 0, item_themes: 0,
 };
 
 // Stands in for the database or a migration logging while the script runs: at exit, after everything the script

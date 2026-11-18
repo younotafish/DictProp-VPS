@@ -49,6 +49,7 @@ export function applySchema(db: Database.Database): void {
       value INTEGER NOT NULL
     );
     INSERT OR IGNORE INTO sync_meta (key, value) VALUES ('item_revision', 0);
+    INSERT OR IGNORE INTO sync_meta (key, value) VALUES ('theme_seq', 0);
 
     CREATE TABLE IF NOT EXISTS review_events (
       id TEXT PRIMARY KEY,
@@ -126,6 +127,24 @@ export function applySchema(db: Database.Database): void {
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (key, user_id)
     );
+
+    -- Today's theme for each saved word and sentence, as the server's classifier chose it (server/src/themes). It
+    -- stays out of item data, so labelling takes no item revisions and no corpus import can drop it. seq orders what
+    -- GET /api/themes sends: it takes the next value of sync_meta's theme_seq only when the row's theme changes.
+    -- input_hash says which input the row is about (a word and its sense, or a sentence's text), and failures counts
+    -- the classifier's misses on that input under taxonomy_version.
+    CREATE TABLE IF NOT EXISTS item_themes (
+      user_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      theme_id TEXT,
+      input_hash TEXT NOT NULL,
+      taxonomy_version INTEGER NOT NULL,
+      model TEXT NOT NULL,
+      classified_at INTEGER NOT NULL,
+      failures INTEGER NOT NULL DEFAULT 0,
+      seq INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_id, item_id)
+    );
   `);
 
   addColumnIfMissing(db, 'items', 'user_id', 'TEXT');
@@ -157,6 +176,7 @@ export function applySchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_sentence_enrichments_image
       ON sentence_enrichments(image_content_hash) WHERE image_content_hash IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_comparisons_user_id ON comparisons(user_id);
+    CREATE INDEX IF NOT EXISTS idx_item_themes_user_seq ON item_themes(user_id, seq);
   `);
 
   // Indexes no statement uses, or that repeat a key or the leading columns of another index. Rolling back to the

@@ -62,3 +62,12 @@ export {
   type UserSession,
 } from './db/users.js';
 export { getComparisons, upsertComparison, type StoredComparisonRow } from './db/comparisons.js';
+export {
+  getThemeRowsAfter,
+  listThemeCandidates,
+  MAX_THEME_FAILURES,
+  recordThemeResults,
+  type ThemeCandidate,
+  type ThemeResult,
+  type ThemeRowChanges,
+} from './db/item-themes.js';

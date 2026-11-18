@@ -85,9 +85,3 @@ test('the route answers with the set days of the signed-in owner, never cached, 
   assert.deepEqual(await days('?tzOffset=-720'), { [utcDay(LATE_EVENING)]: 1 });
   assert.deepEqual(await days('?tzOffset=840'), { [utcDay(LATE_EVENING + DAY)]: 1 });
 });
-
-test('the set days search the reviews by user and time instead of scanning the table', () => {
-  const plan = (db.prepare(`EXPLAIN QUERY PLAN ${reviewStmts.setDays.source}`).all(0, 'user', 0) as Array<{ detail: string }>)
-    .map(row => row.detail).join('\n');
-  assert.match(plan, /SEARCH review_events USING INDEX idx_review_events_user_time \(user_id=\? AND reviewed_at>\?\)/);
-});
