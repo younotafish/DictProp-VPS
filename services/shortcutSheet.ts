@@ -13,7 +13,8 @@ import { hasSearchBox } from './navReselect';
  * - Card view: views/detail/cardKeys.ts handleWordKey, hooks/useKeyboardNavigation.ts, views/detail/useWordGestures.ts.
  * - Sentences: views/detail/cardKeys.ts handleSentenceKey, hooks/useKeyboardNavigation.ts,
  *   views/detail/useSentenceGestures.ts and SentenceReviewView.tsx (Escape), views/SentencesView.tsx (the list).
- * - Study session: services/studyKeys.ts, components/study/StudyCard.tsx (the answer box), views/StudyEnhanced.tsx (Escape).
+ * - Today: views/today/todayKeys.ts, views/today/TodayView.tsx (Escape).
+ * - Card review: services/studyKeys.ts, components/study/StudyCard.tsx (the answer box), views/StudyEnhanced.tsx (Escape).
  * - Word card popup: components/review/popupShortcuts.ts.
  * - Search: components/GlobalSearch.tsx and components/search (the box and the results sheet).
  * - Trackpad: hooks/useKeyboardNavigation.ts useWheelNavigation and the sentence pages' wheel handler.
@@ -30,7 +31,7 @@ export interface ShortcutRow {
   label: string;
 }
 
-export type ShortcutSectionId = 'touch' | 'navigation' | 'card' | 'sentences' | 'study' | 'popup' | 'search' | 'trackpad';
+export type ShortcutSectionId = 'touch' | 'navigation' | 'card' | 'sentences' | 'today' | 'study' | 'popup' | 'search' | 'trackpad';
 
 export interface ShortcutSection {
   id: ShortcutSectionId;
@@ -58,7 +59,7 @@ export function keyChords(keys: readonly string[]): string[][] {
 
 /** The tab names, as the tab bar shows them. */
 const TAB_NAMES: Record<ViewState, string> = {
-  notebook: 'Notebook', sentences: 'Sentences', 'real-life': 'Real Life', essays: 'Essays', study: 'Study',
+  notebook: 'Notebook', sentences: 'Sentences', 'real-life': 'Real Life', essays: 'Essays', study: 'Today',
 };
 
 /**
@@ -153,8 +154,29 @@ const SECTIONS: readonly ShortcutSection[] = [
     ],
   },
   {
+    id: 'today',
+    title: 'Today',
+    rows: [
+      { keys: ['Enter'], label: 'On the plan: Practice, or Start set' },
+      { keys: ['Space', 'Enter'], label: 'Show the answer; after saying an item twice, or a last look, the next card' },
+      { keys: ['H'], label: 'Take the hint, before the answer shows' },
+      { keys: ['1', '←'], label: 'Meeting an item: Practice' },
+      { keys: ['2', '↓'], label: 'Meeting an item: Passive' },
+      { keys: ['3', '→'], label: 'Meeting an item: Can say it (closed once the hint has shown)' },
+      { keys: ['1'], label: 'Practicing: Not yet' },
+      { keys: ['3', 'Enter'], label: 'Practicing: Got it' },
+      { keys: ['P'], label: 'Say the answer again' },
+      { keys: ['E'], label: 'Play or pause the word’s example' },
+      { keys: ['U'], label: 'Undo the last answer; meeting items, go back to the last choice' },
+      { keys: ['Mod', 'Z'], label: 'The same as U, unless the Undo pill shows: then it undoes what the pill offers' },
+      { keys: ['Esc'], label: 'End the session early, to its summary; on a summary or in All themes, back to the plan' },
+      { keys: ['Enter'], label: 'On a summary: its first button' },
+      { keys: ['R'], label: 'On the summary of a session ended early: take it up again' },
+    ],
+  },
+  {
     id: 'study',
-    title: 'Study session',
+    title: 'Card review',
     rows: [
       { keys: ['Enter'], label: 'Start, or Done on the summary' },
       { keys: ['Space', 'Enter'], label: 'Show the answer' },

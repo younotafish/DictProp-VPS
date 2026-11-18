@@ -10,11 +10,12 @@ import { keyChords, sheetSections, type ShortcutRow, type ShortcutSection } from
 import { resolveDashboardKey, resolveStudyKey, type DashboardKeyState, type StudyKeyState } from '../../services/studyKeys.ts';
 import type { StoredItem } from '../../types.ts';
 import { handleSentenceKey, handleWordKey, type SentenceKeyHandlers, type WordKeyHandlers } from '../../views/detail/cardKeys.ts';
+import { resolveTodayKey, type TodayKeyState } from '../../views/today/todayKeys.ts';
 
 // services/shortcutSheet.ts, the gestures and shortcuts sheet as data, and components/KeyboardHelpModal.tsx, which
 // renders it.
 
-const LAPTOP_ORDER = ['Navigation', 'Card view', 'Sentences', 'Study session', 'Word card popup', 'Search', 'Trackpad'];
+const LAPTOP_ORDER = ['Navigation', 'Card view', 'Sentences', 'Today', 'Card review', 'Word card popup', 'Search', 'Trackpad'];
 const mac = sheetSections({ touchFirst: false, isMac: true });
 const phone = sheetSections({ touchFirst: true, isMac: false });
 const section = (sections: ShortcutSection[], id: ShortcutSection['id']) => sections.find(item => item.id === id)!;
@@ -50,7 +51,7 @@ test('Mod is ⌘ on a Mac and Ctrl elsewhere', () => {
 
 test('the number keys are the tab keys, and pressed again they go up, then, on the tabs with a search box, to the search', () => {
   assert.ok(hasRow(section(mac, 'navigation').rows, [...TAB_KEYS.keys()],
-    'Notebook, Sentences, Study; pressed again on its own tab: to the top, then, on Notebook or Sentences, to the search'));
+    'Notebook, Sentences, Today; pressed again on its own tab: to the top, then, on Notebook or Sentences, to the search'));
   assert.deepEqual([...TAB_KEYS.keys()], ['1', '2', '3']);
 });
 
@@ -242,6 +243,10 @@ const searchSheet = (facts: Partial<SheetKeyState>): Resolve => probe => action(
 const popup = (facts: Partial<PopupKeyState>): Resolve => probe => action(resolvePopupShortcut(pressOf(probe), {
   typing: false, onControl: false, pageCount: 3, saved: true, ...facts,
 } as PopupKeyState));
+const today = (facts: Partial<TodayKeyState>): Resolve => probe => action(resolveTodayKey(pressOf(probe), {
+  screen: 'card', canUndo: false, undoing: false, appUndoOpen: false, isMac: true, typing: false, onControl: false, dialogOutside: false,
+  ...facts,
+} as TodayKeyState));
 
 const archivedCard = { type: 'vocab', savedAt: 0, isArchived: true, data: { id: 'fig-1', word: 'fig' } } as unknown as StoredItem;
 /** Each key table, the section of the sheet that lists its keys, and the contexts it's probed in. */
@@ -270,6 +275,18 @@ const KEY_TABLES: { section: ShortcutSection['id']; contexts: Record<string, Res
       'a card with its answer showing': studySession({ revealed: true, canUndo: true }),
       'the summary of a session ended early': studySession({ phase: 'summary', canUndo: true, canResume: true }),
       'the dashboard': studyDashboard,
+    },
+  },
+  {
+    section: 'today', // views/today/todayKeys.ts
+    contexts: {
+      'the plan': today({ screen: 'plan', hasPrimary: true }),
+      'a cue': today({ footer: 'cue', canHint: true, canUndo: true }),
+      'meeting an item': today({ footer: 'meet', sayOpen: true, hasExample: true, canUndo: true }),
+      'a practice card\'s answer': today({ footer: 'run', hasExample: true, canUndo: true }),
+      'saying an item twice': today({ footer: 'encode', hasExample: true }),
+      'the last look': today({ footer: 'look', hasExample: true }),
+      'the summary of a session ended early': today({ screen: 'summary', hasPrimary: true, canResume: true, canUndo: true }),
     },
   },
   {
@@ -343,4 +360,21 @@ test('the cross-check sees the keys each table\'s own tests pin, and a modifier 
   // Shift and Caps Lock leave a card's A alone, and ⌘ leaves the search sheet's arrows alone.
   assert.ok(!chords('card').has('Shift+A'));
   assert.ok(!chords('search').has('Mod+←'));
+});
+
+test('Today\'s section lists the player\'s keys, and the cross-check sees each of them in the resolver', () => {
+  const rowsOf = section(mac, 'today').rows;
+  for (const [keys, label] of [
+    [['1', '←'], 'Meeting an item: Practice'],
+    [['2', '↓'], 'Meeting an item: Passive'],
+    [['3', '→'], 'Meeting an item: Can say it (closed once the hint has shown)'],
+    [['1'], 'Practicing: Not yet'],
+    [['3', 'Enter'], 'Practicing: Got it'],
+    [['U'], 'Undo the last answer; meeting items, go back to the last choice'],
+    [['⌘', 'Z'], 'The same as U, unless the Undo pill shows: then it undoes what the pill offers'],
+  ] as const) assert.ok(hasRow(rowsOf, [...keys], label), label);
+  const found = new Set(tableChords(KEY_TABLES.find(table => table.section === 'today')!.contexts).keys());
+  for (const key of ['Enter', 'Space', 'H', '1', '2', '3', '←', '↓', '→', 'P', 'E', 'U', 'Mod+Z', 'R']) assert.ok(found.has(key), key);
+  // 1-3 a session swallows are no action of its own, Esc goes through the escape stack, and Shift changes nothing.
+  for (const key of ['4', 'Mod+1', 'Mod+R', 'Esc', 'Tab', 'Shift+H', 'Shift+Z']) assert.ok(!found.has(key), `no ${key}`);
 });
