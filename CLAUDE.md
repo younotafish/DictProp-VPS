@@ -277,7 +277,7 @@ Enrichment runs on this Mac (`scripts/offline/`, LaunchAgent `com.dictprop.incre
   - it pauses for 15 minutes on a spent balance, a refused key or three failed batches;
   - the shutdown stops it first.
 
-  An item the model can't place three times stays Unsorted until its word, sense or text changes, or the taxonomy does. The taxonomy (`server/src/shared/item-themes.ts`) is closed: changing its scenes means bumping `THEME_TAXONOMY_VERSION`. Then the items whose scene left the list are sorted again (and those the model gave up on get three more tries), and each device fetches its theme rows afresh.
+  An item the model can't place three times stays Unsorted until its word, sense or text changes, or the taxonomy does. The taxonomy (`server/src/shared/item-themes.ts`) is closed: changing its scenes means bumping `THEME_TAXONOMY_VERSION`. Then the sweep sorts everything again (about three hours and under a dollar for the whole library), and each device fetches its theme rows afresh.
 
 ### Sharing code between client and server
 - Runtime code both sides run lives in `server/src/shared/` and imports nothing, so the client bundle, the server and plain-node offline scripts all load it (see its README for the import forms). The client reaches the rest of `server/src` only through `import type` / `export type`, which the bundler erases.

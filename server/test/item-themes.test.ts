@@ -117,11 +117,11 @@ test('an item stops being a candidate once themed for its input, and comes back 
   recordThemeResults(user, [{ itemId: 'word', inputHash: candidate.inputHash, themeId: FIRST }], context);
   assert.deepEqual(await candidateIds(user), []);
 
-  // A rewritten definition keeps the theme; a new taxonomy that still has the theme does too.
+  // A rewritten definition keeps the theme.
   save(user, 'word', 'vocab', { word: 'bank', sense: 'noun: river', definition: 'rewritten' }, { updatedAt: 2 });
   assert.deepEqual(await candidateIds(user), []);
-  assert.deepEqual(await candidateIds(user, VERSION + 1), []);
-  // A taxonomy without it labels the item again, and so does a new sense label.
+  // A new taxonomy labels the item again, even one that still has its theme, and so does a new sense label.
+  assert.deepEqual(await candidateIds(user, VERSION + 1), ['word']);
   assert.deepEqual(await candidateIds(user, VERSION + 1, new Set([SECOND])), ['word']);
   save(user, 'word', 'vocab', { word: 'bank', sense: 'noun: finance', definition: 'a lender' }, { updatedAt: 3 });
   assert.deepEqual(await candidateIds(user), ['word']);

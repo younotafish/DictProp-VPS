@@ -93,9 +93,9 @@ export interface ThemeCandidate {
 }
 
 /**
- * Whether an item needs the classifier: it has no row, its input changed, or it has no theme the taxonomy still holds
- * and the classifier hasn't yet missed it MAX_THEME_FAILURES times on this input and taxonomy. A theme the taxonomy
- * still holds stays when the taxonomy changes, so a new version labels again only the items whose theme left it.
+ * Whether an item needs the classifier: it has no row, its input changed, its row was made under an older taxonomy (a
+ * new version sorts everything again, since its scenes' boundaries may have moved), or it has no theme the taxonomy
+ * holds and the classifier hasn't yet missed it MAX_THEME_FAILURES times on this input and taxonomy.
  */
 export function needsTheme(
   row: ThemeRowFields,
@@ -103,9 +103,9 @@ export function needsTheme(
   taxonomyVersion: number,
   themeIds: ReadonlySet<string>,
 ): boolean {
-  if (row.input_hash !== inputHash) return true;
+  if (row.input_hash !== inputHash || (row.taxonomy_version ?? 0) < taxonomyVersion) return true;
   if (row.theme_id && themeIds.has(row.theme_id)) return false;
-  return (row.taxonomy_version ?? 0) < taxonomyVersion || (row.failures ?? 0) < MAX_THEME_FAILURES;
+  return (row.failures ?? 0) < MAX_THEME_FAILURES;
 }
 
 /** Hands the event loop a turn, so a long read lets requests in between its chunks. */
