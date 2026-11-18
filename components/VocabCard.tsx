@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useState, type ReactNode } from 'react';
 import { VocabCard as VocabType, WordFamilyEntry, type UsageAudit } from '../types';
 import { Archive, BadgeCheck, BookOpen, BriefcaseBusiness, Check, Flame, History, Lightbulb, MapPin, Maximize2, Network, RefreshCw, Scale, Shapes, Sparkles, X, BookmarkPlus, BookmarkCheck, type LucideIcon } from 'lucide-react';
 import { PronunciationBlock } from './PronunciationBlock';
@@ -34,6 +34,11 @@ interface Props {
   onOpenExampleSentence?: (text: string, word: string, sense?: string) => void;
   isSentenceSaved?: (text: string) => boolean;
   onLazyLoadImage?: (itemId: string, imageVersion?: string) => Promise<string | null>;
+  /**
+   * Shown at the end of the IPA's row, after YouGlish, which then wraps onto a second line when it runs out of room:
+   * the card view's practice pill. The search sheet and the review popup pass none, so their row stays as it was.
+   */
+  afterPronunciation?: ReactNode;
 }
 
 const usagePresentation: Record<UsageAudit['status'], { label: string; className: string; icon: LucideIcon }> = {
@@ -220,6 +225,7 @@ export const VocabCardDisplay = memo(function VocabCardDisplay({
   onOpenExampleSentence,
   isSentenceSaved,
   onLazyLoadImage,
+  afterPronunciation,
 }: Props) {
 
   // Compare-pick mode state
@@ -338,7 +344,7 @@ export const VocabCardDisplay = memo(function VocabCardDisplay({
           {data.usageAudit && (
             <UsageBadge audit={data.usageAudit} expanded={showUsageReason} onToggle={() => setShowUsageReason(current => !current)} />
           )}
-          <div className="flex items-center gap-2 mt-1 text-slate-500">
+          <div className={`flex items-center gap-2 mt-1 text-slate-500${afterPronunciation ? ' flex-wrap' : ''}`}>
             {data.ipa && (
               <PronunciationBlock
                 text={data.word}
@@ -354,6 +360,7 @@ export const VocabCardDisplay = memo(function VocabCardDisplay({
               opening="new-tab"
               className={YOUGLISH_CLASS}
             />
+            {afterPronunciation}
           </div>
         </div>
         <div className="flex items-center gap-1 select-none">

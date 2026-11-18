@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import ts from 'typescript';
 import type { StoredItem } from '../../types.ts';
 import { HttpError } from '../../services/http.ts';
 import { updateAfterRating } from '../../services/fsrsScheduler.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import { isPracticeDue } from '../../services/learningLoop/standing.ts';
 import { MEET_RATINGS } from '../../services/learningLoop/session.ts';
+import { VocabCardDisplay } from '../../components/VocabCard.tsx';
 import {
   PRACTICE_PRESS_WINDOW_MS, acceptPracticePress, createPracticePress, practiceChange, practicePillLabel, practicePillText,
   practiceToggleFor, practiceUndoFailureText, undoPracticeChange, type PracticeToggle,
@@ -15,9 +17,11 @@ import {
 import { PracticePill, PracticeUndoFailure } from '../../views/detail/PracticePill.tsx';
 import { usePracticeToggle } from '../../views/detail/usePracticeToggle.ts';
 import { DAY, practicing, reviewed, sayable, sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
+import { readRepoFile } from '../support/paths.ts';
 
 // The practice pill of the card view and the sentence lesson (views/detail/practiceToggle.ts, usePracticeToggle.ts and
-// PracticePill.tsx): where it shows, what a press records, its undo and what a failed undo says, and how it looks.
+// PracticePill.tsx): where it shows, what a press records, its undo and what a failed undo says, how it looks, and the
+// wiring from App to both views. The views need a library and a browser to mount, so their wiring is read from source.
 
 const NOW = Date.UTC(2026, 10, 18, 9);
 const braise = vocabItem('braise-1', 'braise');
@@ -321,4 +325,67 @@ test('a press changes only the pill\'s colours, so nothing beside it moves; it\'
 test('a failed undo shows as a rose alert in the notice stack, which may wrap', () => {
   const markup = renderToStaticMarkup(createElement(PracticeUndoFailure, { message: 'You’re offline, so the change can’t be undone.' }));
   assert.match(markup, /^<div role="alert" class="[^"]*rounded-2xl bg-rose-600 [^"]*">.*You’re offline, so the change can’t be undone\.<\/span><\/div>$/);
+});
+
+test('on the word card the pill ends the IPA\'s row, which then wraps; without it the row is as it always was', () => {
+  const card = braise.data as Parameters<typeof VocabCardDisplay>[0]['data'];
+  const withIpa = { ...card, ipa: '/breɪz/' };
+  const rowOf = (markup: string) => {
+    const start = markup.indexOf('<div class="flex items-center gap-2 mt-1 text-slate-500');
+    assert.ok(start >= 0, 'the IPA\'s row');
+    return markup.slice(start, markup.indexOf('</div>', markup.indexOf('YouGlish', start)) + '</div>'.length);
+  };
+  const plain = rowOf(renderToStaticMarkup(createElement(VocabCardDisplay, { data: withIpa })));
+  assert.match(plain, /^<div class="flex items-center gap-2 mt-1 text-slate-500">/);
+  assert.doesNotMatch(plain, /aria-pressed/);
+
+  const withPill = rowOf(renderToStaticMarkup(createElement(VocabCardDisplay, {
+    data: withIpa, afterPronunciation: createElement(PracticePill, { toggle: out, onPress: () => {} }),
+  })));
+  assert.match(withPill, /^<div class="flex items-center gap-2 mt-1 text-slate-500 flex-wrap">/);
+  assert.ok(withPill.indexOf('/breɪz/') < withPill.indexOf('YouGlish'), 'the IPA, then YouGlish');
+  assert.ok(withPill.indexOf('YouGlish') < withPill.indexOf('aria-pressed="false"'), 'then the pill');
+});
+
+// The wiring, read from source: App hands both views the undo, each view hands the pill its item and its places, and B
+// the same press.
+
+const sourceOf = (path: string) => ts.createSourceFile(path, readRepoFile(path), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+/** The attributes of each JSX element named `tag` in `file`, as name → initializer text. */
+function jsxAttributes(file: ts.SourceFile, tag: string): Map<string, string>[] {
+  const found: Map<string, string>[] = [];
+  const visit = (node: ts.Node) => {
+    if ((ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) && node.tagName.getText() === tag) {
+      found.push(new Map(node.attributes.properties.filter(ts.isJsxAttribute)
+        .map(attribute => [attribute.name.getText(), attribute.initializer?.getText() ?? 'true'])));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+/** The text of each call to `callee` in `file`, its whitespace folded. */
+function calls(file: ts.SourceFile, callee: string): string[] {
+  const found: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && node.expression.getText() === callee) found.push(node.getText().replace(/\s+/g, ' '));
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
+test('App passes the card view the review outbox\'s undo and the undo pill\'s offer for actions', () => {
+  const [detail, ...others] = jsxAttributes(sourceOf('App.tsx'), 'DetailView');
+  assert.equal(others.length, 0, 'App renders the card view once');
+  assert.equal(detail.get('onUndoReview'), '{undoSRSReview}');
+  assert.equal(detail.get('onOfferUndo'), '{undo.offerUndoAction}');
+  assert.equal(detail.get('onUpdateSRS'), '{updateSRS}');
+});
+
+test('the word card\'s pill acts on its saved copy, sits after the IPA, and takes B; its failed undo goes to the notices', () => {
+  const file = sourceOf('views/detail/WordDetailView.tsx');
+  assert.deepEqual(calls(file, 'usePracticeToggle'), ['usePracticeToggle({ item: savedItemMatch, onUpdateSRS, onUndoReview, onOfferUndo })']);
+  assert.equal(jsxAttributes(file, 'VocabCardDisplay')[0].get('afterPronunciation'), '{practicePill}');
+  assert.equal(jsxAttributes(file, 'PracticeNotice')[0].get('message'), '{practice.undoFailure}');
 });
