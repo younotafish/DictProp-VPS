@@ -49,6 +49,34 @@ test('once the requests in flight finish, the database closes and the process ex
   assert.deepEqual(failedClose.steps, ['close server', 'close database', 'exit 1']);
 });
 
+test('background work stops first, so it neither calls out nor writes while the requests drain and the database closes', () => {
+  const steps: string[] = [];
+  let endDrain: (() => void) | undefined;
+  const shutdown = createShutdown({
+    stopBackgroundWork: () => { steps.push('stop background work'); },
+    closeServer: done => {
+      steps.push('close server');
+      endDrain = done;
+    },
+    closeDatabase: () => { steps.push('close database'); },
+    exit: code => { steps.push(`exit ${code}`); },
+  });
+  shutdown('SIGTERM received');
+  assert.deepEqual(steps, ['stop background work', 'close server']);
+  endDrain?.();
+  assert.deepEqual(steps, ['stop background work', 'close server', 'close database', 'exit 0']);
+
+  // A failure to stop it is logged, and the shutdown goes on.
+  const failing: string[] = [];
+  createShutdown({
+    stopBackgroundWork: () => { throw new Error('already stopped'); },
+    closeServer: done => { failing.push('close server'); done(); },
+    closeDatabase: () => { failing.push('close database'); },
+    exit: code => { failing.push(`exit ${code}`); },
+  })('SIGTERM received');
+  assert.deepEqual(failing, ['close server', 'close database', 'exit 0']);
+});
+
 test('requests still running at the deadline end the process with exit code 1', async () => {
   const stuck = harness(10);
   stuck.shutdown('SIGTERM received');
@@ -150,4 +178,10 @@ test('the forced exit comes before Docker\'s SIGKILL', () => {
   assert.ok(graceSeconds > 0, 'docker-compose.yml sets stop_grace_period in seconds');
   // Half a second is left for the exit itself.
   assert.ok(SHUTDOWN_DEADLINE_MS <= graceSeconds * 1000 - 500, `${SHUTDOWN_DEADLINE_MS} ms vs ${graceSeconds} s`);
+});
+
+test("the server starts the theme sweep after its startup delay and stops it as the shutdown's first step", () => {
+  const index = readFileSync(repoPath('server/src/index.ts'), 'utf8');
+  assert.match(index, /^themeSweep\.startAfterDelay\(/m);
+  assert.match(index, /createShutdown\(\{[^}]*stopBackgroundWork: \(\) => themeSweep\.stop\(\),/s);
 });

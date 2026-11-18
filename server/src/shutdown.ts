@@ -31,21 +31,30 @@ export const SHUTDOWN_DEADLINE_MS = 2_500;
 export interface ShutdownSteps {
   /** Stop taking connections; `done` runs once every open one has ended. */
   closeServer: (done: (error?: Error) => void) => void;
+  /** Stop the work no request waits for (the theme sweep): its calls abort, and it writes nothing more. */
+  stopBackgroundWork?: () => void;
   closeDatabase: () => void;
   exit: (code: number) => void;
   deadlineMs?: number;
 }
 
 /**
- * The process's one shutdown: the requests in flight finish, the database closes and the process exits, or it
- * exits 1 if they are still running at the deadline. A second signal or a fatal error during the drain changes
- * nothing.
+ * The process's one shutdown: background work stops, the requests in flight finish, the database closes and the
+ * process exits, or it exits 1 if they are still running at the deadline. A second signal or a fatal error during the
+ * drain changes nothing.
  */
-export function createShutdown({ closeServer, closeDatabase, exit, deadlineMs = SHUTDOWN_DEADLINE_MS }: ShutdownSteps) {
+export function createShutdown({
+  closeServer, stopBackgroundWork, closeDatabase, exit, deadlineMs = SHUTDOWN_DEADLINE_MS,
+}: ShutdownSteps) {
   let shuttingDown = false;
   return (reason: string, exitCode = 0): void => {
     if (shuttingDown) return;
     shuttingDown = true;
+    try {
+      stopBackgroundWork?.();
+    } catch (error) {
+      console.error('Failed to stop background work:', error);
+    }
     console.log(`${reason}, closing HTTP server...`);
     const deadline = setTimeout(() => {
       console.error(`Requests were still running ${deadlineMs} ms into the shutdown; exiting without them.`);

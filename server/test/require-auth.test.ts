@@ -71,6 +71,17 @@ test('an API request needs an owner session, and one that can\'t be used is ende
   assert.ok(clearsSessionCookie(response));
 });
 
+test("Today's reads, the themes and the set days, answer only the owner", async () => {
+  const ownerSession = createSession(owner.id).token;
+  for (const path of ['/api/themes', '/api/reviews/set-days?tzOffset=60']) {
+    assert.equal((await get(path)).status, 401, path);
+    assert.equal((await get(path, createSession(stranger.id).token)).status, 403, path);
+    const response = await get(path, ownerSession);
+    assert.equal(response.status, 200, path);
+    assert.equal(response.headers.get('cache-control'), 'private, no-store', path);
+  }
+});
+
 test('health and the sign-in routes answer without a session, and unknown sign-in paths are JSON 404s', async () => {
   let response = await get('/api/health');
   assert.equal(response.status, 200);

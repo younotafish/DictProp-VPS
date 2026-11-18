@@ -24,7 +24,9 @@ import { itemImageRoutes } from './routes/item-images.js';
 import { itemsRoutes } from './routes/items.js';
 import { reviewRoutes } from './routes/reviews.js';
 import { sentenceEnrichmentRoutes } from './routes/sentence-enrichments.js';
+import { createThemeRoutes } from './routes/themes.js';
 import { ttsRoutes } from './routes/tts.js';
+import { themeSweep as serverThemeSweep, type ThemeSweep } from './themes/sweep.js';
 
 export interface AppOptions {
   logging?: boolean;
@@ -32,6 +34,8 @@ export interface AppOptions {
   /** The built client; defaults to the repository's dist/. */
   staticDir?: string;
   aiRouter?: Hono;
+  /** The theme sweep GET /api/themes reports and item writes nudge; defaults to the server's own. */
+  themeSweep?: ThemeSweep;
 }
 
 // Local development origins. Production is served same-origin behind Caddy and never needs them.
@@ -156,6 +160,15 @@ export function createApp(options: AppOptions = {}) {
   app.use('/api/items/:id/image', limitBody(11 * 1024 * 1024, 'Item request is too large'));
   app.use('/api/import', createRateLimit(5, 60 * 60 * 1000));
   app.use('/api/import', createConcurrencyLimit(1, 'Another data import is already running. Try again shortly.'));
+  // A save or an import can bring items the theme sweep hasn't labelled: its count goes stale, and it runs once the
+  // writes stop.
+  const themeSweep = options.themeSweep ?? serverThemeSweep;
+  for (const [method, path] of [['PUT', '/api/items'], ['POST', '/api/import']] as const) {
+    app.use(path, async (c, next) => {
+      await next();
+      if (c.req.method === method && c.res.ok) themeSweep.noteItemWrite(c.get('user').id);
+    });
+  }
   app.route('/api', sentenceEnrichmentRoutes);
   app.route('/api', itemsRoutes);
   app.route('/api', itemImageRoutes);
@@ -165,6 +178,7 @@ export function createApp(options: AppOptions = {}) {
   app.route('/api', options.aiRouter ?? aiRoutes);
   app.route('/api', ttsRoutes);
   app.route('/api', comparisonsRoutes);
+  app.route('/api', createThemeRoutes(themeSweep));
   // An unknown API path is an error, not a page: without this the static fallback answers it with the app shell.
   app.all('/api/*', c => c.json({ error: 'Not found' }, 404));
 

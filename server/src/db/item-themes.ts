@@ -114,15 +114,17 @@ const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve));
 /**
  * The user's items that need the classifier (needsTheme), new ones first, each group newest saved first. The items are
  * read a chunk at a time, each chunk its own statement run to its end: an open statement would keep every write
- * waiting, and the gaps between chunks let requests in.
+ * waiting, and the gaps between chunks let requests in. Once `signal` aborts (the server shutting down, its database
+ * about to close), no further chunk is read and the list so far comes back.
  */
 export async function listThemeCandidates(
   userId: string,
   taxonomyVersion: number,
   themeIds: ReadonlySet<string>,
+  signal?: AbortSignal,
 ): Promise<ThemeCandidate[]> {
   const candidates: ThemeCandidate[] = [];
-  for (let lastRowId = 0; ;) {
+  for (let lastRowId = 0; !signal?.aborted;) {
     const rows = themeStmts.candidates.all(userId, lastRowId, CANDIDATE_CHUNK) as CandidateRow[];
     if (rows.length === 0) break;
     lastRowId = rows[rows.length - 1].row_id;
