@@ -82,6 +82,34 @@ test('without a schedule the row reads no reviews and due', t => {
   assert.match(markup, /<span class="text-slate-400 whitespace-nowrap">0×<\/span><span class="text-slate-500 whitespace-nowrap">due<\/span>$/);
 });
 
+test('a sentence Today owns shows no next review, due or not; a word or phrase with the same fields still shows its own', t => {
+  t.mock.method(Date, 'now', () => NOW);
+  const colors = getMasteryColors('amber');
+  const practicing = { practiceSince: NOW - 9 * DAY, practiceChangedAt: NOW - 9 * DAY };
+  const sayable = { sayableAt: NOW - 9 * DAY, practiceChangedAt: NOW - 9 * DAY };
+  for (const membership of [practicing, sayable]) {
+    for (const nextReview of [NOW - DAY, NOW, NOW + 3 * DAY]) {
+      // The sentence lesson's brief row, and the other layouts alike: the streak ends the memory.
+      for (const layout of [{ compact: true, brief: true }, { compact: true }, {}]) {
+        const markup = render({ srs: srs({ type: 'sentence', nextReview, ...membership }), mastery: learning, colors, ...layout });
+        assert.doesNotMatch(markup, /text-slate-500/, `no next review, ${nextReview - NOW} ms`);
+        assert.match(markup, /<\/svg>3<\/span>$/);
+      }
+    }
+  }
+  // Kept passive, a sentence is back on its schedule.
+  const passive = srs({ type: 'sentence', nextReview: NOW - DAY, practiceChangedAt: NOW - 9 * DAY });
+  assert.match(render({ srs: passive, mastery: learning, colors, compact: true, brief: true }), /<span class="text-slate-500 whitespace-nowrap">due<\/span>$/);
+  // Membership left on a word or phrase from when Today took words: the word card's header and the review popup.
+  for (const type of ['vocab', 'phrase'] as const) {
+    for (const membership of [practicing, sayable]) {
+      const schedule = srs({ type, nextReview: NOW - DAY, ...membership });
+      assert.match(render({ srs: schedule, mastery: learning, colors }), /<span class="text-slate-500">due<\/span>$/, type);
+      assert.match(render({ srs: schedule, mastery: learning, colors, compact: true }), /<span class="text-slate-500 whitespace-nowrap">due<\/span>$/, type);
+    }
+  }
+});
+
 /** The review popup's SRS row as it was written out before it rendered SrsStats, kept to show the row didn't change. */
 function FormerPopupRow({ srs, mastery }: { srs: SRSData; mastery: { label: string; color: string; percentage: number } }) {
   const colors = getMasteryColors(mastery.color || 'slate');

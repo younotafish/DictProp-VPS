@@ -10,7 +10,9 @@ import {
   orderSentencesForReview,
   type SentenceReviewFilter,
 } from '../services/sentenceOrdering';
-import { needsReview, ownedByToday, REVIEW_FILTER_LABELS, summarizeReviewStates } from '../services/sentenceReviewState';
+import {
+  needsReview, REVIEW_FILTER_LABELS, summarizeReviewStates, TODAY_STANDING_LABELS, todayStanding,
+} from '../services/sentenceReviewState';
 import { acceptListReview } from '../services/actionGuards';
 import { Virtuoso } from 'react-virtuoso';
 import { useLatest } from '../hooks/useStableValue';
@@ -28,10 +30,12 @@ const listComponents = { Footer: () => <div className="h-[calc(5rem+env(safe-are
 
 /**
  * What a row not to review says beside its word: where a sentence Today owns stands there ('Practicing in Today', 'Can
- * say it'), since no date brings it back to review here; otherwise when it comes due ('tomorrow', 'in 3d').
+ * say it': TODAY_STANDING_LABELS), since no date brings it back to review here; otherwise when it comes due
+ * ('tomorrow', 'in 3d').
  */
 export function restingLabelFor(srs: SRSData | undefined, now: number): string | undefined {
-  if (ownedByToday(srs)) return srs?.practiceSince !== undefined ? 'Practicing in Today' : 'Can say it';
+  const standing = todayStanding(srs);
+  if (standing) return TODAY_STANDING_LABELS[standing];
   return srs?.nextReview ? formatDueLabel(srs.nextReview, now) : undefined;
 }
 

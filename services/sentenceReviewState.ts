@@ -1,11 +1,12 @@
 import type { SRSData } from '../types';
-import { sentenceReviewState, type SentenceReviewFilter } from './sentenceOrdering';
+import { sentenceReviewState, type SentenceReviewFilter, type TodayStanding } from './sentenceOrdering';
 
-// The rule itself, a sentence's review state, the filter chips over it, whether it is to review and whether Today owns
-// it, is written once, in sentenceOrdering.ts; this module passes it on beside what is built from it: the summaries,
-// and what the chips say.
+// The rule itself, a sentence's review state, the filter chips over it, whether it is to review and whether and how
+// Today owns it, is written once, in sentenceOrdering.ts; this module passes it on beside what is built from it: the
+// summaries, and what the chips and a sentence Today owns say.
 export {
-  matchesReviewFilter, needsReview, ownedByToday, sentenceReviewState, type SentenceReviewState,
+  matchesReviewFilter, needsReview, ownedByToday, sentenceReviewState, todayStanding, type SentenceReviewState,
+  type TodayStanding,
 } from './sentenceOrdering';
 
 /** How a list of sentences stands in review. */
@@ -62,4 +63,13 @@ export const REVIEW_FILTER_LABELS: Readonly<Record<SentenceReviewFilter, string>
   unreviewed: 'New',
   due: 'Due',
   memorized: 'Memorized',
+};
+
+/**
+ * What a sentence Today owns says where another would say when it comes due (todayStanding), since no date brings it
+ * back here: its row on the Sentences tab says either, and its lesson's memory says Can say it.
+ */
+export const TODAY_STANDING_LABELS: Readonly<Record<TodayStanding, string>> = {
+  practicing: 'Practicing in Today',
+  sayable: 'Can say it',
 };

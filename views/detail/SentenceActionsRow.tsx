@@ -3,6 +3,7 @@ import { Bookmark, CheckCircle2, RotateCcw, Trash2 } from 'lucide-react';
 import type { SRSData } from '../../types';
 import type { MasteryClasses } from '../../components/mastery';
 import { SrsStats } from '../../components/review/SrsStats';
+import { TODAY_STANDING_LABELS, todayStanding } from '../../services/sentenceReviewState';
 import { sentenceRowState } from './sentenceRowState';
 
 interface SentenceActionsRowProps {
@@ -48,6 +49,10 @@ export function SentenceActionsRow({
 }: SentenceActionsRowProps) {
   const { showDelete, primary } = sentenceRowState({ catalog, preview, totalReviews: srs?.totalReviews ?? 0 });
   const memorizedLabel = memorizedCount === null ? null : `${memorizedCount} memorized in this list`;
+  // A sentence Today owns has no next review in its memory (SrsStats). From 640 px up, one marked as one you can say
+  // says so in its place, as its row on the Sentences tab does, since its pill reads '+ Practice'; a phone's row has
+  // no room (see SrsStats' brief). A practicing one's pill already says Practicing.
+  const canSayIt = todayStanding(srs) === 'sayable';
   return (
     <div className="mt-2 flex items-center gap-2 text-xs">
       {mastery && masteryColors && (
@@ -57,6 +62,7 @@ export function SentenceActionsRow({
               <CheckCircle2 size={12} />{memorizedCount}
             </span>
           )}
+          {canSayIt && <span className="hidden sm:inline text-slate-500 whitespace-nowrap">{TODAY_STANDING_LABELS.sayable}</span>}
         </SrsStats>
       )}
       <div className="ml-auto flex items-center gap-1">

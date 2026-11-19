@@ -6,6 +6,8 @@ import {
   ownedByToday,
   sentenceReviewState,
   summarizeReviewStates,
+  TODAY_STANDING_LABELS,
+  todayStanding,
 } from '../../services/sentenceReviewState.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import { isDueForReview } from '../../services/studySession.ts';
@@ -99,6 +101,23 @@ test('an own sentence Today practises, or one you can say, rests whatever its sc
   }
   // Today's membership comes from a review, so an owned record always has one; one that somehow doesn't still rests.
   assert.equal(sentenceReviewState(practicingSentence({ totalReviews: 0 }), NOW), 'memorized');
+});
+
+test('how Today owns a sentence: practicing or one you can say, practice first; never a passive sentence, a word or a phrase', () => {
+  assert.equal(todayStanding(practicingSentence()), 'practicing');
+  assert.equal(todayStanding(sayableSentence()), 'sayable');
+  // practiceFieldsValid never lets both stand at once; were they to, practice comes first, as in loopStanding.
+  assert.equal(todayStanding(practicingSentence({ sayableAt: NOW - DAY })), 'practicing');
+  assert.equal(todayStanding({ ...schedule(2, NOW - 1), practiceChangedAt: NOW - DAY }), undefined);
+  assert.equal(todayStanding(schedule(4, NOW - 1)), undefined);
+  assert.equal(todayStanding(undefined), undefined);
+  for (const type of ['vocab', 'phrase'] as const) {
+    for (const membership of [{ practiceSince: NOW - DAY }, { sayableAt: NOW - DAY }]) {
+      assert.equal(todayStanding({ ...SRSAlgorithm.createNew('w-1', type), practiceChangedAt: NOW - DAY, ...membership }), undefined, type);
+    }
+  }
+  // What a sentence Today owns says in a date's place: its row on the Sentences tab, and its lesson for Can say it.
+  assert.deepEqual(TODAY_STANDING_LABELS, { practicing: 'Practicing in Today', sayable: 'Can say it' });
 });
 
 test('a sentence kept passive, or never decided in Today, is the Sentences tab\'s to review as before', () => {
