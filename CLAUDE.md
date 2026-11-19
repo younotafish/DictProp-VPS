@@ -162,7 +162,7 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   │   ├── shared/            # Import-free code the client, the server and the offline scripts all run
 │   │   ├── ai/                # The AI routes' prompts, card generation and repair, and output sanitizers
 │   │   ├── tts/               # The speech cache: synthesis, clips, the casual respelling and the backfill
-│   │   ├── themes/            # Today's themes: the classifier's input, prompt and boundary notes, and the sweep
+│   │   ├── themes/            # Today's themes for own sentences: the classifier's input, prompt and boundary notes, the sweep
 │   │   └── routes/
 │   │       ├── auth.ts        # /api/auth/* — Google OAuth login + session
 │   │       ├── items.ts       # GET /api/items, GET /api/items/:id, PUT /api/items
@@ -178,7 +178,7 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   │       └── ai.ts          # /api/analyze, /api/compare, /api/extract-vocabulary, /api/transcribe
 │   └── package.json
 ├── views/                     # Notebook, StudyEnhanced (Card review), SentencesView, RealLifeView, EssaysView, DetailView
-│   ├── today/                 # The Today tab: the plan, the themes browser, the set and practice player, their keys and audio
+│   ├── today/                 # The Today tab (own sentences): the plan, the themes browser, the set and practice player, keys, audio
 │   ├── detail/                # The card view: SentenceReviewView, WordDetailView and their hooks
 │   ├── notebook/              # The Notebook's parts
 │   └── reading/               # The Real Life and Essays screens
@@ -223,7 +223,7 @@ Images are stored as binary blobs in the server `image_blobs`/`item_images` tabl
 - `GET /api/items/:id/image` — binary image endpoint used by lazy loading
 - `POST /api/import` — bulk import endpoint (used for Firebase migration)
 
-Today's theme for each saved word and own sentence lives in the `item_themes` table, outside item data. Its seq comes from `sync_meta.theme_seq` and moves only when a theme changes, so a device fetches `GET /api/themes?after=<its cursor>` and gets only the changes.
+Today's theme for each of the learner's own saved sentences lives in the `item_themes` table, outside item data. Its seq comes from `sync_meta.theme_seq` and moves only when a theme changes, so a device fetches `GET /api/themes?after=<its cursor>` and gets only the changes.
 
 ### IMPORTANT: Response size awareness
 The full dataset with images is ~150MB. NEVER return all items with images in a single response — the browser will hang parsing it. That is why item JSON carries only image markers and `GET /api/items` refuses `images=true`.
@@ -270,15 +270,19 @@ Enrichment runs on this Mac (`scripts/offline/`, LaunchAgent `com.dictprop.incre
 `hooks/useLibrary.ts` owns `latestItemsRef`. Every library change goes through `updateItems()`/`replaceItem()`, which set the ref before returning, so the next handler, IndexedDB write or push sees the change. Always read `latestItemsRef.current` in event handlers and async work, not a closure-captured `savedItems`.
 
 ### Today's loop
+- Today learns sentences, never single words: it takes only the learner's own saved sentences with a translation (`isLoopEligible`, `services/learningLoop/standing.ts`). Words and phrases are reviewed in Card review, which is classic Study as it was before Today, and Real Life and the Essays keep their own progress.
 - Practice membership (`srs.practiceSince`, `sayableAt`, `practiceChangedAt`) rides on the schedule and changes only inside a review: Today's task types `triage`, `speak` and `recall` with their allowed grades (`server/src/shared/review.ts`), through `applyPracticeMembership` (`server/src/shared/practice.ts`). The server applies it in `applyReviewEvent`, the device optimistically in `updateAfterRating`, and undo restores it with the snapshot. Never set those fields anywhere else.
-- A set's choices count toward the day's goal and the streak only as `triage` reviews in a `set:<id>` session; every other review (the card view's toggle included) passes no `set:` session id.
+- A sentence's standing comes from those fields alone (`loopStanding`): practicing, can say it, kept passive (`practiceChangedAt` alone), or new to the loop. Classic reviews (Got it, Reviewed, Card review) never touch membership, so a sentence Got it'd in the Sentences tab is still offered in a set until a triage decides it: again joins practice, easy marks it one you can say, good keeps it passive.
+- A set's choices count toward the day's goal and the streak only as `triage` reviews in a `set:<id>` session; every other review (the sentence lesson's practice pill included) passes no `set:` session id.
+- The Sentences tab treats a sentence Today practices or you can say as resting, never as one to review (`sentenceReviewState`); words keep their own schedule there and in Card review whatever membership they carry.
 - The theme sweep (`server/src/themes/sweep.ts`) runs inside the server process with DeepSeek through the AI client:
   - it starts a minute after the server starts, half a minute after a save or import, and when `GET /api/themes` finds work waiting;
-  - it sorts thirty items a request, new items first, one request at a time;
+  - it sorts thirty of the learner's own sentences a request, the ones new to it first, one request at a time;
+  - as it counts, it deletes theme rows of items that aren't sentences (the first build of Today sorted words too);
   - it pauses for 15 minutes on a spent balance, a refused key or three failed batches;
   - the shutdown stops it first.
 
-  An item the model can't place three times stays Unsorted until its word, sense or text changes, or the taxonomy does. The taxonomy (`server/src/shared/item-themes.ts`) is closed: changing its scenes means bumping `THEME_TAXONOMY_VERSION`. Then the sweep sorts everything again (about three hours and under a dollar for the whole library), and each device fetches its theme rows afresh.
+  A sentence the model can't place three times stays Unsorted until its text changes, or the taxonomy does. The taxonomy (`server/src/shared/item-themes.ts`) is closed: changing its scenes means bumping `THEME_TAXONOMY_VERSION`. Then the sweep sorts every sentence again (about half an hour and a few cents for about 3,200 sentences), and each device fetches its theme rows afresh.
 
 ### Sharing code between client and server
 - Runtime code both sides run lives in `server/src/shared/` and imports nothing, so the client bundle, the server and plain-node offline scripts all load it (see its README for the import forms). The client reaches the rest of `server/src` only through `import type` / `export type`, which the bundler erases.
