@@ -20,14 +20,16 @@ const STREAK_DAYS = 400;
 /**
  * Today's count toward the goal: the distinct sentences decided in a set since local midnight, from the triage reviews
  * of set sessions, whatever reviews each had before (a sentence Got it'd in the Sentences tab counts as one never
- * reviewed does). A choice taken back with Back left the history, so it doesn't count.
+ * reviewed does). Only sentences count: a word triaged while Today still took words, or by a tab still running that
+ * build, isn't one the goal asks for. A choice taken back with Back left the history, so it doesn't count.
  */
 export function todaySetCount(history: ReviewHistory, now: number): number {
   const from = localDayStart(now);
   const until = localDayStart(now, 1);
   const met = new Set<string>();
   for (const event of history.recent) {
-    if (event.taskType === 'triage' && event.sessionId?.startsWith('set:') && event.reviewedAt >= from && event.reviewedAt < until) {
+    if (event.taskType === 'triage' && event.itemType === 'sentence' && event.sessionId?.startsWith('set:') &&
+      event.reviewedAt >= from && event.reviewedAt < until) {
       met.add(event.itemId);
     }
   }
@@ -131,7 +133,7 @@ export function sortedThisWeek(history: ReviewHistory, now: number): number {
   const weekStart = localDayStart(now, -6);
   const sorted = new Set<string>();
   for (const event of history.recent) {
-    if (event.taskType === 'triage' && event.reviewedAt >= weekStart) sorted.add(event.itemId);
+    if (event.taskType === 'triage' && event.itemType === 'sentence' && event.reviewedAt >= weekStart) sorted.add(event.itemId);
   }
   return sorted.size;
 }

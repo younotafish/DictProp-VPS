@@ -21,9 +21,11 @@ const MEET_KEYS: Record<MeetChoice, string> = { practice: '1 ArrowLeft', passive
 
 /**
  * The line above the footer's buttons: the review Undo (Back, in the Meet) would take back, or why an undo failed. A
- * whole sentence rarely fits a phone's line, so the sentence alone is cut short and the outcome after it always shows;
- * only an outcome wider than the line itself is cut short. A choice with no sentence to name (its item deleted, or a
- * word an older session kept) is named by its outcome alone.
+ * whole sentence rarely fits a phone's line, so the sentence is cut short first, down to its first letters and an
+ * ellipsis, with its ' · ' going with it; the outcome after it always shows, and its detail ('next in 5d · saved on this
+ * device') is cut short once the sentence can give no more. A choice with no sentence to name (its item deleted, or a
+ * word an older session kept) is named by its outcome alone. The separators' outer spaces are no-break spaces, which a
+ * flex item's edge doesn't collapse.
  */
 function ReceiptLine({ receipt, undoLabel, canUndo, undoing, waiting, error, onUndo }: {
   receipt: LoopReceipt | null;
@@ -41,12 +43,10 @@ function ReceiptLine({ receipt, undoLabel, canUndo, undoing, waiting, error, onU
         {error ? <span className="text-rose-700" role="alert">{error}</span> : receipt && (
           <span className="flex">
             <span aria-hidden="true" className="shrink-0 whitespace-pre">↶ </span>
-            {/* The width after the arrow, which caps the outcome. */}
             <span className="flex min-w-0 flex-1">
-              {receipt.word && <span className="min-w-0 truncate">{receipt.word}</span>}
-              <span className="max-w-full shrink-0 overflow-hidden text-ellipsis whitespace-pre">
-                {receipt.word && ' · '}<span className={TONE_TEXT[receipt.tone]}>{receipt.label}</span>{detail && ` · ${detail}`}
-              </span>
+              {receipt.word && <span className="min-w-[3ch] truncate">{`${receipt.word} ·\u00a0`}</span>}
+              <span className={`shrink-0 whitespace-nowrap ${TONE_TEXT[receipt.tone]}`}>{receipt.label}</span>
+              {detail && <span className="min-w-0 truncate">{`\u00a0· ${detail}`}</span>}
             </span>
           </span>
         )}

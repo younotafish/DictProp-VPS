@@ -117,11 +117,12 @@ interface SetProfile {
 type ProfileOf = (item: StoredItem) => SetProfile;
 
 /**
- * A set from a theme's new sentences, `candidates` newest saved first, in the order filling it gives, which is the order
- * they are met: two thirds of it from the newest end, then the rest from the oldest, so the backlog shrinks too.
- * Filling skips a sentence that asks for a word one already in the set asks for, as its source word or through the
- * card it came from (another spelling or a listed form reaches the same card), so no two sentences of one word cue each
- * other. A skipped sentence stays in the pool for a later set.
+ * A set from a theme's new sentences, `candidates` newest saved first: two thirds of it from the newest end, then the
+ * rest from the oldest, so the backlog shrinks too. Filling prefers sentences of different words (as their source word
+ * or through the card they came from: another spelling or a listed form reaches the same card), so a set covers as many
+ * expressions as it can and a word's other sentences come back on later days. Only when that can't fill the set does it
+ * take a second sentence of a word, newest first, so a set is always setSize's size and one set meets the day's goal:
+ * half the learner's sentences share their word with another. spreadSiblings then sets such a pair apart.
  */
 function composeSet(candidates: readonly StoredItem[], profileOf: ProfileOf): StoredItem[] {
   const size = setSize(candidates.length);
@@ -129,18 +130,52 @@ function composeSet(candidates: readonly StoredItem[], profileOf: ProfileOf): St
   const targets = new Set<string>();
   const chosen: StoredItem[] = [];
   const taken = new Set<number>();
-  const tryTake = (index: number) => {
+  const take = (index: number, anyWord: boolean) => {
     const profile = profileOf(candidates[index]);
-    if (profile.targets.some(target => targets.has(target))) return;
+    if (!anyWord && profile.targets.some(target => targets.has(target))) return;
     for (const target of profile.targets) targets.add(target);
     chosen.push(candidates[index]);
     taken.add(index);
   };
-  for (let index = 0; index < candidates.length && chosen.length < fromNewest; index++) tryTake(index);
+  for (let index = 0; index < candidates.length && chosen.length < fromNewest; index++) take(index, false);
   for (let index = candidates.length - 1; index >= 0 && chosen.length < size; index--) {
-    if (!taken.has(index)) tryTake(index);
+    if (!taken.has(index)) take(index, false);
   }
-  return chosen;
+  for (let index = 0; index < candidates.length && chosen.length < size; index++) {
+    if (!taken.has(index)) take(index, true);
+  }
+  return spreadSiblings(chosen, profileOf);
+}
+
+/**
+ * A set in the order it is met: the order filling gave, with each sentence that shares a word with one before it moved
+ * to the place furthest from every sentence it shares one with (the earliest such place), so the same expression isn't
+ * asked for twice in a row. A set holds at most 23 sentences, so comparing each with the rest costs nothing.
+ */
+function spreadSiblings(set: readonly StoredItem[], profileOf: ProfileOf): StoredItem[] {
+  const shares = (a: StoredItem, b: StoredItem) => profileOf(a).targets.some(target => profileOf(b).targets.includes(target));
+  const order: StoredItem[] = [];
+  for (const item of set) {
+    if (!order.some(other => shares(item, other))) {
+      order.push(item);
+      continue;
+    }
+    let best = order.length;
+    let bestDistance = -1;
+    for (let at = 0; at <= order.length; at++) {
+      // Inserted at `at`, a sentence before it stays put and one from `at` on moves one place later.
+      let distance = Infinity;
+      order.forEach((other, index) => {
+        if (shares(item, other)) distance = Math.min(distance, index < at ? at - index : index + 1 - at);
+      });
+      if (distance > bestDistance) {
+        bestDistance = distance;
+        best = at;
+      }
+    }
+    order.splice(best, 0, item);
+  }
+  return order;
 }
 
 /** The profiles of the library's sentences, each made once, the first time a set looks at it. */

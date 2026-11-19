@@ -38,6 +38,8 @@ test('today\'s count is the distinct sentences decided in a set since local midn
     event('g', MIDNIGHT + HOUR, { sessionId: 'practice:p1' }),
     event('h', MIDNIGHT + HOUR, { taskType: 'quick', sessionId: undefined }), // a Got it
     event('i', localDayStart(NOW, 1)), // stamped tomorrow
+    event('j', MIDNIGHT + HOUR, { itemType: 'vocab' }), // a word, triaged while Today still took words
+    event('k', MIDNIGHT + HOUR, { itemType: 'phrase' }),
   ];
   assert.equal(todaySetCount(history(recent), NOW), 3);
   assert.equal(todaySetCount(history([]), NOW), 0);
@@ -116,8 +118,9 @@ test('sorted this week counts each sentence decided by a triage, in a set or wit
   const recent = [
     event('a', weekStart), event('a', NOW), event('b', NOW, { sessionId: undefined }),
     event('c', weekStart - 1), event('d', NOW, { previousStep: 2, nextStep: 3 }), event('e', NOW, { taskType: 'quick', sessionId: undefined }),
+    event('w', NOW, { itemType: 'vocab' }), event('wp', NOW, { itemType: 'vocab', sessionId: undefined }),
   ];
-  assert.equal(sortedThisWeek(history(recent), NOW), 3, 'a, b, and d, which had two reviews before');
+  assert.equal(sortedThisWeek(history(recent), NOW), 3, 'a, b, and d, which had two reviews before; never a word');
 });
 
 test('the plan offers practice while any is due, then a set until the goal is met, then done', () => {

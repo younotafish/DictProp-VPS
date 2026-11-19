@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-// GET /api/reviews/set-days: Today's streak counts the distinct items decided in a set on each local day, whatever
+// GET /api/reviews/set-days: Today's streak counts the distinct sentences decided in a set on each local day, whatever
 // reviews each had before.
 
 process.env.DEV_AUTH_BYPASS = '1';
@@ -56,7 +56,7 @@ test('items decided in a set count once per local day, under the offset asked fo
   assert.deepEqual(getSetDays(user, -600), { [utcDay(LATE_EVENING)]: 2, [utcDay(LATE_EVENING - 5 * DAY)]: 1 });
 });
 
-test("a set's decision counts whatever reviews came before; an undone one, another task's or session's, another user's or an older one doesn't", () => {
+test("a set's decision on a sentence counts whatever reviews came before; an undone one, a word's, another task's or session's, another user's or an older one doesn't", () => {
   const user = 'set-days-filter';
   storeEvent(user, 'counted', LATE_EVENING);
   // Reviewed before, the classic way: a set meets it like a sentence never reviewed.
@@ -67,6 +67,8 @@ test("a set's decision counts whatever reviews came before; an undone one, anoth
   storeEvent(user, 'other-session', LATE_EVENING, { session_id: 'study:s2' });
   storeEvent(user, 'spoken', LATE_EVENING, { task_type: 'speak', rating: 'good' });
   storeEvent(user, 'got-it', LATE_EVENING, { task_type: 'quick', rating: 'good', previous_step: 2, next_step: 3 });
+  // A word, decided in a set while Today still took words.
+  storeEvent(user, 'a-word', LATE_EVENING, { item_type: 'vocab' });
   storeEvent('someone-else', 'theirs', LATE_EVENING);
   storeEvent(user, 'long-ago', Date.now() - 401 * DAY);
   storeEvent(user, 'just-in-reach', Date.now() - 399 * DAY);
