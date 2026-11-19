@@ -75,7 +75,12 @@ test('an after that is no seq is refused', async () => {
 test('a save or an import that succeeds tells the sweep; a refused one, a read or a review does not', async () => {
   const fake = fakeSweep();
   const app = createApp({ logging: false, serveStaticFiles: false, themeSweep: fake.sweep });
-  const item = { type: 'vocab', data: { id: 'route-write', word: 'write' }, srs: srs('route-write', 'vocab'), savedAt: 1 };
+  const item = {
+    type: 'sentence',
+    data: { id: 'route-write', text: 'Write it down.', sourceWord: 'write' },
+    srs: srs('route-write', 'sentence'),
+    savedAt: 1,
+  };
   const send = (method: string, path: string, body: unknown) => app.request(path, {
     method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
@@ -85,10 +90,11 @@ test('a save or an import that succeeds tells the sweep; a refused one, a read o
   assert.equal((await send('PUT', '/api/items', [{ ...item, type: 'card' }])).status, 400);
   assert.equal((await app.request('/api/items')).status, 200);
   assert.equal((await send('POST', '/api/reviews/apply', {
-    event: { id: 'route-write-review', itemId: 'route-write', itemType: 'vocab', reviewedAt: 1, previousStep: 0, nextStep: 1 },
+    event: { id: 'route-write-review', itemId: 'route-write', itemType: 'sentence', reviewedAt: 1, previousStep: 0, nextStep: 1 },
     itemIds: ['route-write'],
   })).status, 201);
   assert.deepEqual(fake.writes, [USER]);
-  assert.equal((await send('POST', '/api/import', [{ ...item, data: { id: 'route-import', word: 'import' }, srs: srs('route-import', 'vocab') }])).status, 200);
+  const imported = { ...item, data: { id: 'route-import', text: 'Import it all.', sourceWord: 'import' }, srs: srs('route-import', 'sentence') };
+  assert.equal((await send('POST', '/api/import', [imported])).status, 200);
   assert.deepEqual(fake.writes, [USER, USER]);
 });

@@ -1,10 +1,16 @@
-// The theme sweep: labels a user's saved words and sentences with Today's themes, a batch at a time, one request at a
-// time. It starts on its own (a minute after the server starts, half a minute after the last item write, and when
-// GET /api/themes finds items waiting while it is idle); no client asks for a classification. Its count of the items
-// still waiting lives in memory: a sweep counts them, and an item write makes the count stale, so the sweep counts
-// again before its next batch, new items first. A provider that keeps failing pauses it.
+// The theme sweep: labels a user's own saved sentences with Today's themes, a batch at a time, one request at a time.
+// It starts on its own (a minute after the server starts, half a minute after the last item write, and when
+// GET /api/themes finds sentences waiting while it is idle); no client asks for a classification. Its count of the
+// sentences still waiting lives in memory: a sweep counts them, and an item write makes the count stale, so the sweep
+// counts again before its next batch, never-reviewed sentences first. A provider that keeps failing pauses it.
 import { createChatClient, DEEPSEEK_MODEL, type AiError, type ChatJson } from '../ai-client.js';
-import { listThemeCandidates, recordThemeResults, type ThemeCandidate, type ThemeResult } from '../db.js';
+import {
+  deleteNonSentenceThemes,
+  listThemeCandidates,
+  recordThemeResults,
+  type ThemeCandidate,
+  type ThemeResult,
+} from '../db.js';
 import { THEME_TAXONOMY_VERSION, THEMES, type ThemesResponse } from '../shared/item-themes.js';
 import { classifyThemeBatch, THEME_BATCH_SIZE } from './classifier.js';
 
@@ -69,9 +75,9 @@ function pauseReason(error: AiError | undefined): string {
 interface UserSweep {
   /** The sweep running now. */
   running?: Promise<void>;
-  /** The items counted and not yet sent, newest first. */
+  /** The sentences counted and not yet sent, never-reviewed first, each group newest first. */
   queue?: ThemeCandidate[];
-  /** The items still waiting for a theme: the last count, less what has been labelled since. */
+  /** The sentences still waiting for a theme: the last count, less what has been labelled since. */
   pending?: number;
   /** An item was written since the count. */
   stale: boolean;
@@ -104,11 +110,17 @@ export function createThemeSweep({
   };
   const paused = (sweep: UserSweep) => now() < sweep.pausedUntil;
 
-  /** Counts the items waiting for a theme into the queue; a count already under way is shared. */
+  /**
+   * Counts the sentences waiting for a theme into the queue; a count already under way is shared. The theme rows of
+   * items that aren't sentences are deleted first, so the words labelled while Today still took words leave the table
+   * on the first count after the server starts.
+   */
   const count = (userId: string, sweep: UserSweep): Promise<void> => {
     sweep.counting ??= (async () => {
       // A write from here on makes this count stale.
       sweep.stale = false;
+      const deleted = deleteNonSentenceThemes(userId);
+      if (deleted > 0) console.log(`[themes] deleted the theme rows of ${deleted} items that are not sentences`);
       sweep.queue = await listThemeCandidates(userId, THEME_TAXONOMY_VERSION, themeIds, shutdown.signal);
       sweep.pending = sweep.queue.length;
     })().finally(() => { sweep.counting = undefined; });

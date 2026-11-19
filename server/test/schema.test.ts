@@ -166,6 +166,12 @@ test('statements search the indexes that remain instead of scanning tables', () 
   assert.match(candidates, /SEARCH items USING INTEGER PRIMARY KEY \(rowid>\?\)/);
   assert.match(candidates, /SEARCH themes USING INDEX sqlite_autoindex_item_themes_1 \(user_id=\? AND item_id=\?\)/);
   assert.doesNotMatch(candidates, /TEMP B-TREE/);
+  // Each count's deletion of the rows of items that aren't sentences reads the user's theme rows by their key, and
+  // finds each one's item by its id.
+  const deletion = plan(themeStmts.deleteNonSentences.source, 'user');
+  assert.match(deletion, /SEARCH item_themes USING COVERING INDEX sqlite_autoindex_item_themes_1 \(user_id=\?\)/);
+  assert.match(deletion, /SEARCH items USING INDEX sqlite_autoindex_items_1 \(id=\?\)/);
+  assert.doesNotMatch(deletion, /\bSCAN\b/);
   const deltas = plan(themeStmts.changedAfter.source, 'user', 0, 10);
   assert.match(deltas, /SEARCH item_themes USING INDEX idx_item_themes_user_seq \(user_id=\? AND seq>\? AND seq<\?\)/);
   assert.doesNotMatch(deltas, /TEMP B-TREE/);

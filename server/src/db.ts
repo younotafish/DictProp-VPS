@@ -63,6 +63,7 @@ export {
 } from './db/users.js';
 export { getComparisons, upsertComparison, type StoredComparisonRow } from './db/comparisons.js';
 export {
+  deleteNonSentenceThemes,
   getThemeRowsAfter,
   listThemeCandidates,
   MAX_THEME_FAILURES,

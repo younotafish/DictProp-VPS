@@ -2,45 +2,49 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createChatClient } from '../src/ai-client.js';
 import type { FetchLike } from '../src/proxy-fetch.js';
-import { THEMES } from '../src/shared/item-themes.js';
+import { THEME_TAXONOMY_VERSION, THEMES } from '../src/shared/item-themes.js';
+import { themeInput } from '../src/themes/input.js';
 import { createThemeSweep, type ThemeSweepOptions } from '../src/themes/sweep.js';
 import { httpStatus, reply, type Responder } from './support/ai.js';
 import { srs } from './support/fixtures.js';
 
-const { getThemeRowsAfter, upsertItem } = await import('../src/db.js');
+const { db, getThemeRowsAfter, recordThemeResults, upsertItem } = await import('../src/db.js');
 
-const [A] = THEMES.map(theme => theme.id);
+const [A, B] = THEMES.map(theme => theme.id);
 const MINUTE = 60_000;
 
-/** Saves never-reviewed words for a user, the later in the list the newer; `reviewed` ones have reviews. */
-function saveWords(userId: string, words: readonly string[], { reviewed = [] as readonly string[], from = 1 } = {}) {
-  words.forEach((word, index) => {
-    const id = `${userId}:${word}`;
+/**
+ * Saves the user's own sentences, the later in the list the newer, each named in its id by its text; they are never
+ * reviewed, except the `reviewed` ones.
+ */
+function saveSentences(userId: string, texts: readonly string[], { reviewed = [] as readonly string[], from = 1 } = {}) {
+  texts.forEach((text, index) => {
+    const id = `${userId}:${text}`;
     upsertItem({
-      type: 'vocab',
-      data: { id, word },
-      srs: reviewed.includes(word) ? { ...srs(id, 'vocab'), totalReviews: 2, lastReviewDate: 5 } : srs(id, 'vocab'),
+      type: 'sentence',
+      data: { id, text, sourceWord: 'word' },
+      srs: reviewed.includes(text) ? { ...srs(id, 'sentence'), totalReviews: 2, lastReviewDate: 5 } : srs(id, 'sentence'),
       savedAt: from + index,
     }, userId);
   });
 }
 
 /**
- * DeepInfra as the sweep's chat client meets it: `respond` answers each request from the words it asks about, by
- * default giving each word the theme `scene(word)` returns (none for null).
+ * DeepInfra as the sweep's chat client meets it: `respond` answers each request from the sentences it asks about, by
+ * default giving each sentence the theme `scene(text)` returns (none for null).
  */
-function provider(respond: (words: string[]) => Responder | Promise<Responder>) {
+function provider(respond: (texts: string[]) => Responder | Promise<Responder>) {
   const asked: string[][] = [];
   const fetch: FetchLike = async (_url, init = {}) => {
     const body = JSON.parse(String(init.body)) as { messages: Array<{ content: string }> };
-    const words = [...body.messages[1].content.matchAll(/^\d+\. word "(.*)"$/gm)].map(match => match[1]);
-    asked.push(words);
-    return (await respond(words))(init);
+    const texts = [...body.messages[1].content.matchAll(/^\d+\. sentence "(.*)"$/gm)].map(match => match[1]);
+    asked.push(texts);
+    return (await respond(texts))(init);
   };
   return { chat: createChatClient({ fetch, apiKey: () => 'test-key', retryDelayMs: 0 }), asked };
 }
-const answering = (scene: (word: string) => string | null = () => A) => (words: string[]) =>
-  reply({ a: words.flatMap((word, index) => (scene(word) ? [{ i: index + 1, t: scene(word) }] : [])) });
+const answering = (scene: (text: string) => string | null = () => A) => (texts: string[]) =>
+  reply({ a: texts.flatMap((text, index) => (scene(text) ? [{ i: index + 1, t: scene(text) }] : [])) });
 
 /** A clock the test moves: timers run when it passes them. */
 function manualClock(start = 1_000_000) {
@@ -70,9 +74,9 @@ function sweepWith(chat: ThemeSweepOptions['chat'], clock = manualClock(), optio
 
 const themed = (userId: string) => Object.fromEntries(getThemeRowsAfter(userId, 0).rows.map(([itemId, themeId]) => [itemId.split(':')[1], themeId]));
 
-test('a sweep labels every item that needs a theme, a batch at a time with new items first, and reports its progress', async () => {
+test('a sweep labels every sentence that needs a theme, a batch at a time with never-reviewed ones first, and reports its progress', async () => {
   const user = 'sweep-labels';
-  saveWords(user, ['old', 'older-seen', 'middle', 'newest-seen', 'newest'], { reviewed: ['older-seen', 'newest-seen'] });
+  saveSentences(user, ['old', 'older-seen', 'middle', 'newest-seen', 'newest'], { reviewed: ['older-seen', 'newest-seen'] });
   const fake = provider(answering());
   const { sweep } = sweepWith(fake.chat, manualClock(), { batchSize: 2 });
 
@@ -84,14 +88,14 @@ test('a sweep labels every item that needs a theme, a batch at a time with new i
   assert.equal(fake.asked.length, 3, 'nothing waits, so no sweep starts');
 });
 
-test('one sweep at a time: a trigger while it runs starts nothing, and an item saved meanwhile is labelled before it ends', async () => {
+test('one sweep at a time: a trigger while it runs starts nothing, and a sentence saved meanwhile is labelled before it ends', async () => {
   const user = 'sweep-single-flight';
-  saveWords(user, ['first', 'second']);
+  saveSentences(user, ['first', 'second']);
   let release!: () => void;
   const released = new Promise<void>(resolve => { release = resolve; });
-  const fake = provider(async (words) => {
-    if (words.includes('first')) await released;
-    return answering()(words);
+  const fake = provider(async (texts) => {
+    if (texts.includes('first')) await released;
+    return answering()(texts);
   });
   const { sweep, clock } = sweepWith(fake.chat);
 
@@ -99,7 +103,7 @@ test('one sweep at a time: a trigger while it runs starts nothing, and an item s
   await new Promise(resolve => setTimeout(resolve, 10));
   sweep.trigger(user);
   assert.equal(fake.asked.length, 1);
-  saveWords(user, ['saved-meanwhile'], { from: 10 });
+  saveSentences(user, ['saved-meanwhile'], { from: 10 });
   sweep.noteItemWrite(user);
   release();
   await sweep.idle(user);
@@ -114,7 +118,7 @@ test('one sweep at a time: a trigger while it runs starts nothing, and an item s
 
 test('it starts on its own a minute after the server starts, and half a minute after the last of a burst of writes', async () => {
   const user = 'sweep-triggers';
-  saveWords(user, ['at-start']);
+  saveSentences(user, ['at-start']);
   const fake = provider(answering());
   const { sweep, clock } = sweepWith(fake.chat);
 
@@ -125,8 +129,8 @@ test('it starts on its own a minute after the server starts, and half a minute a
   await sweep.idle(user);
   assert.deepEqual(fake.asked, [['at-start']]);
 
-  for (const [index, word] of ['burst-1', 'burst-2', 'burst-3'].entries()) {
-    saveWords(user, [word], { from: 10 + index });
+  for (const [index, text] of ['burst-1', 'burst-2', 'burst-3'].entries()) {
+    saveSentences(user, [text], { from: 10 + index });
     sweep.noteItemWrite(user);
     clock.advance(10_000);
   }
@@ -139,20 +143,45 @@ test('it starts on its own a minute after the server starts, and half a minute a
   assert.deepEqual(fake.asked.slice(1), [['burst-3', 'burst-2', 'burst-1']]);
 });
 
-test('a report counts again after a write, and starts a sweep when items wait and none runs', async () => {
+test('a report counts again after a write, and starts a sweep when sentences wait and none runs', async () => {
   const user = 'sweep-report';
-  saveWords(user, ['one']);
+  saveSentences(user, ['one']);
   const fake = provider(answering());
   const { sweep } = sweepWith(fake.chat);
   await sweep.report(user);
   await sweep.idle(user);
   assert.deepEqual(await sweep.report(user), { pending: 0, status: 'idle' });
 
-  saveWords(user, ['two'], { from: 10 });
+  saveSentences(user, ['two'], { from: 10 });
   sweep.noteItemWrite(user);
   assert.deepEqual(await sweep.report(user), { pending: 1, status: 'running' });
   await sweep.idle(user);
   assert.deepEqual(themed(user), { one: A, two: A });
+});
+
+test("a count first deletes the theme rows of the user's words, keeps the sentences', and the classifier hears only of sentences", async () => {
+  const user = 'sweep-sentences-only';
+  const context = { model: 'test-model', taxonomyVersion: THEME_TAXONOMY_VERSION, now: 1 };
+  // Two words the sweep labelled while Today still took words, and one saved since, never reviewed.
+  for (const word of ['lucid', 'serene', 'placid']) {
+    const id = `${user}:${word}`;
+    upsertItem({ type: 'vocab', data: { id, word }, srs: srs(id, 'vocab'), savedAt: 50 }, user);
+    if (word !== 'placid') recordThemeResults(user, [{ itemId: id, inputHash: 'w'.repeat(64), themeId: A }], context);
+  }
+  saveSentences(user, ['labelled', 'waiting']);
+  const labelled = themeInput({ type: 'sentence', text: 'labelled' })!;
+  recordThemeResults(user, [{ itemId: `${user}:labelled`, inputHash: labelled.inputHash, themeId: B }], context);
+  const before = getThemeRowsAfter(user, 0).latestSeq;
+  const fake = provider(answering());
+  const { sweep } = sweepWith(fake.chat);
+
+  assert.deepEqual(await sweep.report(user), { pending: 1, status: 'running' });
+  await sweep.idle(user);
+  assert.deepEqual(fake.asked, [['waiting']]);
+  assert.deepEqual(db.prepare('SELECT item_id FROM item_themes WHERE user_id = ? ORDER BY item_id').pluck().all(user),
+    [`${user}:labelled`, `${user}:waiting`]);
+  // A device asking after its seq hears of the new label alone: the deletion moves no seq.
+  assert.deepEqual(getThemeRowsAfter(user, before), { rows: [[`${user}:waiting`, A]], latestSeq: before + 1 });
 });
 
 test('a spent balance or a refused key pauses the sweep at once, says why, and only a trigger after fifteen minutes retries', async () => {
@@ -161,9 +190,9 @@ test('a spent balance or a refused key pauses the sweep at once, says why, and o
     [401, 'bad key', 'The AI provider refused the key, or none is set.'],
   ] as const) {
     const user = `sweep-pause-${status}`;
-    saveWords(user, ['a', 'b']);
+    saveSentences(user, ['a', 'b']);
     let failing = true;
-    const fake = provider(words => (failing ? httpStatus(status, body) : answering()(words)));
+    const fake = provider(texts => (failing ? httpStatus(status, body) : answering()(texts)));
     const { sweep, clock } = sweepWith(fake.chat, manualClock(), { batchSize: 1 });
 
     await sweep.report(user);
@@ -186,24 +215,24 @@ test('a spent balance or a refused key pauses the sweep at once, says why, and o
 
 test('three failed batches in a row pause the sweep, and a batch that labels anything starts the count again', async () => {
   const user = 'sweep-breaker';
-  saveWords(user, ['f6', 'f5', 'f4', 'ok3', 'f2', 'f1']);
-  const fake = provider(words => (words.includes('ok3') ? answering()(words) : httpStatus(503)));
+  saveSentences(user, ['f6', 'f5', 'f4', 'ok3', 'f2', 'f1']);
+  const fake = provider(texts => (texts.includes('ok3') ? answering()(texts) : httpStatus(503)));
   const { sweep } = sweepWith(fake.chat, manualClock(), { batchSize: 1 });
 
   await sweep.report(user);
   await sweep.idle(user);
   // Each failed batch is two requests: the chat client tries a provider failure twice.
-  assert.deepEqual(fake.asked.map(words => words[0]), ['f1', 'f1', 'f2', 'f2', 'ok3', 'f4', 'f4', 'f5', 'f5', 'f6', 'f6']);
+  assert.deepEqual(fake.asked.map(texts => texts[0]), ['f1', 'f1', 'f2', 'f2', 'ok3', 'f4', 'f4', 'f5', 'f5', 'f6', 'f6']);
   assert.deepEqual(themed(user), { ok3: A });
   assert.deepEqual(await sweep.report(user), {
     pending: 5, status: 'paused', lastError: 'The AI service failed three batches in a row (unavailable).',
   });
 });
 
-test('an item the model never places counts a miss each sweep and leaves the count after three; the rest are labelled', async () => {
+test('a sentence the model never places counts a miss each sweep and leaves the count after three; the rest are labelled', async () => {
   const user = 'sweep-misses';
-  saveWords(user, ['plain', 'odd']);
-  const fake = provider(answering(word => (word === 'odd' ? null : A)));
+  saveSentences(user, ['plain', 'odd']);
+  const fake = provider(answering(text => (text === 'odd' ? null : A)));
   const { sweep } = sweepWith(fake.chat);
 
   let report = await sweep.report(user);
@@ -220,7 +249,7 @@ test('an item the model never places counts a miss each sweep and leaves the cou
 
 test('stopping aborts the request under way, records nothing, and starts nothing after', async () => {
   const user = 'sweep-stop';
-  saveWords(user, ['waiting']);
+  saveSentences(user, ['waiting']);
   const fake = provider(() => (init: RequestInit) => new Promise<Response>((_resolve, reject) => {
     init.signal!.addEventListener('abort', () => reject(init.signal!.reason), { once: true });
   }));

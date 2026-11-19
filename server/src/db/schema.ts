@@ -128,11 +128,12 @@ export function applySchema(db: Database.Database): void {
       PRIMARY KEY (key, user_id)
     );
 
-    -- Today's theme for each saved word and sentence, as the server's classifier chose it (server/src/themes). It
+    -- Today's theme for each of the user's own sentences, as the server's classifier chose it (server/src/themes). It
     -- stays out of item data, so labelling takes no item revisions and no corpus import can drop it. seq orders what
     -- GET /api/themes sends: it takes the next value of sync_meta's theme_seq only when the row's theme changes.
-    -- input_hash says which input the row is about (a word and its sense, or a sentence's text), and failures counts
-    -- the classifier's misses on that input under taxonomy_version.
+    -- input_hash says which input the row is about (the sentence's text), and failures counts the classifier's misses
+    -- on that input under taxonomy_version. The sweep deletes the rows of items that aren't sentences, the words it
+    -- labelled while Today still took words, without moving theme_seq.
     CREATE TABLE IF NOT EXISTS item_themes (
       user_id TEXT NOT NULL,
       item_id TEXT NOT NULL,

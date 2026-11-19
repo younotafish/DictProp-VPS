@@ -1,7 +1,7 @@
-// The theme classifier: one chat request sorts up to thirty saved words and sentences into the shared taxonomy's scenes
-// (shared/item-themes.ts). The sweep (sweep.ts) runs it over the library, and a script can run it on a holdout to check
-// its quality: classifyThemeBatch takes the chat client as a parameter. The whole prompt is in this file, so it can be
-// tuned in one place.
+// The theme classifier: one chat request sorts up to thirty saved sentences into the shared taxonomy's scenes
+// (shared/item-themes.ts). The sweep (sweep.ts) runs it over the learner's own sentences, and a script can run it on a
+// holdout to check its quality: classifyThemeBatch takes the chat client as a parameter. The whole prompt is in this
+// file, so it can be tuned in one place.
 import { AiError, classifyAiError, createRequestContext, type ChatJson } from '../ai-client.js';
 import { isThemeId, THEME_DOMAINS } from '../shared/item-themes.js';
 import { THEME_BOUNDARIES } from './boundaries.js';
@@ -25,6 +25,9 @@ const MAX_REPLY_TOKENS = 16_000;
 const TEMPERATURE = 0.1;
 
 // ── The prompt ──────────────────────────────────────────────────────────────────────────────────────────────────────
+// Word for word as it passed the gate, on a holdout of 300 words and 100 sentences. The sweep now sends sentences only,
+// so its rules for word items go unused. Of the 91 holdout sentences both Claude labellers placed alike, the model
+// matched their scene on 80 (87.9%). Rewording the prompt for sentences alone would mean running the gate again.
 
 // Each scene on one line, under its domain: id | title | what it covers | where its look-alikes go instead.
 const SCENE_LIST = THEME_DOMAINS.map(domain => [

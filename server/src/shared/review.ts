@@ -32,7 +32,10 @@ export const isRatingAllowedForTask = (taskType: ReviewTaskType | undefined, rat
   return allowed === undefined || (rating !== undefined && allowed.includes(rating));
 };
 
-/** GET /api/reviews/set-days: per local day ('YYYY-MM-DD' under the asked offset), the items first met in a set. */
+/**
+ * GET /api/reviews/set-days: per local day ('YYYY-MM-DD' under the asked offset), the distinct items decided in a set
+ * (a triage review in a 'set:' session, not undone), whatever reviews each had before.
+ */
 export interface SetDaysResponse {
   days: Record<string, number>;
 }

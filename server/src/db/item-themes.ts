@@ -1,8 +1,8 @@
 import { themeInput, type ThemeItem } from '../themes/input.js';
 import { db, writeTransaction } from './connection.js';
 
-// Today's themes: a row for each saved word and sentence the classifier has read (schema.ts), the changes clients pull,
-// and what the theme sweep (themes/sweep.ts) reads and records.
+// Today's themes: a row for each of the user's own sentences the classifier has read (schema.ts), the changes clients
+// pull, and what the theme sweep (themes/sweep.ts) reads, records and clears away.
 
 /** Misses on the same input, under the same taxonomy, after which the classifier stops asking about an item. */
 export const MAX_THEME_FAILURES = 3;
@@ -22,21 +22,24 @@ export const themeStmts = {
     ON CONFLICT (user_id, item_id) DO UPDATE SET theme_id = excluded.theme_id, input_hash = excluded.input_hash,
       taxonomy_version = excluded.taxonomy_version, model = excluded.model, classified_at = excluded.classified_at,
       failures = excluded.failures, seq = excluded.seq`),
-  // The live items the classifier reads, a chunk at a time in rowid order, with only the fields it needs taken out of
-  // their JSON, beside each one's theme row. Words, and the user's own sentences: catalog lines are out of Today, the
-  // first Real Life ones without a catalogKind, so their ids rule them out too. NOT INDEXED keeps the walk on rowid:
-  // without planner statistics SQLite would take the (user_id, type) index and sort every remaining row, its JSON read
-  // and all, for each chunk.
+  // The user's own live sentences, which the classifier reads, a chunk at a time in rowid order, with only the fields
+  // it needs taken out of their JSON, beside each one's theme row. Own means what the client's isOwnSentence means: not
+  // a catalog line, neither the record of a Real Life or essay line (the first Real Life ones have no catalogKind, so
+  // their ids rule them out too) nor a catalog line saved to the Sentences tab, which keeps its catalogSentenceId.
+  // NOT INDEXED keeps the walk on the table's own rowid order, the order each chunk resumes from, whatever plan SQLite,
+  // which has no planner statistics here, would otherwise pick.
   candidates: db.prepare(`SELECT items.rowid AS row_id, items.id AS item_id, items.type, items.saved_at,
-      json_extract(items.data, '$.word') AS word, json_extract(items.data, '$.sense') AS sense,
-      json_extract(items.data, '$.definition') AS definition, json_extract(items.data, '$.text') AS text,
-      json_extract(items.srs, '$.totalReviews') AS total_reviews,
+      json_extract(items.data, '$.text') AS text, json_extract(items.srs, '$.totalReviews') AS total_reviews,
       themes.theme_id, themes.input_hash, themes.taxonomy_version, themes.failures
     FROM items NOT INDEXED LEFT JOIN item_themes AS themes ON themes.user_id = items.user_id AND themes.item_id = items.id
     WHERE items.user_id = ? AND items.rowid > ? AND items.is_deleted IS NOT 1 AND items.is_archived IS NOT 1
-      AND (items.type = 'vocab' OR (items.type = 'sentence' AND json_extract(items.data, '$.catalogKind') IS NULL
-        AND items.id NOT LIKE 'real-life-sentence:%' AND items.id NOT LIKE 'essay-sentence:%'))
+      AND items.type = 'sentence' AND items.id NOT LIKE 'real-life-sentence:%' AND items.id NOT LIKE 'essay-sentence:%'
+      AND json_extract(items.data, '$.catalogKind') IS NULL AND json_extract(items.data, '$.catalogSentenceId') IS NULL
     ORDER BY items.rowid LIMIT ?`),
+  // The user's theme rows whose item isn't a sentence, each item found by its id. The type is tested first: an item's
+  // user_id comes after its JSON, so a sentence's row is passed over without reading that far.
+  deleteNonSentences: db.prepare(`DELETE FROM item_themes WHERE user_id = ? AND EXISTS (SELECT 1 FROM items
+    WHERE items.id = item_themes.item_id AND items.type <> 'sentence' AND items.user_id = item_themes.user_id)`),
 };
 
 /** What a theme row says about an item. */
@@ -56,9 +59,6 @@ interface CandidateRow extends ThemeRowFields {
   item_id: string;
   type: string;
   saved_at: number;
-  word: unknown;
-  sense: unknown;
-  definition: unknown;
   text: unknown;
   total_reviews: unknown;
 }
@@ -82,12 +82,15 @@ export function getThemeRowsAfter(userId: string, after: number): ThemeRowChange
   return { rows: rows.map(row => [row.item_id, row.theme_id]), latestSeq };
 }
 
-/** An item the classifier is to read, with its input. */
+/** A sentence the classifier is to read, with its input. */
 export interface ThemeCandidate {
   itemId: string;
   item: ThemeItem;
   inputHash: string;
-  /** Never reviewed: what Today's sets are made of, so labelled first. */
+  /**
+   * Never reviewed in any way, as a fresh save is: labelled first, so a sentence just saved has its scene before the
+   * sweep reaches the reviewed ones, which Today's sets offer as well.
+   */
   isNew: boolean;
   savedAt: number;
 }
@@ -112,10 +115,10 @@ export function needsTheme(
 const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve));
 
 /**
- * The user's items that need the classifier (needsTheme), new ones first, each group newest saved first. The items are
- * read a chunk at a time, each chunk its own statement run to its end: an open statement would keep every write
- * waiting, and the gaps between chunks let requests in. Once `signal` aborts (the server shutting down, its database
- * about to close), no further chunk is read and the list so far comes back.
+ * The user's own sentences that need the classifier (needsTheme), never-reviewed ones first, each group newest saved
+ * first. The items are read a chunk at a time, each chunk its own statement run to its end: an open statement would
+ * keep every write waiting, and the gaps between chunks let requests in. Once `signal` aborts (the server shutting
+ * down, its database about to close), no further chunk is read and the list so far comes back.
  */
 export async function listThemeCandidates(
   userId: string,
@@ -140,6 +143,15 @@ export async function listThemeCandidates(
   return candidates.sort((a, b) =>
     Number(b.isNew) - Number(a.isNew) || b.savedAt - a.savedAt || (a.itemId < b.itemId ? -1 : a.itemId > b.itemId ? 1 : 0));
 }
+
+/**
+ * Deletes the user's theme rows of items that aren't sentences, and returns how many went: the words the sweep
+ * labelled while Today still took words, whose themes nothing uses any more. theme_seq doesn't move, so no device hears
+ * of the deletion. A device that already holds those rows keeps them, which is harmless, as the client ignores the
+ * themes of items the loop doesn't take, and a device that fetches every row afresh gets none of them.
+ */
+export const deleteNonSentenceThemes = writeTransaction((userId: string): number =>
+  themeStmts.deleteNonSentences.run(userId).changes);
 
 /** What the classifier made of one item: the theme it chose, or null when it gave none it could use. */
 export interface ThemeResult {

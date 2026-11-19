@@ -34,7 +34,8 @@ function harness(responders: Responder[]) {
   return { chat, requests, asked };
 }
 
-const words = (count: number): ThemeItem[] => Array.from({ length: count }, (_, index) => ({ kind: 'word', text: `word ${index}` }));
+const sentences = (count: number): ThemeItem[] =>
+  Array.from({ length: count }, (_, index) => ({ kind: 'sentence', text: `sentence ${index}` }));
 /** A reply giving item n (from 1) the scene themes[n - 1]; null leaves it out. */
 const answers = (...themes: Array<string | null>) => reply({ a: themes.flatMap((t, index) => (t ? [{ i: index + 1, t }] : [])) });
 
@@ -54,16 +55,18 @@ test('the prompt lists every scene under its domain with its title, blurb and bo
   assert.match(THEME_SYSTEM_PROMPT, /a setting or a role that has a scene of its own .* that scene wins/);
   assert.match(THEME_SYSTEM_PROMPT, /Never invent an id/);
   assert.match(THEME_SYSTEM_PROMPT, /\{"a":\[\{"i":1,"t":"scene-id"\}/);
+  // The prompt stays as it passed the gate, its rule for word items included, though the sweep sends sentences only.
+  assert.match(THEME_SYSTEM_PROMPT, /\n- A word item is a word or phrase with the sense the learner saved and its definition/);
   assert.equal(
-    themeUserPrompt([{ kind: 'word', text: 'bank — noun: river — land beside a river' }, { kind: 'sentence', text: 'He said "go"\nnow.' }]),
+    themeUserPrompt([{ kind: 'sentence', text: 'Sit by the bank.' }, { kind: 'sentence', text: 'He said "go"\nnow.' }]),
     'Sort these 2 items. Each comes after its number and kind, as a JSON string.\n\n' +
-      '1. word "bank — noun: river — land beside a river"\n2. sentence "He said \\"go\\"\\nnow."',
+      '1. sentence "Sit by the bank."\n2. sentence "He said \\"go\\"\\nnow."',
   );
 });
 
 test('a complete answer sorts the batch in one request, asked of DeepSeek in JSON mode at a low temperature, thinking first', async () => {
   const h = harness([reply({ a: [{ i: 2, t: B }, { i: '1', t: ` ${A} ` }, { i: 3, t: A }] })]);
-  const result = await classifyThemeBatch(words(3), h.chat);
+  const result = await classifyThemeBatch(sentences(3), h.chat);
   assert.deepEqual(result, { themes: [A, B, A], unanswered: [] });
   assert.equal(h.requests.length, 1);
   const [request] = h.requests;
@@ -73,7 +76,7 @@ test('a complete answer sorts the batch in one request, asked of DeepSeek in JSO
   assert.equal(request.reasoning_effort, 'medium');
   assert.equal(request.max_tokens, 16_000);
   assert.equal(request.messages[0].content, THEME_SYSTEM_PROMPT);
-  assert.deepEqual(h.asked(0), ['word 0', 'word 1', 'word 2']);
+  assert.deepEqual(h.asked(0), ['sentence 0', 'sentence 1', 'sentence 2']);
 });
 
 test('items a reply leaves out, contradicts or gives an unknown scene are asked again, then once more in a smaller request', async () => {
@@ -84,27 +87,27 @@ test('items a reply leaves out, contradicts or gives an unknown scene are asked 
     // The two items still without a scene go back on their own, numbered from 1.
     answers(C),
   ]);
-  const result = await classifyThemeBatch(words(4), h.chat);
+  const result = await classifyThemeBatch(sentences(4), h.chat);
   assert.deepEqual(result, { themes: [A, C, null, B], unanswered: [2] });
   assert.equal(h.requests.length, 3);
-  assert.deepEqual(h.asked(1), ['word 0', 'word 1', 'word 2', 'word 3']);
-  assert.deepEqual(h.asked(2), ['word 1', 'word 2']);
+  assert.deepEqual(h.asked(1), ['sentence 0', 'sentence 1', 'sentence 2', 'sentence 3']);
+  assert.deepEqual(h.asked(2), ['sentence 1', 'sentence 2']);
 });
 
 test('a reply that can never be read sends the batch back in two halves, and the items they miss count', async () => {
-  const h = harness([reply('not json at all'), reply('still not json'), answers(...words(30).map(() => A)), answers(B, null)]);
-  const result = await classifyThemeBatch(words(60), h.chat);
+  const h = harness([reply('not json at all'), reply('still not json'), answers(...sentences(30).map(() => A)), answers(B, null)]);
+  const result = await classifyThemeBatch(sentences(60), h.chat);
   assert.equal(h.requests.length, 4);
-  assert.deepEqual(h.asked(2), words(30).map(item => item.text));
-  assert.deepEqual(h.asked(3), words(60).slice(30).map(item => item.text));
-  assert.deepEqual(result.themes.slice(0, 31), [...words(30).map(() => A), B]);
-  assert.deepEqual(result.unanswered, words(60).slice(31).map((_item, index) => 31 + index));
+  assert.deepEqual(h.asked(2), sentences(30).map(item => item.text));
+  assert.deepEqual(h.asked(3), sentences(60).slice(30).map(item => item.text));
+  assert.deepEqual(result.themes.slice(0, 31), [...sentences(30).map(() => A), B]);
+  assert.deepEqual(result.unanswered, sentences(60).slice(31).map((_item, index) => 31 + index));
   assert.equal(result.error, undefined);
 });
 
 test('a reply cut off at its token cap is not asked again whole: its items go back in halves', async () => {
   const h = harness([reply('{"a":[{"i":1,"t":', 'length'), answers(A), answers(B)]);
-  const result = await classifyThemeBatch(words(2), h.chat);
+  const result = await classifyThemeBatch(sentences(2), h.chat);
   assert.deepEqual(result, { themes: [A, B], unanswered: [] });
   assert.equal(h.requests.length, 3);
 });
@@ -112,7 +115,7 @@ test('a reply cut off at its token cap is not asked again whole: its items go ba
 test('a failure that is not the answer ends the batch with what it has, and no item counts as a miss', async () => {
   // The service is down: the client tries twice, then the batch stops.
   let h = harness([httpStatus(503)]);
-  let result = await classifyThemeBatch(words(3), h.chat);
+  let result = await classifyThemeBatch(sentences(3), h.chat);
   assert.deepEqual(result.themes, [null, null, null]);
   assert.deepEqual(result.unanswered, []);
   assert.equal(result.error?.kind, 'unavailable');
@@ -120,13 +123,13 @@ test('a failure that is not the answer ends the batch with what it has, and no i
 
   // A spent balance is not tried again.
   h = harness([httpStatus(402, 'insufficient balance')]);
-  result = await classifyThemeBatch(words(3), h.chat);
+  result = await classifyThemeBatch(sentences(3), h.chat);
   assert.equal(result.error?.kind, 'quota');
   assert.equal(h.requests.length, 1);
 
   // Down partway through the second asking: the scenes given so far stay, and only items asked in full can miss.
   h = harness([answers(A, null, null, null, null, null), answers(A, null, null, null, null, null), answers(B, null, null), httpStatus(503)]);
-  result = await classifyThemeBatch(words(6), h.chat);
+  result = await classifyThemeBatch(sentences(6), h.chat);
   assert.deepEqual(result.themes, [A, B, null, null, null, null]);
   assert.deepEqual(result.unanswered, [2, 3]);
   assert.equal(result.error?.kind, 'unavailable');
@@ -135,7 +138,7 @@ test('a failure that is not the answer ends the batch with what it has, and no i
 test('aborting a batch, as the server does when it shuts down, cancels the request under way', async () => {
   const h = harness([hang]);
   const controller = new AbortController();
-  const pending = keepingAlive(() => classifyThemeBatch(words(2), h.chat, { signal: controller.signal }));
+  const pending = keepingAlive(() => classifyThemeBatch(sentences(2), h.chat, { signal: controller.signal }));
   setTimeout(() => controller.abort(), 20);
   const result = await pending;
   assert.equal(result.error?.kind, 'cancelled');
