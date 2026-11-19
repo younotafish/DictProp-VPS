@@ -46,8 +46,6 @@ import { useWordActions } from './useWordActions';
 import { useWordSlideshow } from './useWordSlideshow';
 import { useWordGestures } from './useWordGestures';
 import { useWordShortcuts } from './useWordShortcuts';
-import { usePracticeToggle } from './usePracticeToggle';
-import { PracticeNotice, PracticePill } from './PracticePill';
 import type { DetailViewBodyProps } from './types';
 
 /**
@@ -75,8 +73,6 @@ export function WordDetailView(props: DetailViewBodyProps) {
     onRefresh,
     onLazyLoadImage,
     onUpdateSRS,
-    onUndoReview,
-    onOfferUndo,
     onCompare,
     comparisons,
     onOpenComparison,
@@ -186,14 +182,6 @@ export function WordDetailView(props: DetailViewBodyProps) {
   // The card's saved copy: the same id, else the saved card with its spelling (and, for a word, its exact sense label).
   const savedItemMatch = useMemo(() => findSavedCopy(savedItems, { type, data }), [savedItems, type, data]);
   const isSaved = !!savedItemMatch;
-
-  // The practice pill acts on the saved copy, beside the IPA, where it shows while the header is hidden. The pill is
-  // one element while the copy stays the same, so the memoized card around it doesn't render again for it.
-  const practice = usePracticeToggle({ item: savedItemMatch, onUpdateSRS, onUndoReview, onOfferUndo });
-  const practicePill = useMemo(
-    () => practice.toggle && <PracticePill toggle={practice.toggle} onPress={practice.press} />,
-    [practice.toggle, practice.press],
-  );
 
   // The line at the end of the card: its place in the view and the words after it left to review, counted once per
   // list (the clock moves on with the list, as the Notebook's does).
@@ -387,7 +375,6 @@ export function WordDetailView(props: DetailViewBodyProps) {
     isSaved,
     savedItemMatch,
     handleUnarchiveItem,
-    togglePractice: practice.press,
     onSpace: handleSpace,
     cycleSpeed,
   });
@@ -479,7 +466,6 @@ export function WordDetailView(props: DetailViewBodyProps) {
                 onOpenExampleSentence={onOpenExampleSentence ? openExampleSentencePreview : undefined}
                 isSentenceSaved={isSentenceSaved}
                 onLazyLoadImage={onLazyLoadImage}
-                afterPronunciation={practicePill}
               />
             </ErrorBoundary>
           )}
@@ -542,7 +528,6 @@ export function WordDetailView(props: DetailViewBodyProps) {
       )}
       {/* The Remembered! confirmation, shown only while the card it confirms is on screen */}
       {toast && toast.id === data.id && <RememberToast intervalDays={toast.intervalDays} />}
-      <PracticeNotice message={practice.undoFailure} />
 
       {/* Action menu dropdown - positioned fixed to escape overflow */}
       {showActionMenu && (

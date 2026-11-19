@@ -6,18 +6,30 @@ export type SentenceReviewFilter = 'all' | 'unreviewed' | 'due' | 'memorized';
 export type SentenceReviewState = 'unreviewed' | 'due' | 'memorized';
 
 /**
+ * Whether Today's loop owns the sentence: one of the learner's own that Today practises, or that it is done with as one
+ * they can say, so nothing here asks to review it. Only a sentence's schedule (srs.type 'sentence') counts: classic
+ * Study reads this module for words and phrases, and reviews them even with membership left from when Today took words.
+ * Real Life and essay records never carry membership. The fields are read here rather than through
+ * server/src/shared/practice.ts, which stays out of the app's first chunk.
+ */
+export const ownedByToday = (srs: SRSData | undefined): boolean =>
+  srs?.type === 'sentence' && (srs.practiceSince !== undefined || srs.sayableAt !== undefined);
+
+/**
  * Never reviewed (totalReviews 0), reviewed and due again (nextReview has passed), or reviewed and resting
- * until nextReview. totalReviews is a validated non-negative count.
+ * until nextReview. A sentence Today owns rests whatever its schedule says (ownedByToday). totalReviews is a validated
+ * non-negative count.
  */
 export function sentenceReviewState(srs: SRSData | undefined, now: number): SentenceReviewState {
+  if (ownedByToday(srs)) return 'memorized';
   if ((srs?.totalReviews ?? 0) === 0) return 'unreviewed';
   return (srs?.nextReview ?? 0) <= now ? 'due' : 'memorized';
 }
 
 /**
- * Whether a sentence is to review: it was never reviewed, or it is due again. A study run takes these, and the Sentences
- * tab counts them in its header and on its tab-bar badge. The badge is counted in the app's first chunk
- * (hooks/useLibraryViews), which takes this module but not the summaries in sentenceReviewState.ts.
+ * Whether a sentence is to review: it was never reviewed, or it is due again, and Today doesn't own it. A study run
+ * takes these, and the Sentences tab counts them in its header and on its tab-bar badge. The badge is counted in the
+ * app's first chunk (hooks/useLibraryViews), which takes this module but not the summaries in sentenceReviewState.ts.
  */
 export const needsReview = (srs: SRSData | undefined, now: number): boolean =>
   sentenceReviewState(srs, now) !== 'memorized';

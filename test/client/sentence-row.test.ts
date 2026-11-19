@@ -4,15 +4,17 @@ import { createElement, type ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { indexRealLifeProgress } from '../../services/realLifeProgress.ts';
 import { REAL_LIFE_COLLECTIONS } from '../../services/realLifeCatalog.ts';
+import { needsReview } from '../../services/sentenceReviewState.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
-import type { SentenceData, StoredItem } from '../../types.ts';
+import type { SentenceData, SRSData, StoredItem } from '../../types.ts';
 import { HighlightedSentence } from '../../components/HighlightedSentence.tsx';
-import { SentenceRow, SentencesView } from '../../views/SentencesView.tsx';
+import { restingLabelFor, SentenceRow, SentencesView } from '../../views/SentencesView.tsx';
 import { RealLifeCollectionScreen, RealLifeSentenceRow } from '../../views/reading/RealLifeCollectionScreen.tsx';
 
 // List rows render on the server, but Virtuoso draws none of a list's rows there, so the rows render on their own.
 
 const NOW = Date.UTC(2026, 10, 16, 12);
+const DAY = 86_400_000;
 const noop = () => {};
 
 const never: StoredItem & { type: 'sentence'; data: SentenceData } = {
@@ -152,4 +154,42 @@ test('a Real Life row: the studied phrase is plain, and Reviewed ignores a doubl
   clickWith(button, 1);
   clickWith(button, 2);
   assert.deepEqual(reviewed, [line.id]);
+});
+
+/** A saved sentence Today owns (`membership`), reviewed twice, its classic schedule a day overdue. */
+const owned = (id: string, membership: Partial<SRSData>): typeof never => ({
+  ...never,
+  data: { ...never.data, id, text: `The ${id} sentence.` },
+  srs: {
+    ...SRSAlgorithm.createNew(id, 'sentence', NOW - 3 * DAY), totalReviews: 2, nextReview: NOW - DAY,
+    practiceChangedAt: NOW - 2 * DAY, ...membership,
+  },
+});
+
+test('a sentence Today owns rests on the Sentences tab: a white row with no Reviewed, saying where it stands in Today', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
+  const practicing = owned('practicing', { practiceSince: NOW - 2 * DAY });
+  const sayable = owned('sayable', { sayableAt: NOW - 2 * DAY });
+  assert.equal(restingLabelFor(practicing.srs, NOW), 'Practicing in Today');
+  assert.equal(restingLabelFor(sayable.srs, NOW), 'Can say it');
+  // Kept passive, it is back on its schedule, and the row says when that comes due.
+  const { practiceSince: _left, ...kept } = practicing.srs;
+  assert.equal(restingLabelFor({ ...kept, nextReview: NOW + 3 * DAY }, NOW), 'in 3d');
+
+  const row = renderToStaticMarkup(createElement(SentenceRow, rowProps({
+    item: practicing, toReview: needsReview(practicing.srs, NOW), restingLabel: restingLabelFor(practicing.srs, NOW),
+  })));
+  assert.ok(row.includes('hover:shadow-sm border-slate-100 bg-white"'), 'not the orange row');
+  assert.ok(!row.includes('title="Mark as reviewed"'));
+  assert.ok(row.includes('<span class="text-xs text-slate-400">Practicing in Today</span>'), 'never "due"');
+
+  // The header and the chips count by the same rule: the new sentence is to review, the two Today owns are memorized.
+  const view = renderToStaticMarkup(createElement(SentencesView, {
+    items: [never, practicing, sayable], onUpdateSRS: async () => true, onDelete: noop, onSearch: noop, onScroll: noop,
+    onOpenSentence: noop,
+  }));
+  assert.match(view, />1 to review</);
+  const chips = [...view.matchAll(/aria-pressed="(?:true|false)" title="[^"]*" class="[^"]*">([^<]+)(?:<span class="[^"]*">(\d+)<\/span>)?<\/button>/g)]
+    .map(([, label, count]) => `${label} ${count ?? 0}`);
+  assert.deepEqual(chips, ['All 3', 'New 1', 'Due 0', 'Memorized 2']);
 });

@@ -43,8 +43,8 @@ export interface LessonReviewPill {
 }
 
 /**
- * The run's sentences left to review: never reviewed, or due again now (needsReview, the rule every 'to review' count
- * uses), so a run counts down as each sentence is remembered.
+ * The run's sentences left to review: never reviewed, or due again now, and not owned by Today (needsReview, the rule
+ * every 'to review' count uses), so a run counts down as each sentence is remembered.
  */
 export function lessonReviewPill(items: readonly StoredItem[], now: number): LessonReviewPill {
   let count = 0;
@@ -54,7 +54,7 @@ export function lessonReviewPill(items: readonly StoredItem[], now: number): Les
     : { count: 0, label: 'All reviewed', tone: 'emerald' };
 }
 
-/** The run's memorized sentences: reviewed, and not due again yet. */
+/** The run's memorized sentences: reviewed and not due again yet, or owned by Today (sentenceReviewState). */
 export function memorizedCount(items: readonly StoredItem[], now: number): number {
   let count = 0;
   for (const item of items) if (sentenceReviewState(item.srs, now) === 'memorized') count += 1;

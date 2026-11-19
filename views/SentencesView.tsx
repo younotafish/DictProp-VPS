@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useDeferredValue } from 'react';
-import { isSentenceItem, type ReviewRating, type SentenceData, type StoredItem } from '../types';
+import { isSentenceItem, type ReviewRating, type SentenceData, type SRSData, type StoredItem } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
 import { MessageSquareQuote, Check, Trash2, Search, X } from 'lucide-react';
 import { HighlightedSentence } from '../components/HighlightedSentence';
@@ -10,7 +10,7 @@ import {
   orderSentencesForReview,
   type SentenceReviewFilter,
 } from '../services/sentenceOrdering';
-import { needsReview, REVIEW_FILTER_LABELS, summarizeReviewStates } from '../services/sentenceReviewState';
+import { needsReview, ownedByToday, REVIEW_FILTER_LABELS, summarizeReviewStates } from '../services/sentenceReviewState';
 import { acceptListReview } from '../services/actionGuards';
 import { Virtuoso } from 'react-virtuoso';
 import { useLatest } from '../hooks/useStableValue';
@@ -26,12 +26,24 @@ const sentenceKey = (_index: number, item: StoredItem) => item.data.id;
 type SentenceItem = StoredItem & { type: 'sentence'; data: SentenceData };
 const listComponents = { Footer: () => <div className="h-[calc(5rem+env(safe-area-inset-bottom))]" /> };
 
+/**
+ * What a row not to review says beside its word: where a sentence Today owns stands there ('Practicing in Today', 'Can
+ * say it'), since no date brings it back to review here; otherwise when it comes due ('tomorrow', 'in 3d').
+ */
+export function restingLabelFor(srs: SRSData | undefined, now: number): string | undefined {
+  if (ownedByToday(srs)) return srs?.practiceSince !== undefined ? 'Practicing in Today' : 'Can say it';
+  return srs?.nextReview ? formatDueLabel(srs.nextReview, now) : undefined;
+}
+
 interface SentenceRowProps {
   item: SentenceItem;
-  /** Never reviewed, or due again: the orange row with Reviewed, one of the header's 'to review'. */
+  /**
+   * Never reviewed, or due again, and not owned by Today (needsReview): the orange row with Reviewed, one of the
+   * header's 'to review'.
+   */
   toReview: boolean;
-  /** When a sentence not to review comes due ('tomorrow', 'in 3d'), read from the same clock as toReview. */
-  dueLabel?: string;
+  /** What a sentence not to review says beside its word (restingLabelFor), read from the same clock as toReview. */
+  restingLabel?: string;
   confirmingDelete: boolean;
   onOpen: (item: StoredItem) => void;
   /** Reviewed: records a review of the sentence. The list guards it, so one press reviews one row. */
@@ -48,7 +60,7 @@ interface SentenceRowProps {
 export const SentenceRow = React.memo(function SentenceRow({
   item,
   toReview,
-  dueLabel,
+  restingLabel,
   confirmingDelete,
   onOpen,
   onUpdateSRS,
@@ -94,8 +106,8 @@ export const SentenceRow = React.memo(function SentenceRow({
               {d.sourceSense && (
                 <span className="text-xs text-slate-400">{d.sourceSense}</span>
               )}
-              {dueLabel && (
-                <span className="text-xs text-slate-400">{dueLabel}</span>
+              {restingLabel && (
+                <span className="text-xs text-slate-400">{restingLabel}</span>
               )}
             </div>
             <div className="flex items-center gap-1">
@@ -228,13 +240,13 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   const renderSentence = useCallback((_index: number, item: StoredItem) => {
     if (!isSentenceItem(item)) return null;
     // The header's rule: a sentence never reviewed is to review whatever its schedule says, even one saved after the
-    // list took its time, or on a device whose clock runs ahead.
+    // list took its time, or on a device whose clock runs ahead, and one Today owns never is.
     const toReview = needsReview(item.srs, now);
     return (
       <SentenceRow
         item={item}
         toReview={toReview}
-        dueLabel={!toReview && item.srs?.nextReview ? formatDueLabel(item.srs.nextReview, now) : undefined}
+        restingLabel={toReview ? undefined : restingLabelFor(item.srs, now)}
         confirmingDelete={confirmDeleteId === item.data.id}
         onOpen={openSentence}
         onUpdateSRS={reviewFromList}

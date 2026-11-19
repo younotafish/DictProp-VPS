@@ -31,8 +31,8 @@ const sentence = (id: string, srs: Partial<SRSData> = {}, savedAt = NOW - DAY): 
   srs: { ...SRSAlgorithm.createNew(id, 'sentence', savedAt), ...srs },
 });
 
-const renderRow = (item: ReturnType<typeof sentence>, toReview: boolean, dueLabel?: string) => renderToStaticMarkup(createElement(SentenceRow, {
-  item, toReview, dueLabel, confirmingDelete: false, onOpen: noop, onUpdateSRS: async () => true, onDelete: noop,
+const renderRow = (item: ReturnType<typeof sentence>, toReview: boolean, restingLabel?: string) => renderToStaticMarkup(createElement(SentenceRow, {
+  item, toReview, restingLabel, confirmingDelete: false, onOpen: noop, onUpdateSRS: async () => true, onDelete: noop,
   onConfirmDelete: noop, onSearch: noop,
 }));
 const bar = (markup: string) => markup.match(/<div class="absolute left-0 top-3 bottom-3 w-1 rounded-full ([^"]*)"><\/div>/)?.[1];

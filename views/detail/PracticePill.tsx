@@ -12,8 +12,8 @@ const OUT = 'border-slate-200 bg-white text-slate-600 hover:border-orange-300 ho
 const IN = 'border-orange-500 bg-orange-500 text-white hover:border-orange-600 hover:bg-orange-600';
 
 /**
- * The practice pill: '+ Practice' outlined while the item is out of Today's practice, 'Practicing' filled orange while
- * it's in. Its accessible name says what a press does, so it changes with the state and the button carries no
+ * The practice pill: '+ Practice' outlined while the sentence is out of Today's practice, 'Practicing' filled orange
+ * while it's in. Its accessible name says what a press does, so it changes with the state and the button carries no
  * aria-pressed, which would announce the state twice (a toggle's name stays put; a name that changes, like Mute and
  * Unmute, stands alone). B presses it too. The icon is Target, since a bookmark means Save in this app.
  */

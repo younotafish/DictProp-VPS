@@ -11,8 +11,8 @@ interface SentenceActionsRowProps {
   mastery: { label: string; color: string; percentage: number } | null;
   masteryColors: MasteryClasses | null;
   /**
-   * Sentences in this list memorized: reviewed, and not due again yet (memorizedCount). Null in an example's preview
-   * (SentenceUnderReview's examplePreview), which has no list to count, as its header has no pill.
+   * Sentences in this list memorized: reviewed and not due again yet, or owned by Today (memorizedCount). Null in an
+   * example's preview (SentenceUnderReview's examplePreview), which has no list to count, as its header has no pill.
    */
   memorizedCount: number | null;
   /** Nothing in the library backs the sentence yet. */

@@ -57,7 +57,7 @@ test('without the IPA nothing renders in its place, so the speaker row sits wher
 
 test('on a phone the practice pill ends the speaker row, after Copy; from 640 px up the lesson row has it instead', () => {
   const practicePill = createElement(PracticePill, {
-    toggle: { itemId: 's1', practicing: true, name: 'She finally came clean.', noun: 'sentence' }, onPress: () => {},
+    toggle: { itemId: 's1', practicing: true, name: 'She finally came clean.' }, onPress: () => {},
   });
   for (const layout of ['centered', 'split'] as const) {
     const { row } = parts(render({ layout, practicePill }));

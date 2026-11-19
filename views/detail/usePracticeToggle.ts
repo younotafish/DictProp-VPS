@@ -9,7 +9,7 @@ import type { DetailViewProps } from './types';
 const UNDO_FAILURE_MS = 4_000;
 
 interface PracticeToggleOptions {
-  /** The library's copy of the card or sentence on screen; undefined without one (an unsaved card, a preview). */
+  /** The library's copy of the sentence on screen; undefined without one (an example's preview). */
   item: StoredItem | undefined;
   onUpdateSRS: DetailViewProps['onUpdateSRS'];
   onUndoReview: DetailViewProps['onUndoReview'];
@@ -17,10 +17,10 @@ interface PracticeToggleOptions {
 }
 
 /**
- * The practice pill of the card or sentence on screen: what it shows (practiceToggleFor, or nothing without the three
- * callbacks it needs), the press the pill and B share (createPracticePress), and why an undo failed, for
- * PracticeNotice. The toggle keeps its identity while the item does, so a memoized card around the pill doesn't render
- * again for it, and the press is one function for the view's life, reading the latest of everything as it happens.
+ * The practice pill of the sentence on screen: what it shows (practiceToggleFor, or nothing without the three callbacks
+ * it needs), the press the pill and B share (createPracticePress), and why an undo failed, for PracticeNotice. The
+ * toggle is worked out again only when the library's copy changes, not on every render of the lesson, and the press is
+ * one function for the view's life, reading the latest of everything as it happens.
  */
 export function usePracticeToggle({ item, onUpdateSRS, onUndoReview, onOfferUndo }: PracticeToggleOptions) {
   const enabled = !!(onUpdateSRS && onUndoReview && onOfferUndo);

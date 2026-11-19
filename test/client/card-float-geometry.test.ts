@@ -151,7 +151,7 @@ test('the lesson row\'s buttons top out 2rem above the banner\'s padding, which 
 test('the practice pill beside Got it leaves the lesson row as tall as it was, so the floats above it keep their bands', () => {
   for (const practicing of [false, true]) {
     const practicePill = createElement(PracticePill, {
-      toggle: { itemId: 's1', practicing, name: 'She came clean.', noun: 'sentence' }, onPress: () => {},
+      toggle: { itemId: 's1', practicing, name: 'She came clean.' }, onPress: () => {},
     });
     for (const [, at] of INSETS) {
       for (const reviews of [0, 3]) {

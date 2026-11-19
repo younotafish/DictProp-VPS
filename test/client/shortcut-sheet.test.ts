@@ -109,15 +109,14 @@ test('each change that shipped with this release has its row', () => {
   assert.ok(hasRow(at('trackpad'), ['Two-finger swipe ←/→'], 'In a sentence: the sentence or its analysis page'));
 });
 
-test('B adds the card or saved sentence on screen to practice, and pressed again marks it as one you can say', () => {
-  // views/detail/cardKeys.ts hands B to the practice pill's press (views/detail/usePracticeToggle.ts) in both views.
-  assert.ok(hasRow(section(mac, 'card').rows, ['B'], 'Add the card to practice; press again to mark it as one you can say'));
+test('B adds the saved sentence on screen to practice, and pressed again marks it as one you can say; a word card has no B', () => {
+  // views/detail/cardKeys.ts hands B to the practice pill's press (views/detail/usePracticeToggle.ts) in the sentence
+  // lesson. Today's loop takes no words, so the word card has neither the pill nor the key.
   assert.ok(hasRow(section(mac, 'sentences').rows, ['B'], 'Add a saved sentence to practice; press again to mark it as one you can say'));
-  // Each sits right after Got it, the other decision about the item on screen.
-  for (const id of ['card', 'sentences'] as const) {
-    const keys = section(mac, id).rows.map(row => row.keys.join(' '));
-    assert.equal(keys.indexOf('B'), keys.indexOf('R') + 1, id);
-  }
+  // It sits right after Got it, the other decision about the sentence on screen.
+  const keys = section(mac, 'sentences').rows.map(row => row.keys.join(' '));
+  assert.equal(keys.indexOf('B'), keys.indexOf('R') + 1);
+  assert.ok(!section(mac, 'card').rows.some(row => row.keys.includes('B')));
 });
 
 test('during auto-play the blank-space tap or click, E and Space pause or resume it, and a long press opens its panel', () => {
@@ -282,10 +281,10 @@ const KEY_TABLES: { section: ShortcutSection['id']; contexts: Record<string, Res
     contexts: {
       'the plan': today({ screen: 'plan', hasPrimary: true }),
       'a cue': today({ footer: 'cue', canHint: true, canUndo: true }),
-      'meeting an item': today({ footer: 'meet', sayOpen: true, hasExample: true, canUndo: true }),
-      'a practice card\'s answer': today({ footer: 'run', hasExample: true, canUndo: true }),
-      'saying an item twice': today({ footer: 'encode', hasExample: true }),
-      'the last look': today({ footer: 'look', hasExample: true }),
+      'meeting a sentence': today({ footer: 'meet', sayOpen: true, canUndo: true }),
+      'a practice card\'s answer': today({ footer: 'run', canUndo: true }),
+      'saying a sentence twice': today({ footer: 'encode' }),
+      'the last look': today({ footer: 'look' }),
       'the summary of a session ended early': today({ screen: 'summary', hasPrimary: true, canResume: true, canUndo: true }),
     },
   },
@@ -344,7 +343,7 @@ test('every key a key table acts on has a row in that table\'s section of the sh
 test('the cross-check sees the keys each table\'s own tests pin, and a modifier only where it changes the key', () => {
   const chords = (id: ShortcutSection['id']) => new Set(tableChords(KEY_TABLES.find(table => table.section === id)!.contexts).keys());
   const expected: Partial<Record<ShortcutSection['id'], string[]>> = {
-    card: ['H', 'P', 'E', 'R', 'Shift+R', 'B', 'S', 'D', 'A', 'Space', '+', '=', 'Mod+1', 'Mod+4'],
+    card: ['H', 'P', 'E', 'R', 'Shift+R', 'S', 'D', 'A', 'Space', '+', '=', 'Mod+1', 'Mod+4'],
     sentences: ['P', 'E', 'R', 'Shift+R', 'B', 'D', 'Space', 'Mod+1', 'Mod+4'],
     study: ['1', '4', 'U', 'Space', 'Enter', 'R'],
     search: ['←', '→', '↑', '↓', 'S', 'Shift+S', 'P', 'E', 'Space', 'Mod+1', 'Mod+4'],
@@ -355,8 +354,9 @@ test('the cross-check sees the keys each table\'s own tests pin, and a modifier 
     for (const key of keys) assert.ok(found.has(key), `${id}: ${key}`);
     for (const key of ['Mod+R', 'Mod+5', 'Esc', 'Tab']) assert.ok(!found.has(key), `${id}: no ${key}`);
   }
-  // Shift or Caps Lock leaves the practice pill's B alone, and ⌘B stays the browser's.
-  for (const id of ['card', 'sentences'] as const) assert.ok(!chords(id).has('Shift+B') && !chords(id).has('Mod+B'), id);
+  // Shift or Caps Lock leaves the practice pill's B alone, and ⌘B stays the browser's; the word card has no B at all.
+  assert.ok(!chords('sentences').has('Shift+B') && !chords('sentences').has('Mod+B'));
+  assert.ok(!chords('card').has('B') && !chords('card').has('Shift+B'));
   // Shift and Caps Lock leave a card's A alone, and ⌘ leaves the search sheet's arrows alone.
   assert.ok(!chords('card').has('Shift+A'));
   assert.ok(!chords('search').has('Mod+←'));
@@ -365,16 +365,21 @@ test('the cross-check sees the keys each table\'s own tests pin, and a modifier 
 test('Today\'s section lists the player\'s keys, and the cross-check sees each of them in the resolver', () => {
   const rowsOf = section(mac, 'today').rows;
   for (const [keys, label] of [
-    [['1', '←'], 'Meeting an item: Practice'],
-    [['2', '↓'], 'Meeting an item: Passive'],
-    [['3', '→'], 'Meeting an item: Can say it (closed once the hint has shown)'],
+    [['Space', 'Enter'], 'Show the answer; after saying a sentence twice, or a last look, the next card'],
+    [['1', '←'], 'Meeting a sentence: Practice'],
+    [['2', '↓'], 'Meeting a sentence: Passive'],
+    [['3', '→'], 'Meeting a sentence: Can say it (closed once the hint has shown)'],
     [['1'], 'Practicing: Not yet'],
     [['3', 'Enter'], 'Practicing: Got it'],
-    [['U'], 'Undo the last answer; meeting items, go back to the last choice'],
+    [['U'], 'Undo the last answer; meeting sentences, go back to the last choice'],
     [['⌘', 'Z'], 'The same as U, unless the Undo pill shows: then it undoes what the pill offers'],
   ] as const) assert.ok(hasRow(rowsOf, [...keys], label), label);
+  // Today teaches sentences, so its rows never say item or word.
+  for (const row of rowsOf) assert.doesNotMatch(row.label, /\b(item|word)s?\b/i, row.label);
   const found = new Set(tableChords(KEY_TABLES.find(table => table.section === 'today')!.contexts).keys());
-  for (const key of ['Enter', 'Space', 'H', '1', '2', '3', '←', '↓', '→', 'P', 'E', 'U', 'Mod+Z', 'R']) assert.ok(found.has(key), key);
+  for (const key of ['Enter', 'Space', 'H', '1', '2', '3', '←', '↓', '→', 'P', 'U', 'Mod+Z', 'R']) assert.ok(found.has(key), key);
   // 1-3 a session swallows are no action of its own, Esc goes through the escape stack, and Shift changes nothing.
-  for (const key of ['4', 'Mod+1', 'Mod+R', 'Esc', 'Tab', 'Shift+H', 'Shift+Z']) assert.ok(!found.has(key), `no ${key}`);
+  // The answer is the sentence, which P says, so there is no example for E to play, and the sheet has no E row.
+  for (const key of ['4', 'Mod+1', 'Mod+R', 'Esc', 'Tab', 'Shift+H', 'Shift+Z', 'E']) assert.ok(!found.has(key), `no ${key}`);
+  assert.ok(!rowsOf.some(row => row.keys.includes('E')), 'no E row');
 });

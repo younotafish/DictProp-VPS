@@ -73,8 +73,8 @@ export function handleSentenceKey(e: CardKeyEvent, handlers: SentenceKeyHandlers
     }
   }
 
-  // B: Today's practice: add the saved sentence, or take it out as one you can say (a preview or a catalog line shows
-  // no pill, and its press does nothing)
+  // B: Today's practice: add the saved sentence, or take it out as one you can say (a preview, a catalog line or a
+  // sentence not yet translated shows no pill, and its press does nothing)
   if (e.key === 'b' || e.key === 'B') {
     e.preventDefault();
     togglePractice();
@@ -110,19 +110,16 @@ export interface WordKeyHandlers {
   savedItemMatch: StoredItem | undefined;
   /** Unarchives the archived card on screen, as the header's Unarchive does, sharing its guard (useWordActions). */
   handleUnarchiveItem: () => void;
-  /** B: the practice pill's press (usePracticeToggle), which does nothing where no pill shows. */
-  togglePractice: () => void;
   /** Space: stop example auto-play while it runs, else the play rule, else start or stop the slideshow. */
   onSpace: () => void;
   cycleSpeed: () => void;
 }
 
-/** The word card's keys: H, P, E, R and Shift+R, B, S, D, A, Space, +, and Cmd/Ctrl+1–4. */
+/** The word card's keys: H, P, E, R and Shift+R, S, D, A, Space, +, and Cmd/Ctrl+1–4. */
 export function handleWordKey(e: CardKeyEvent, handlers: WordKeyHandlers): void {
   const {
     speakSentenceAt, setShowHeader, title, readCardExamples, handleRemember, handleResetSRS, handleSaveShortcut,
-    handleDeleteItem, handleArchiveItem, isSaved, savedItemMatch, handleUnarchiveItem, togglePractice, onSpace,
-    cycleSpeed,
+    handleDeleteItem, handleArchiveItem, isSaved, savedItemMatch, handleUnarchiveItem, onSpace, cycleSpeed,
   } = handlers;
   if (!acceptKeyRepeat(e)) return;
 
@@ -158,13 +155,6 @@ export function handleWordKey(e: CardKeyEvent, handlers: WordKeyHandlers): void 
     e.preventDefault();
     if (e.shiftKey) handleResetSRS();
     else handleRemember();
-  }
-
-  // B: Today's practice: add the card, or take it out as one you can say (an unsaved, archived or phrase card shows no
-  // pill, and its press does nothing)
-  if (e.key === 'b' || e.key === 'B') {
-    e.preventDefault();
-    togglePractice();
   }
 
   // S: Save, as Cmd/Ctrl+S does; it never unsaves (D deletes)

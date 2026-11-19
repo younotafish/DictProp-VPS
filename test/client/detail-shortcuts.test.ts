@@ -49,7 +49,6 @@ const wordOnScreen = (word: string, done: string[], flags: Partial<WordKeyHandle
   isSaved: false,
   savedItemMatch: undefined,
   handleUnarchiveItem: () => done.push(`unarchive ${word}`),
-  togglePractice: () => done.push(`practice ${word}`),
   onSpace: () => done.push(`space on ${word}`),
   cycleSpeed: () => done.push('cycle speed'),
   ...flags,
@@ -171,7 +170,7 @@ test('the word card\'s H, R, S, E, Space and + keys', () => {
   ]);
 });
 
-test('B presses the practice pill of the card or sentence on screen, read as the key is pressed, with or without Shift', () => {
+test('B presses the practice pill of the sentence on screen, read as the key is pressed, with or without Shift', () => {
   const done: string[] = [];
   const onScreen = { current: sentenceOnScreen('A', done) };
   const listener = (e: CardKeyEvent) => handleSentenceKey(e, onScreen.current);
@@ -181,29 +180,30 @@ test('B presses the practice pill of the card or sentence on screen, read as the
   onScreen.current = sentenceOnScreen('B', done);
   keys.push(press('B', { shiftKey: true }), press('B'));
   keys.slice(1).forEach(listener);
-  for (const key of [press('b'), press('B', { shiftKey: true })]) {
-    handleWordKey(key, wordOnScreen('apple', done, { isSaved: true }));
-    keys.push(key);
-  }
   assert.ok(keys.every(key => key.prevented), 'B is the view\'s key');
-  assert.deepEqual(done, ['practice A', 'practice B', 'practice B', 'practice apple', 'practice apple']);
+  assert.deepEqual(done, ['practice A', 'practice B', 'practice B']);
 });
 
 test('B goes to the press wherever the pill is hidden too, which does nothing there, and Cmd, Ctrl or Alt leave it to the browser', () => {
-  // The press decides where the pill shows (views/detail/usePracticeToggle.ts), so the key tables needn't know.
+  // The press decides where the pill shows (views/detail/usePracticeToggle.ts), so the key table needn't know.
   const done: string[] = [];
   handleSentenceKey(press('b'), sentenceOnScreen('preview', done, { isSentencePreview: true }));
   handleSentenceKey(press('b'), sentenceOnScreen('catalog line', done, { catalogSentencePreview: true }));
-  handleWordKey(press('b'), wordOnScreen('unsaved', done));
-  assert.deepEqual(done, ['practice preview', 'practice catalog line', 'practice unsaved']);
+  assert.deepEqual(done, ['practice preview', 'practice catalog line']);
 
   done.length = 0;
   const modified = [press('b', { metaKey: true }), press('b', { ctrlKey: true }), press('b', { altKey: true })];
-  for (const key of modified) {
-    handleSentenceKey(key, sentenceOnScreen('A', done));
-    handleWordKey(key, wordOnScreen('apple', done));
-  }
+  for (const key of modified) handleSentenceKey(key, sentenceOnScreen('A', done));
   assert.deepEqual(modified.map(key => key.prevented), [false, false, false]);
+  assert.deepEqual(done, []);
+});
+
+test('the word card has no practice pill, so it leaves B to the browser, saved or not', () => {
+  // Today's loop takes the learner's own sentences, never words: a word is Card review's.
+  const done: string[] = [];
+  const keys = [press('b'), press('B', { shiftKey: true }), press('B')];
+  for (const isSaved of [true, false]) for (const key of keys) handleWordKey(key, wordOnScreen('apple', done, { isSaved }));
+  assert.deepEqual(keys.map(key => key.prevented), [false, false, false]);
   assert.deepEqual(done, []);
 });
 
@@ -223,7 +223,7 @@ test('a held key acts once: letters and Enter do nothing more while held, and a 
   for (const key of ['d', 'e', 'r', 'b', ' ']) handleSentenceKey(held(key), sentenceOnScreen('A', done));
   handleSentenceKey(held('R', { shiftKey: true }), sentenceOnScreen('A', done));
   handleSentenceKey(held('2', { metaKey: true }), sentenceOnScreen('A', done));
-  for (const key of ['h', 'e', 'r', 'b', 's', 'd', 'a', ' ', '+']) handleWordKey(held(key), wordOnScreen('apple', done, { isSaved: true }));
+  for (const key of ['h', 'e', 'r', 's', 'd', 'a', ' ', '+']) handleWordKey(held(key), wordOnScreen('apple', done, { isSaved: true }));
   assert.deepEqual(done, [], 'holding D deletes one card, when it is pressed, not card after card');
 
   // The arrows and Enter (useKeyboardNavigation) follow the same rule.

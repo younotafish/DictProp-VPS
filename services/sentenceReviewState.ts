@@ -1,9 +1,12 @@
 import type { SRSData } from '../types';
 import { sentenceReviewState, type SentenceReviewFilter } from './sentenceOrdering';
 
-// The rule itself, a sentence's review state, the filter chips over it and whether it is to review, is written once,
-// in sentenceOrdering.ts; this module passes it on beside what is built from it: the summaries, and what the chips say.
-export { matchesReviewFilter, needsReview, sentenceReviewState, type SentenceReviewState } from './sentenceOrdering';
+// The rule itself, a sentence's review state, the filter chips over it, whether it is to review and whether Today owns
+// it, is written once, in sentenceOrdering.ts; this module passes it on beside what is built from it: the summaries,
+// and what the chips say.
+export {
+  matchesReviewFilter, needsReview, ownedByToday, sentenceReviewState, type SentenceReviewState,
+} from './sentenceOrdering';
 
 /** How a list of sentences stands in review. */
 export interface ReviewSummary {
@@ -18,7 +21,10 @@ export interface ReviewSummary {
   masteryScore: number;
 }
 
-/** Counts each review state over the sentences' schedules (undefined for a sentence with no record yet). */
+/**
+ * Counts each review state over the sentences' schedules (undefined for a sentence with no record yet). A sentence
+ * Today owns counts as memorized, never to review (sentenceReviewState).
+ */
 export function summarizeReviewStates(schedules: readonly (SRSData | undefined)[], now: number): ReviewSummary {
   let reviewed = 0;
   let due = 0;

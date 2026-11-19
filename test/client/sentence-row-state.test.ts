@@ -111,7 +111,7 @@ test('an unsaved example offers Save sentence at the right end, at Got it\'s siz
 
 test('from 640 px up the practice pill sits between Delete and Got it, which keeps its size and place; a phone\'s row has none', () => {
   const practicePill = createElement(PracticePill, {
-    toggle: { itemId: 's1', practicing: false, name: 'She came clean.', noun: 'sentence' }, onPress: () => {},
+    toggle: { itemId: 's1', practicing: false, name: 'She came clean.' }, onPress: () => {},
   });
   for (const reviews of [0, 3]) {
     const html = rowFor('saved', false, reviews, { practicePill });
@@ -168,6 +168,18 @@ test('the memorized count is the run\'s sentences reviewed and not due, whatever
   ];
   assert.equal(memorizedCount(run, NOW), 2);
   assert.equal(memorizedCount(run, NOW + 2 * DAY), 0);
+});
+
+test('a run\'s sentences that Today practises or is done with are never to review, so they count as memorized', () => {
+  // Overdue by their classic schedule, but Today's: one in practice, one marked as one you can say.
+  const owned = (id: string, membership: Partial<StoredItem['srs']>): StoredItem => {
+    const item = line(id, { dueIn: -DAY });
+    return { ...item, srs: { ...item.srs, practiceChangedAt: NOW - 2 * DAY, ...membership } };
+  };
+  const run = [line('new'), line('due', { dueIn: -DAY }), owned('practicing', { practiceSince: NOW - 2 * DAY }), owned('sayable', { sayableAt: NOW - 2 * DAY })];
+  assert.deepEqual(lessonReviewPill(run, NOW), { count: 2, label: '2 to review', tone: 'amber' });
+  assert.equal(memorizedCount(run, NOW), 2);
+  assert.deepEqual(lessonReviewPill(run.slice(2), NOW + 30 * DAY), { count: 0, label: 'All reviewed', tone: 'emerald' }, 'whatever the date');
 });
 
 test('the memorized count says what it counts, and the header shows the pill in its tone', () => {
