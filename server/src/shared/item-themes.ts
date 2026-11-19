@@ -221,7 +221,7 @@ export interface ThemesResponse {
   rows: Array<[string, string | null]>;
   /** The sequence number to ask after next time. */
   latestSeq: number;
-  /** Items still waiting for a theme. */
+  /** The learner's own saved sentences still waiting for a theme. */
   pending: number;
   status: 'idle' | 'running' | 'paused';
   /** Why the last sweep stopped early, when it did. */

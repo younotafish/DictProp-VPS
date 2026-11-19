@@ -1,5 +1,6 @@
-// GET /api/themes: the theme rows that changed after the client's seq, and how the server's sorting stands. It only
-// reads: the sweep (themes/sweep.ts) labels the library on its own, and no client can ask it to classify anything.
+// GET /api/themes: the theme rows that changed after the client's seq, and how the server's sorting stands. Only the
+// sweep (themes/sweep.ts) writes theme rows: it labels the learner's own saved sentences on its own, and no client can
+// ask it to classify anything.
 import { Hono } from 'hono';
 import { getThemeRowsAfter } from '../db.js';
 import type { AppEnv } from '../middleware/auth.js';

@@ -16,7 +16,8 @@ const server = serve({ fetch: app.fetch, ...listenOptions() }) as Server;
 
 console.log(`Server running at http://localhost:${env.PORT}${env.DEV_AUTH_BYPASS ? ' (auth bypass, loopback only)' : ''}`);
 
-// Today's themes: once the server has settled, the sweep labels whatever the owner's library still lacks.
+// Today's themes: once the server has settled, the sweep labels the owner's own saved sentences still waiting for a
+// theme, and its first count deletes the theme rows that words got while Today still took them.
 themeSweep.startAfterDelay(() => listAllUsers().filter(user => isOwnerUser(user, env.OWNER_GOOGLE_EMAIL)).map(user => user.id));
 
 const shutdown = createShutdown({
