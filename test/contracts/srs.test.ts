@@ -212,12 +212,21 @@ test('graduation waits for a 14-day gap and 21 days of stability, and takes only
   assert.deepEqual(membershipOf(weak), { practiceSince: T0, practiceChangedAt: T0 });
 });
 
-test('on meeting a set item, Practice joins, Passive changes nothing and "can say it" marks it, on both sides', () => {
-  const fresh = SRSAlgorithm.createNew('card', 'vocab', T0);
+test('on meeting a set item, Practice joins, Passive keeps it passive and "can say it" marks it, on both sides', () => {
+  const fresh = SRSAlgorithm.createNew('card', 'sentence', T0);
   const sayable = bothSteps(fresh, 'easy', T0, 'triage', 'can say it');
   assert.deepEqual(membershipOf(sayable), { sayableAt: T0, practiceChangedAt: T0 });
   assert.equal(Math.round((sayable.nextReview - T0) / DAY), 8);
-  assert.deepEqual(membershipOf(bothSteps(fresh, 'good', T0, 'triage', 'passive')), {});
+  // Passive is a decision too: it is stamped, so a set never offers the item again.
+  assert.deepEqual(membershipOf(bothSteps(fresh, 'good', T0, 'triage', 'passive')), { practiceChangedAt: T0 });
+  // A sentence reviewed before in the classic way (a Got it) is met in a set like a new one.
+  const gotIt = bothSteps(fresh, 'good', T0, 'quick', 'got it');
+  assert.deepEqual(membershipOf(gotIt), {});
+  assert.deepEqual(membershipOf(bothSteps(gotIt, 'again', T0 + DAY, 'triage', 'practice after a got it')), { practiceSince: T0 + DAY, practiceChangedAt: T0 + DAY });
+  assert.deepEqual(membershipOf(bothSteps(gotIt, 'good', T0 + DAY, 'triage', 'passive after a got it')), { practiceChangedAt: T0 + DAY });
+  // A later Passive takes an item out of practice, as a later decision on another device would.
+  const joined = bothSteps(fresh, 'again', T0, 'triage', 'joined');
+  assert.deepEqual(membershipOf(bothSteps(joined, 'good', T0 + DAY, 'triage', 'passive later')), { practiceChangedAt: T0 + DAY });
   // The practice toggle elsewhere: adding an item clears "can say it", adding it again keeps the first join, and
   // removing it marks it as one you can say.
   const added = bothSteps(sayable, 'again', T0 + DAY, 'triage', 'added');

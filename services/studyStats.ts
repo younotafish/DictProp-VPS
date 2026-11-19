@@ -1,5 +1,4 @@
-import { getItemSpelling, isPhraseItem, type ReviewHistory, type StoredItem } from '../types';
-import { loopStanding } from '../server/src/shared/practice';
+import { getItemSpelling, type ReviewHistory, type StoredItem } from '../types';
 import { masteryLevelFor, type MasteryKey } from './srsAlgorithm';
 import { sentenceReviewState } from './sentenceReviewState';
 import type { StudyTaskType } from './studySession';
@@ -48,28 +47,16 @@ const MOST_REVIEWED = 3;
 const reviewsOf = (item: StoredItem) => item.srs?.totalReviews ?? 0;
 
 /**
- * Whether classic Study takes the card once it's due: a card reviewed before that is neither in Today's practice,
- * where it is practiced, nor one you can say, which is done (server/src/shared/practice.ts). A new card isn't due:
- * new words enter through Today's sets, and Study introduces new phrases itself (isClassicNewCard).
- */
-export const isClassicStudyCard = (item: StoredItem): boolean => loopStanding(item.srs) === 'reviewed';
-
-/**
- * Whether classic Study introduces the card itself: a phrase never reviewed. Today's loop takes new words and the
- * learner's own sentences but no phrases, so without this a new phrase would never be studied.
- */
-export const isClassicNewCard = (item: StoredItem): boolean => isPhraseItem(item) && !(reviewsOf(item) > 0);
-
-/**
  * How many distinct spellings are due: studied (not archived or deleted), reviewed before, and with their next
- * review come, the 'due' of services/sentenceReviewState.ts, leaving out Today's practice and the cards you can say
- * (isClassicStudyCard). The review session buries same-spelling senses, so a spelling counts once. The Study
- * dashboard shows this number.
+ * review come, the 'due' of services/sentenceReviewState.ts. A never-reviewed card waits with the new ones
+ * instead, and the review session buries same-spelling senses, so a spelling counts once. The Study dashboard
+ * shows this number. Card review's cards are words and phrases, which Today's loop doesn't take (it learns the
+ * learner's own sentences), so their Today standing plays no part.
  */
 export function countDueSpellings(items: readonly StoredItem[], now: number): number {
   const spellings = new Set<string>();
   for (const item of items) {
-    if (item.isDeleted || item.isArchived || sentenceReviewState(item.srs, now) !== 'due' || !isClassicStudyCard(item)) continue;
+    if (item.isDeleted || item.isArchived || sentenceReviewState(item.srs, now) !== 'due') continue;
     const spelling = getItemSpelling(item);
     if (spelling) spellings.add(spelling);
   }
@@ -78,13 +65,13 @@ export function countDueSpellings(items: readonly StoredItem[], now: number): nu
 
 /**
  * When the dashboard's numbers next change with the clock alone: at the next local midnight, or sooner, when the first
- * card Study takes falls due. Never-reviewed cards are new whatever the time, and Today's cards never reach Study.
+ * reviewed card falls due. Never-reviewed cards are new whatever the time.
  */
 export function nextStudyClockChange(items: readonly StoredItem[], now: number): number {
   let next = new Date(now).setHours(24, 0, 0, 0);
   for (const item of items) {
     const srs = item.srs;
-    if (!srs || !(srs.totalReviews > 0) || !isClassicStudyCard(item)) continue;
+    if (!srs || !(srs.totalReviews > 0)) continue;
     if (srs.nextReview > now && srs.nextReview < next) next = srs.nextReview;
   }
   return next;
@@ -97,8 +84,8 @@ export interface StudyForecast {
 }
 
 /**
- * What 'All caught up' looks ahead to: when the next card Study takes falls due, and how many distinct spellings will
- * be due by the time tomorrow begins (the coming local midnight). Null when no such card is scheduled after `now`.
+ * What 'All caught up' looks ahead to: when the next reviewed card falls due, and how many distinct spellings will be
+ * due by the time tomorrow begins (the coming local midnight). Null when no reviewed card is scheduled after `now`.
  */
 export function studyForecast(items: readonly StoredItem[], now: number): StudyForecast | null {
   const midnight = new Date(now).setHours(24, 0, 0, 0);
@@ -106,7 +93,7 @@ export function studyForecast(items: readonly StoredItem[], now: number): StudyF
   const dueByMidnight = new Set<string>();
   for (const item of items) {
     const srs = item.srs;
-    if (!srs || !(srs.totalReviews > 0) || item.isDeleted || item.isArchived || !isClassicStudyCard(item)) continue;
+    if (!srs || !(srs.totalReviews > 0) || item.isDeleted || item.isArchived) continue;
     if (srs.nextReview > now && srs.nextReview < nextDueAt) nextDueAt = srs.nextReview;
     if (srs.nextReview <= midnight) {
       const spelling = getItemSpelling(item);
@@ -117,8 +104,8 @@ export function studyForecast(items: readonly StoredItem[], now: number): StudyF
 }
 
 /**
- * The line under 'Review 42': how many of the session's cards are due and how many are new phrases ('40 due · 2 new'),
- * and, when more spellings are due (`dueTotal`, countDueSpellings) than the session holds, how many wait after it
+ * The line under 'Review 50': how many of the session's cards are due and how many new ('40 due · 10 new'), and, when
+ * more spellings are due (`dueTotal`, countDueSpellings) than the session holds, how many wait after it
  * ('· 70 more after this'). A part that is 0 is left out.
  */
 export function startCaption(queue: readonly StoredItem[], dueTotal: number): string {

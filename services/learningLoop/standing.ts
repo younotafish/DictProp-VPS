@@ -1,9 +1,10 @@
-import { isSentenceItem, isVocabItem, type SentenceData, type StoredItem } from '../../types';
+import { isSentenceItem, type SentenceData, type StoredItem } from '../../types';
 import { GRADUATION_STABILITY_DAYS, loopStanding, type LoopStanding } from '../../server/src/shared/practice';
 import { catalogProgressKind } from '../catalogProgressIdentity';
 
-// Which items Today's loop takes, where each stands in it, and the local days its rules count by. Membership itself
-// (practicing, can say it) rides on the item's schedule and changes only in reviews (server/src/shared/practice.ts).
+// Which items Today's loop takes (the learner's own saved sentences: Today teaches sentences, never single words), where
+// each stands in it, and the local days its rules count by. Membership itself (practicing, can say it, kept passive)
+// rides on the item's schedule and changes only in reviews (server/src/shared/practice.ts).
 
 /**
  * Whether a sentence is one the learner saved, not the progress record of a Real Life or essay line. Each catalog field
@@ -20,17 +21,20 @@ export function sentenceTranslation(data: SentenceData): string {
 }
 
 /**
- * Whether the loop takes the item: it is live (not deleted or archived) and a word card, or one of the learner's own
- * sentences with a translation, which every sentence cue shows. Phrases and catalog lines stay out of the loop.
+ * Whether the loop takes the item: one of the learner's own saved sentences, live (not deleted or archived), with its
+ * text and a translation, which every cue shows. Word cards, phrases and catalog lines stay out: words are reviewed in
+ * Card review, and Real Life and the Essays keep their own progress.
  */
 export function isLoopEligible(item: StoredItem): boolean {
   if (item.isDeleted || item.isArchived) return false;
-  if (isVocabItem(item)) return typeof item.data.word === 'string' && item.data.word.trim() !== '';
   return isOwnSentence(item) && typeof item.data.text === 'string' && item.data.text.trim() !== '' &&
     sentenceTranslation(item.data) !== '';
 }
 
-/** Where the item stands in the loop, from its schedule: new, practicing, can say it, or reviewed (passive). */
+/**
+ * Where the item stands in the loop, from its schedule: new to the loop (no decision yet, though it may have classic
+ * reviews), practicing, can say it, or kept passive.
+ */
 export const itemStanding = (item: StoredItem): LoopStanding => loopStanding(item.srs);
 
 /**

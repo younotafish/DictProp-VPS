@@ -4,8 +4,9 @@
 // (services/fsrsScheduler.ts). test/contracts/srs.test.ts runs the same task-typed reviews through both.
 //
 // The rules:
-// - a triage review rated again joins practice; rated easy, it marks the item one you can say; rated good (passive),
-//   it changes nothing;
+// - a triage review records the learner's decision on an item met in a Today set (or with the practice pill): rated
+//   again, it joins practice; rated easy, it marks the item one you can say; rated good, it keeps the item passive. Each
+//   stamps practiceChangedAt, so an item decided once, passive included, is never offered in a set again;
 // - a practice attempt said aloud ('speak') rated good graduates the item to "can say it" once the schedule is solid:
 //   in review (not relearning), stability at least GRADUATION_STABILITY_DAYS, and at least GRADUATION_MIN_GAP_DAYS
 //   since the review before it. Nothing else graduates: a Got it, a classic Study grade or a Quiet ('recall') attempt
@@ -36,8 +37,8 @@ export interface PracticeSrs {
   lastReviewDate?: number;
 }
 
-/** What a review does to membership: join practice, mark sayable, or nothing. */
-export type PracticeTransition = 'join' | 'sayable' | 'none';
+/** What a review does to membership: join practice, mark sayable, keep passive (a decision, out of practice), or nothing. */
+export type PracticeTransition = 'join' | 'sayable' | 'passive' | 'none';
 
 /**
  * The membership change a review makes. `previous` is the schedule before the review, `next` the scheduler's result
@@ -55,6 +56,7 @@ export function practiceTransition(
   if (taskType === 'triage') {
     if (rating === 'again') return 'join';
     if (rating === 'easy') return 'sayable';
+    if (rating === 'good') return 'passive';
     return 'none';
   }
   if (
@@ -85,27 +87,34 @@ export function applyPracticeMembership<T extends PracticeSrs>(
   if (transition === 'join') {
     result.practiceSince = previous.practiceSince ?? appliedAt;
     delete result.sayableAt;
-  } else {
+  } else if (transition === 'sayable') {
     result.sayableAt = appliedAt;
     delete result.practiceSince;
+  } else {
+    delete result.practiceSince;
+    delete result.sayableAt;
   }
   return result;
 }
 
-/** Where an item stands in Today's loop, from its schedule alone. */
-export type LoopStanding = 'new' | 'practicing' | 'sayable' | 'reviewed';
+/**
+ * Where an item stands in Today's loop, from its schedule alone: practicing, one you can say, kept passive (decided in
+ * Today, out of practice), or new to the loop (no decision yet, whatever classic reviews it has had: a Got it says it
+ * was understood, not that it can be said, so a set still offers it).
+ */
+export type LoopStanding = 'new' | 'practicing' | 'sayable' | 'passive';
 
-export function loopStanding(srs: (PracticeSrs & { totalReviews?: number }) | undefined): LoopStanding {
-  if (!srs || !(Number(srs.totalReviews) > 0)) return srs?.practiceSince !== undefined ? 'practicing' : 'new';
-  if (srs.practiceSince !== undefined) return 'practicing';
-  if (srs.sayableAt !== undefined) return 'sayable';
-  return 'reviewed';
+export function loopStanding(srs: PracticeSrs | undefined): LoopStanding {
+  if (srs?.practiceSince !== undefined) return 'practicing';
+  if (srs?.sayableAt !== undefined) return 'sayable';
+  if (srs?.practiceChangedAt !== undefined) return 'passive';
+  return 'new';
 }
 
 /**
  * Whether a stored schedule's membership fields are well formed: each absent or a finite time at or after 0, never in
- * practice and sayable at once, and either one with the time it changed, which the stale-event guard reads. Only
- * applyPracticeMembership writes them, and it always leaves them so.
+ * practice and sayable at once, and either one with the time it changed, which the stale-event guard reads (the time
+ * alone means kept passive). Only applyPracticeMembership writes them, and it always leaves them so.
  */
 export function practiceFieldsValid(srs: Record<string, unknown>): boolean {
   for (const key of ['practiceSince', 'sayableAt', 'practiceChangedAt'] as const) {

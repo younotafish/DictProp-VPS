@@ -12,7 +12,7 @@ import {
   localDayStart,
   sentenceTranslation,
 } from '../../services/learningLoop/standing.ts';
-import { DAY, HOUR, practicing, reviewed, sayable, sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
+import { DAY, HOUR, passive, practicing, reviewed, sayable, sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
 
 // Mid-afternoon local time, so the day has room on both sides.
 const NOW = new Date(2026, 10, 18, 15, 0).getTime();
@@ -30,24 +30,24 @@ function inZone(zone: string, check: () => void) {
   }
 }
 
-test('the loop takes live word cards and the learner\'s own sentences with a translation, nothing else', () => {
-  assert.equal(isLoopEligible(vocabItem('w', 'crestfallen')), true);
-  assert.equal(isLoopEligible(vocabItem('a', 'crestfallen', { isArchived: true })), false, 'archived');
-  assert.equal(isLoopEligible(vocabItem('d', 'crestfallen', { isDeleted: true })), false, 'deleted');
-  assert.equal(isLoopEligible(vocabItem('blank', '  ')), false, 'a card without a word can\'t be cued');
+test('the loop takes the learner\'s own live sentences with a translation, nothing else: no word cards', () => {
+  assert.equal(isLoopEligible(vocabItem('w', 'crestfallen')), false, 'Today learns sentences, not single words');
+  assert.equal(isLoopEligible(vocabItem('r', 'crestfallen', { srs: practicing(NOW - DAY) })), false, 'a word put in practice before');
   const phrase: StoredItem = {
     type: 'phrase',
     data: { id: 'p', query: 'give up', translation: '放弃', grammar: '', visualKeyword: '', pronunciation: '', timestamp: 0, vocabs: [] },
     srs: vocabItem('p', 'give up').srs,
     savedAt: 0,
   };
-  assert.equal(isLoopEligible(phrase), false, 'phrases stay out in v1');
+  assert.equal(isLoopEligible(phrase), false, 'phrases stay out');
 
   assert.equal(isLoopEligible(sentenceItem('s', 'She {{soaked up}} the sun.', { translation: '她晒着太阳。' })), true);
   assert.equal(isLoopEligible(sentenceItem('s', 'She soaked up the sun.', { translation: null })), false, 'no analysis yet');
   assert.equal(isLoopEligible(sentenceItem('s', 'She soaked up the sun.', { translation: '  ' })), false, 'an empty translation');
   assert.equal(isLoopEligible(sentenceItem('s', ' ', { translation: '译文' })), false, 'no text');
-  assert.equal(isLoopEligible(sentenceItem('s', 'Text.', { isArchived: true })), false);
+  assert.equal(isLoopEligible(sentenceItem('s', 'Text.', { isArchived: true })), false, 'archived');
+  assert.equal(isLoopEligible(sentenceItem('s', 'Text.', { isDeleted: true })), false, 'deleted');
+  assert.equal(isLoopEligible(sentenceItem('s', 'She soaked up the sun.', { srs: reviewed(NOW - DAY) })), true, 'reviewed with Got it before');
 });
 
 test('catalog lines are never the learner\'s own sentences, by any of their catalog fields', () => {
@@ -77,24 +77,28 @@ test('a sentence\'s translation comes from its analysis, trimmed, and is empty w
   assert.equal(sentenceTranslation(sentenceItem('s', 'x', { translation: null }).data as SentenceData), '');
 });
 
-test('an item\'s standing comes from its schedule', () => {
-  assert.equal(itemStanding(vocabItem('n', 'new')), 'new');
-  assert.equal(itemStanding(vocabItem('p', 'practice', { srs: practicing(NOW - DAY) })), 'practicing');
-  assert.equal(itemStanding(vocabItem('s', 'say', { srs: sayable(NOW - DAY) })), 'sayable');
-  assert.equal(itemStanding(vocabItem('r', 'passive', { srs: reviewed(NOW - DAY) })), 'reviewed');
+test('an item\'s standing comes from its Today decisions, never from its classic reviews', () => {
+  assert.equal(itemStanding(sentenceItem('n', 'New.')), 'new');
+  assert.equal(itemStanding(sentenceItem('g', 'Got it before.', { srs: reviewed(NOW - DAY, { totalReviews: 3 }) })), 'new');
+  assert.equal(itemStanding(sentenceItem('p', 'Practice.', { srs: practicing(NOW - DAY) })), 'practicing');
+  assert.equal(itemStanding(sentenceItem('s', 'Say.', { srs: sayable(NOW - DAY) })), 'sayable');
+  assert.equal(itemStanding(sentenceItem('k', 'Kept passive.', { srs: passive(NOW - DAY) })), 'passive');
 });
 
 test('a practice item is due when its time has come and it wasn\'t reviewed since local midnight', () => {
   const item = (srs: Parameters<typeof practicing>[1], extra: { isArchived?: boolean } = {}) =>
-    vocabItem('p', 'practice', { srs: practicing(NOW - 3 * DAY, srs), ...extra });
+    sentenceItem('p', 'Practice it.', { srs: practicing(NOW - 3 * DAY, srs), ...extra });
   assert.equal(isPracticeDue(item({ nextReview: NOW - HOUR, lastReviewDate: MIDNIGHT - 1 }), NOW), true);
   assert.equal(isPracticeDue(item({ nextReview: NOW, lastReviewDate: MIDNIGHT - DAY }), NOW), true, 'due this moment');
   assert.equal(isPracticeDue(item({ nextReview: NOW + 1, lastReviewDate: MIDNIGHT - DAY }), NOW), false, 'not yet');
   // Joined, practiced or missed today: its 10-minute step is today's repetition, and it waits for tomorrow.
   assert.equal(isPracticeDue(item({ nextReview: NOW - HOUR, lastReviewDate: MIDNIGHT }), NOW), false);
   assert.equal(isPracticeDue(item({ nextReview: NOW - HOUR, lastReviewDate: MIDNIGHT - 1 }, { isArchived: true }), NOW), false);
-  assert.equal(isPracticeDue(vocabItem('r', 'passive', { srs: reviewed(MIDNIGHT - DAY, { nextReview: NOW - HOUR }) }), NOW), false);
-  assert.equal(isPracticeDue(vocabItem('s', 'say', { srs: sayable(MIDNIGHT - DAY, { nextReview: NOW - HOUR }) }), NOW), false);
+  assert.equal(isPracticeDue(sentenceItem('r', 'Got it.', { srs: reviewed(MIDNIGHT - DAY, { nextReview: NOW - HOUR }) }), NOW), false);
+  assert.equal(isPracticeDue(sentenceItem('k', 'Passive.', { srs: passive(MIDNIGHT - DAY, { nextReview: NOW - HOUR }) }), NOW), false);
+  assert.equal(isPracticeDue(sentenceItem('s', 'Say.', { srs: sayable(MIDNIGHT - DAY, { nextReview: NOW - HOUR }) }), NOW), false);
+  // A word left in practice by the first build of Today is no longer the loop's.
+  assert.equal(isPracticeDue(vocabItem('w', 'word', { srs: practicing(NOW - 3 * DAY, { nextReview: NOW - HOUR, lastReviewDate: MIDNIGHT - 1 }) }), NOW), false);
   // A caller checking many items passes today's midnight once.
   assert.equal(isPracticeDue(item({ nextReview: NOW - HOUR, lastReviewDate: MIDNIGHT - 1 }), NOW, MIDNIGHT), true);
 });

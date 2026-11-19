@@ -8,14 +8,14 @@ import {
 
 const DAY = 86_400_000;
 
-test('where an item stands in the loop follows its schedule alone', () => {
+test('where an item stands in the loop follows its membership fields alone, never its classic reviews', () => {
   assert.equal(loopStanding(undefined), 'new');
-  assert.equal(loopStanding({ totalReviews: 0 }), 'new');
-  assert.equal(loopStanding({ totalReviews: 3 }), 'reviewed');
-  assert.equal(loopStanding({ totalReviews: 3, practiceSince: 1 }), 'practicing');
-  assert.equal(loopStanding({ totalReviews: 3, sayableAt: 1 }), 'sayable');
-  // Membership comes only from a review, so a never-reviewed schedule holding it is one whose count lags (a legacy row).
-  assert.equal(loopStanding({ totalReviews: 0, practiceSince: 1 }), 'practicing');
+  assert.equal(loopStanding({}), 'new');
+  // Reviewed the classic way (a Got it) but never decided in Today: still new to the loop.
+  assert.equal(loopStanding({ lastReviewDate: 5, stability: 9 }), 'new');
+  assert.equal(loopStanding({ practiceSince: 1, practiceChangedAt: 1 }), 'practicing');
+  assert.equal(loopStanding({ sayableAt: 1, practiceChangedAt: 1 }), 'sayable');
+  assert.equal(loopStanding({ practiceChangedAt: 1 }), 'passive');
 });
 
 test('a membership change deletes the key it ends, and leaves the scheduler result alone when nothing changes', () => {
@@ -24,6 +24,11 @@ test('a membership change deletes the key it ends, and leaves the scheduler resu
   assert.deepEqual(sayable, { practiceChangedAt: 60, stability: 3, fsrsState: 2, sayableAt: 60 });
   assert.equal('practiceSince' in sayable, false);
   assert.equal(applyPracticeMembership({}, next, 'quick', 'good', 50, 60), next);
+  // Passive ends both keys and keeps the time it was decided.
+  const passive = applyPracticeMembership({ practiceSince: 1, practiceChangedAt: 1 }, next, 'triage', 'good', 50, 60);
+  assert.deepEqual(passive, { practiceChangedAt: 60, stability: 3, fsrsState: 2 });
+  assert.equal(practiceTransition({}, {}, 'triage', 'good', 50, 60), 'passive');
+  assert.equal(practiceTransition({ practiceChangedAt: 70 }, {}, 'triage', 'good', 50, 60), 'none', 'a stale decision');
 });
 
 test('graduation reads the thresholds, inclusive, from the schedule after the review and the review before it', () => {

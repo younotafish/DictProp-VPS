@@ -64,31 +64,13 @@ test('the dashboard counts what is due at the present time', t => {
   assert.match(textOf(render(items)), /^Card review 2 Ready 2 Due/);
 });
 
-test('Start says how many due cards it reviews and how many due wait after the session; new cards wait for Today\'s sets', t => {
+test('Start says how many cards it reviews, with how many are due and new and how many due wait after the session', t => {
   t.mock.method(Date, 'now', () => NOW);
   const due = Array.from({ length: 110 }, (_, i) => vocab(`due-${i}`, { reviews: 1, due: NOW - HOUR }));
   const fresh = Array.from({ length: 12 }, (_, i) => vocab(`new-${i}`));
   const markup = render([...due, ...fresh]);
-  assert.match(markup, /<button class="h-12 px-5 rounded-lg bg-slate-900 text-white font-semibold hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed" aria-keyshortcuts="Enter">Review 40<\/button><p class="mt-1 text-xs text-slate-500">40 due · 70 more after this<\/p>/);
-  assert.match(textOf(markup), /40 Ready 110 Due/);
-  assert.match(render(fresh), /All caught up<\/button><\/div>/, 'only new cards: nothing for Study, and no forecast');
-});
-
-test('Today\'s practice and the cards you can say stay out of Study\'s Ready, Due and forecast', t => {
-  t.mock.method(Date, 'now', () => NOW);
-  const inLoop = (item: StoredItem, membership: object): StoredItem => ({ ...item, srs: { ...item.srs, ...membership, practiceChangedAt: NOW - DAY } });
-  const items = [
-    vocab('run', { reviews: 2, due: NOW - HOUR }),
-    inLoop(vocab('walk', { reviews: 1, due: NOW - HOUR }), { practiceSince: NOW - DAY }),
-    inLoop(vocab('jump', { reviews: 3, due: NOW - HOUR }), { sayableAt: NOW - DAY }),
-  ];
-  assert.match(textOf(render(items)), /^Card review 1 Ready 1 Due/);
-  const later = [
-    vocab('run', { reviews: 2, due: NOW + 3 * HOUR }),
-    inLoop(vocab('walk', { reviews: 1, due: NOW + HOUR }), { practiceSince: NOW - DAY }),
-  ];
-  // The practicing card, due sooner, neither leads the countdown nor counts toward tomorrow's.
-  assert.match(render(later), />Next card due in 3h · 1 by tomorrow<\/p>/);
+  assert.match(markup, /<button class="h-12 px-5 rounded-lg bg-slate-900 text-white font-semibold hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed" aria-keyshortcuts="Enter">Review 50<\/button><p class="mt-1 text-xs text-slate-500">40 due · 10 new · 70 more after this<\/p>/);
+  assert.match(textOf(markup), /50 Ready 110 Due/);
 });
 
 test('with nothing to review, Start is a disabled All caught up captioned with when the next card falls due', t => {

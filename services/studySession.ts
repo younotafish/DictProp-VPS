@@ -14,7 +14,6 @@ import { HttpError } from './http';
 import { formatReviewInterval } from './reviewTime';
 import { sentenceReviewState } from './sentenceReviewState';
 import { createClozePrompt, pickExample } from './studyPrompt';
-import { isClassicNewCard, isClassicStudyCard } from './studyStats';
 
 /** What a card's prompts and answer are made from. */
 export interface StudyContent {
@@ -96,15 +95,17 @@ export function listeningPrompt(item: StoredItem): string | null {
 }
 
 /**
- * A session's cards: up to `dueLimit` due cards, the most overdue first, then up to `newLimit` new phrases, the oldest
- * saved first, one meaning per spelling. New words enter through Today's sets instead, and Today's practice and the
- * cards you can say stay with Today (isClassicStudyCard, isClassicNewCard).
+ * A session's cards: up to `dueLimit` due cards, the most overdue first, then up to `newLimit` never-reviewed ones, the
+ * oldest saved first, one meaning per spelling. Card review takes words and phrases (useLibraryViews' studyItems), which
+ * Today's loop never takes, so it introduces new cards itself.
  */
 export function buildReviewQueue(items: readonly StoredItem[], now = Date.now(), dueLimit = 40, newLimit = 10): StoredItem[] {
   const due = items
-    .filter(item => isDueForReview(item, now) && isClassicStudyCard(item))
+    .filter(item => isDueForReview(item, now))
     .sort((a, b) => (a.srs?.nextReview || 0) - (b.srs?.nextReview || 0));
-  const fresh = items.filter(isClassicNewCard).sort((a, b) => a.savedAt - b.savedAt);
+  const fresh = items
+    .filter(item => (item.srs?.totalReviews || 0) === 0)
+    .sort((a, b) => a.savedAt - b.savedAt);
   const seenSpellings = new Set<string>();
   const burySiblings = (list: StoredItem[], limit: number) => list.filter(item => {
     const spelling = getItemSpelling(item);

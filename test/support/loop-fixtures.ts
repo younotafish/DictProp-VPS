@@ -1,5 +1,5 @@
-// Library items for the tests of Today's loop (services/learningLoop): word cards and saved sentences with just the
-// fields a test names, and a schedule that is new unless the test gives it reviews.
+// Library items for the tests of Today's loop (services/learningLoop): saved sentences (and word cards, which the loop
+// leaves out) with just the fields a test names, and a schedule that is new unless the test gives it reviews.
 import type { SentenceAnalysis, SRSData, StoredItem } from '../../types.ts';
 
 export const HOUR = 3_600_000;
@@ -111,7 +111,12 @@ export const sayable = (at: number, srs: Partial<SRSData> = {}): Partial<SRSData
   totalReviews: 1, lastReviewDate: at, sayableAt: at, practiceChangedAt: at, fsrsState: 2, ...srs,
 });
 
-/** A schedule reviewed (passively, or by Got it) without membership. */
+/** A schedule reviewed the classic way (a Got it, Reviewed, Card review) and never decided in Today: new to the loop. */
 export const reviewed = (at: number, srs: Partial<SRSData> = {}): Partial<SRSData> => ({
   totalReviews: 1, lastReviewDate: at, fsrsState: 2, ...srs,
+});
+
+/** A schedule kept passive at `at` by a Meet's Passive (a triage rated good). */
+export const passive = (at: number, srs: Partial<SRSData> = {}): Partial<SRSData> => ({
+  totalReviews: 1, lastReviewDate: at, practiceChangedAt: at, fsrsState: 2, ...srs,
 });

@@ -10,7 +10,6 @@ import {
   computeStudyStats,
   countDueSpellings,
   formatCountdown,
-  isClassicStudyCard,
   nextStudyClockChange,
   startCaption,
   studyForecast,
@@ -46,12 +45,6 @@ function vocab(
     },
   };
 }
-
-/** The item in Today's loop: practicing, or one you can say. */
-const inLoop = (item: StoredItem, membership: 'practicing' | 'sayable'): StoredItem => ({
-  ...item,
-  srs: { ...item.srs, ...(membership === 'practicing' ? { practiceSince: NOW - DAY } : { sayableAt: NOW - DAY }), practiceChangedAt: NOW - DAY },
-});
 
 let nextEventId = 0;
 const review = (reviewedAt: number, rating: ReviewRating = 'good', taskType: ReviewTaskType = 'meaning'): ReviewEvent => ({
@@ -96,12 +89,8 @@ test('the due count takes each spelling once, reviewed and due, leaving out new,
     { ...vocab('kept', 'kept', { reviews: 1, due: NOW - HOUR }), isArchived: true },
     { ...vocab('gone', 'gone', { reviews: 1, due: NOW - HOUR }), isDeleted: true },
     vocab('jump', 'jump', { reviews: 1, due: NOW - DAY }),
-    // Today's: practiced there, or done.
-    inLoop(vocab('practice', 'practice', { reviews: 1, due: NOW - HOUR }), 'practicing'),
-    inLoop(vocab('say', 'say', { reviews: 4, due: NOW - HOUR }), 'sayable'),
   ];
-  // run (both senses) and jump; walk isn't due yet, fresh, never reviewed, enters through Today's sets, and Today
-  // practices or is done with the last two.
+  // run (both senses) and jump; walk isn't due yet, and fresh, never reviewed, waits with the new cards.
   assert.equal(countDueSpellings(items, NOW), 2);
   assert.equal(computeStudyStats(items, recentOnly([]), NOW).due, 2);
   assert.equal(countDueSpellings([], NOW), 0);
@@ -284,8 +273,6 @@ test('the numbers next change with the clock when a reviewed card falls due, or 
   ];
   assert.equal(nextStudyClockChange(unchanged, NOW), tonight);
   assert.equal(nextStudyClockChange([{ ...vocab('bare', 'bare'), srs: undefined } as unknown as StoredItem], NOW), tonight);
-  // Nor do Today's cards, which never reach Study.
-  assert.equal(nextStudyClockChange([inLoop(vocab('p', 'p', { reviews: 1, due: NOW + HOUR }), 'practicing'), inLoop(vocab('s', 's', { reviews: 1, due: NOW + HOUR }), 'sayable')], NOW), tonight);
 });
 
 test('with nothing to review, the forecast says when the next card falls due and how many will be due by tomorrow', () => {
@@ -297,31 +284,20 @@ test('with nothing to review, the forecast says when the next card falls due and
     vocab('d', 'jump', { reviews: 1, due: tonight + 1 }),
     vocab('e', 'fresh', { due: NOW + HOUR }), // never reviewed: new, not forecast
     { ...vocab('f', 'kept', { reviews: 1, due: NOW + HOUR }), isArchived: true },
-    inLoop(vocab('g', 'practice', { reviews: 1, due: NOW + HOUR }), 'practicing'), // Today's: not forecast
-    inLoop(vocab('h', 'say', { reviews: 2, due: NOW + HOUR }), 'sayable'),
   ];
   assert.deepEqual(studyForecast(items, NOW), { nextDueAt: NOW + 2 * HOUR + 10 * 60_000, dueByTomorrow: 2 });
   assert.deepEqual(studyForecast([vocab('d', 'jump', { reviews: 1, due: tonight + DAY })], NOW), { nextDueAt: tonight + DAY, dueByTomorrow: 0 });
   assert.equal(studyForecast([vocab('e', 'fresh')], NOW), null, 'nothing reviewed is scheduled');
   assert.equal(studyForecast([], NOW), null);
-  assert.equal(studyForecast([inLoop(vocab('p', 'p', { reviews: 1, due: NOW + HOUR }), 'practicing')], NOW), null);
 });
 
 test('the Start caption says how many of the session\'s cards are due and new, and how many due wait after it', () => {
   const due = Array.from({ length: 40 }, (_, i) => vocab(`d${i}`, `due-${i}`, { reviews: 1, due: NOW - HOUR }));
-  const fresh = [vocab('n1', 'new-1'), vocab('n2', 'new-2')];
-  assert.equal(startCaption(due, 40), '40 due');
-  assert.equal(startCaption(due, 110), '40 due · 70 more after this');
+  const fresh = Array.from({ length: 10 }, (_, i) => vocab(`n${i}`, `new-${i}`));
+  assert.equal(startCaption([...due, ...fresh], 40), '40 due · 10 new');
+  assert.equal(startCaption([...due, ...fresh], 110), '40 due · 10 new · 70 more after this');
   assert.equal(startCaption(due.slice(0, 3), 3), '3 due');
-  assert.equal(startCaption([...due, ...fresh], 110), '40 due · 2 new · 70 more after this');
-  assert.equal(startCaption(fresh, 0), '2 new');
-});
-
-test('classic Study takes cards reviewed before that are neither in Today\'s practice nor ones you can say', () => {
-  assert.equal(isClassicStudyCard(vocab('r', 'r', { reviews: 2 })), true);
-  assert.equal(isClassicStudyCard(vocab('n', 'n')), false, 'new cards enter through Today\'s sets');
-  assert.equal(isClassicStudyCard(inLoop(vocab('p', 'p', { reviews: 1 }), 'practicing')), false);
-  assert.equal(isClassicStudyCard(inLoop(vocab('s', 's', { reviews: 1 }), 'sayable')), false);
+  assert.equal(startCaption(fresh, 0), '10 new');
 });
 
 test('a countdown gives its two largest units, leaving out a part that is 0, and never less than a minute', () => {

@@ -84,49 +84,17 @@ function vocab(
   };
 }
 
-test('the review queue takes due cards, the most overdue first, one meaning per spelling, up to its limit, and no new words', () => {
-  const items = [
+test('review queue prioritizes due cards, limits new cards, and buries same-spelling senses', () => {
+  const queue = buildReviewQueue([
     vocab('lead-metal', 'lead', { sense: 'metal', reviews: 2, nextReview: 20 }),
     vocab('lead-guide', 'lead', { sense: 'guide', reviews: 2, nextReview: 10 }),
     vocab('other-due', 'other', { reviews: 1, nextReview: 15 }),
     vocab('lead-new', 'lead', { sense: 'new', savedAt: 1 }),
     vocab('fresh', 'fresh', { savedAt: 2 }),
     vocab('later', 'later', { reviews: 1, nextReview: 2_000 }),
-  ];
-  // New cards enter through Today's sets.
-  assert.deepEqual(buildReviewQueue(items, 1_000).map(item => item.data.id), ['lead-guide', 'other-due']);
-  assert.deepEqual(buildReviewQueue(items, 1_000, 1).map(item => item.data.id), ['lead-guide']);
-});
+  ], 1_000, 40, 1);
 
-test('the review queue introduces new phrases itself, after the due cards, the oldest saved first, since Today takes no phrases', () => {
-  const phrase = (id: string, query: string, savedAt: number, totalReviews = 0): StoredItem => ({
-    type: 'phrase',
-    data: { id, query, translation: '', grammar: '', visualKeyword: '', pronunciation: '', timestamp: 0, vocabs: [] },
-    srs: { ...SRSAlgorithm.createNew(id, 'phrase'), totalReviews, nextReview: totalReviews ? 5_000 : 0 },
-    savedAt,
-  });
-  const items = [
-    phrase('newer', 'give up', 30),
-    vocab('due', 'other', { reviews: 1, nextReview: 15 }),
-    phrase('older', 'look into', 20),
-    phrase('reviewed', 'set off', 10, 2),
-    vocab('fresh-word', 'fresh', { savedAt: 1 }),
-    phrase('older-twin', 'give up', 25),
-  ];
-  assert.deepEqual(buildReviewQueue(items, 1_000).map(item => item.data.id), ['due', 'older', 'older-twin']);
-  assert.deepEqual(buildReviewQueue(items, 1_000, 40, 1).map(item => item.data.id), ['due', 'older']);
-});
-
-test('the review queue leaves Today\'s practice and the cards you can say to Today', () => {
-  const withSrs = (item: StoredItem, srs: Partial<StoredItem['srs']>): StoredItem => ({ ...item, srs: { ...item.srs, ...srs } });
-  const items = [
-    withSrs(vocab('practicing', 'walk', { reviews: 1, nextReview: 5 }), { practiceSince: 1, practiceChangedAt: 1 }),
-    withSrs(vocab('sayable', 'run', { reviews: 3, nextReview: 6 }), { sayableAt: 1, practiceChangedAt: 1 }),
-    vocab('walk-noun', 'walk', { sense: 'noun', reviews: 2, nextReview: 7 }),
-    vocab('passive', 'jump', { reviews: 1, nextReview: 8 }),
-  ];
-  // A practicing meaning takes no slot from another meaning of its spelling.
-  assert.deepEqual(buildReviewQueue(items, 1_000).map(item => item.data.id), ['walk-noun', 'passive']);
+  assert.deepEqual(queue.map(item => item.data.id), ['lead-guide', 'other-due', 'fresh']);
 });
 
 test('a card is due once studied and its next review has come; a never-studied card waits with the new ones', () => {
