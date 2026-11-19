@@ -151,6 +151,26 @@ test('two sentences that reach one card, by its spelling, sense or a listed form
   assert.deepEqual(result.upNext, []);
 });
 
+test('sentences joined through a card count as one word even when they share no word directly; one asking for nothing is its own', () => {
+  // Two cards list the form 'fork'. s-alpha reaches alpha through it and s-beta reaches beta, so the two share 'fork';
+  // s-beta-card asks for beta itself and shares nothing with s-alpha, yet joins it through s-beta.
+  const items = [
+    vocabItem('alpha', 'alpha', { sense: 'n1', forms: ['fork'], savedAt: NOW - 9 * DAY }),
+    vocabItem('beta', 'beta', { sense: 'n2', forms: ['fork'], savedAt: NOW - 9 * DAY }),
+    sentenceItem('s-alpha', 'Take the {{fork}}.', { sourceWord: 'fork', sourceSense: 'n1', savedAt: NOW - HOUR }),
+    sentenceItem('s-beta-card', 'A {{beta}} test.', { sourceWord: 'beta', savedAt: NOW - 2 * HOUR }),
+    sentenceItem('s-beta', 'The road will {{fork}}.', { sourceWord: 'fork', sourceSense: 'n2', savedAt: NOW - 3 * HOUR }),
+    sentenceItem('none-1', 'A line with nothing marked.', { savedAt: NOW - 4 * HOUR }),
+    sentenceItem('none-2', 'Another line with nothing marked.', { savedAt: NOW - 5 * HOUR }),
+    ...sentences('d', 20, 2),
+  ];
+  // 25 new sentences make two sets of 13: the first takes one of the three joined sentences, and both unmarked ones.
+  const today = plan(items, inTheme(items, A)).today?.itemIds ?? [];
+  assert.equal(today.length, 13);
+  assert.deepEqual(today.filter(id => id.startsWith('s-')), ['s-alpha']);
+  assert.ok(today.includes('none-1') && today.includes('none-2'));
+});
+
 test('topping up a set gives every word a second sentence before any word a third', () => {
   // 24 sentences over six words, word A's four saved newest: two sets of 12, each word twice in the first.
   const items = Array.from({ length: 24 }, (_, i) =>
