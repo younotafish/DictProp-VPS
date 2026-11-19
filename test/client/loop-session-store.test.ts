@@ -33,7 +33,7 @@ import {
   writeTodayPin,
 } from '../../services/learningLoop/sessionStore.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
-import { DAY, HOUR, practicing, vocabItem } from '../support/loop-fixtures.ts';
+import { DAY, HOUR, practicing, sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
 
 const T0 = new Date(2026, 10, 18, 9).getTime();
 const USER = 'user-1';
@@ -45,17 +45,20 @@ const refusing = {
   removeItem: () => { throw new Error('denied'); },
 };
 
-/** A set session that met w0 (Practice) and w1 (Can say it), now in its round with a hint taken. */
+/** A sentence of the loop, with the schedule `srs` gives it. */
+const line = (id: string, srs = {}) => sentenceItem(id, `A line called ${id}.`, { srs });
+
+/** A set session that met the sentences 'one' (Practice) and 'two' (Can say it), now in its round with a hint taken. */
 function roundSession(): SetSession {
-  const items = new Map(['w0', 'w1'].map(id => [id, vocabItem(id, id)]));
+  const items = new Map(['one', 'two'].map(id => [id, line(id)]));
   let ids = 0;
   const createId = () => `attempt-${++ids}`;
-  let session = startSetSession('s1', { themeId: 'theme', itemIds: ['w0', 'w1'] }, T0);
-  for (const [id, choice, membership] of [['w0', 'practice', { practiceSince: T0 }], ['w1', 'say', { sayableAt: T0 }]] as const) {
+  let session = startSetSession('s1', { themeId: 'theme', itemIds: ['one', 'two'] }, T0);
+  for (const [id, choice, membership] of [['one', 'practice', { practiceSince: T0 }], ['two', 'say', { sayableAt: T0 }]] as const) {
     session = revealAnswer(session);
     const step = chooseInMeet(session, items.get(id)!, choice, `e-${id}`, T0)!;
     // The choice's review, as this device applies it.
-    items.set(id, vocabItem(id, id, { srs: { totalReviews: 1, lastReviewDate: T0, ...membership } }));
+    items.set(id, line(id, { totalReviews: 1, lastReviewDate: T0, practiceChangedAt: T0, ...membership }));
     session = finishEncoding(step.advance(session), T0);
     session = settleSession(session, itemId => items.get(itemId), createId, T0);
   }
@@ -81,8 +84,18 @@ test('a session\'s record keeps its place, choices and attempts, and comes back 
 
   // A choice made after the hint keeps that, so Back can keep Can say it closed.
   const hinted = revealAnswer(takeHint(startSetSession('s3', { themeId: null, itemIds: ['x', 'y'] }, T0)));
-  const chosen = chooseInMeet(hinted, vocabItem('x', 'x'), 'passive', 'e-x', T0)!.advance(hinted);
+  const chosen = chooseInMeet(hinted, line('x'), 'passive', 'e-x', T0)!.advance(hinted);
   assert.deepEqual(decodeLoopSession(encodeLoopSession(chosen, USER, T0), USER, T0)?.session, chosen);
+});
+
+test('a record kept from before Today took sentences only is taken up, and its words are passed over as it settles', () => {
+  const words = new Map(['old-word', 'old-card'].map(id => [id, vocabItem(id, id)]));
+  const items = new Map([...words, ['kept', line('kept')]]);
+  const raw = encodeLoopSession(startSetSession('v2', { themeId: 'theme', itemIds: ['old-word', 'kept', 'old-card'] }, T0), USER, T0);
+  const restored = decodeLoopSession(raw, USER, T0 + HOUR);
+  assert.ok(restored);
+  const settled = settleSession(restored.session, id => items.get(id), () => 'x', T0 + HOUR) as SetSession;
+  assert.deepEqual([settled.phase, settled.itemIds[settled.meet.index]], ['meet', 'kept']);
 });
 
 test('a record is taken up only by its user, within 12 hours, and never from the future', () => {
@@ -107,7 +120,7 @@ test('a damaged record reads as none, whatever part of it is wrong', () => {
   const damaged: [string, string][] = [
     ['unknown kind', withSession(good, session => { session.kind = 'lesson'; })],
     ['empty id', withSession(good, session => { session.id = ''; })],
-    ['a repeated item', withSession(good, session => { session.itemIds = ['w0', 'w0']; })],
+    ['a repeated item', withSession(good, session => { session.itemIds = ['one', 'one']; })],
     ['an item id too long', withSession(good, session => { session.itemIds = ['x'.repeat(201)]; })],
     ['too many items', withSession(good, session => { session.itemIds = Array.from({ length: 101 }, (_, i) => `i${i}`); })],
     ['an unknown phase', withSession(good, session => { session.phase = 'done'; })],
@@ -116,33 +129,33 @@ test('a damaged record reads as none, whatever part of it is wrong', () => {
       (session.meet as { choices: Record<string, unknown> }).choices.zz = { choice: 'say', eventId: 'e', at: T0, totalReviews: 1 };
     })],
     ['a choice\'s hint that is neither absent nor true', withSession(good, session => {
-      (session.meet as { choices: Record<string, { hinted?: unknown }> }).choices.w1.hinted = false;
+      (session.meet as { choices: Record<string, { hinted?: unknown }> }).choices.two.hinted = false;
     })],
     ['an unknown choice', withSession(good, session => {
-      (session.meet as { choices: Record<string, { choice: string }> }).choices.w1.choice = 'known';
+      (session.meet as { choices: Record<string, { choice: string }> }).choices.two.choice = 'known';
     })],
     ['a round item not chosen for practice', withSession(good, session => {
       const round = session.round as { queue: string[]; attempts: Record<string, unknown> };
-      round.queue.push('w1');
-      round.attempts.w1 = { tries: 0, hinted: false, eventId: 'x' };
+      round.queue.push('two');
+      round.attempts.two = { tries: 0, hinted: false, eventId: 'x' };
     })],
     ['a queued item without its attempt', withSession(good, session => { (session.round as { attempts: object }).attempts = {}; })],
     ['an outcome the tries can\'t give', withSession(good, session => {
-      (session.round as { attempts: Record<string, unknown> }).attempts.w0 = { tries: 2, hinted: true, outcome: 'good', eventId: 'e', at: T0, totalReviews: 2 };
+      (session.round as { attempts: Record<string, unknown> }).attempts.one = { tries: 2, hinted: true, outcome: 'good', eventId: 'e', at: T0, totalReviews: 2 };
     })],
     ['Good with the hint', withSession(good, session => {
-      (session.round as { attempts: Record<string, unknown> }).attempts.w0 = { tries: 1, hinted: true, outcome: 'good', eventId: 'e', at: T0, totalReviews: 2 };
+      (session.round as { attempts: Record<string, unknown> }).attempts.one = { tries: 1, hinted: true, outcome: 'good', eventId: 'e', at: T0, totalReviews: 2 };
     })],
     ['a Practice choice left out of the round', withSession(good, session => {
-      (session.meet as { choices: Record<string, { choice: string }> }).choices.w1.choice = 'practice';
+      (session.meet as { choices: Record<string, { choice: string }> }).choices.two.choice = 'practice';
     })],
     ['an attempt whose item isn\'t queued', withSession(good, session => {
       const round = session.round as { queue: string[]; index: number };
-      round.queue = round.queue.filter(id => id !== 'w0');
+      round.queue = round.queue.filter(id => id !== 'one');
       round.index = 0;
     })],
     ['an outcome without its time', withSession(good, session => {
-      (session.round as { attempts: Record<string, unknown> }).attempts.w0 = { tries: 1, hinted: false, outcome: 'good', eventId: 'e' };
+      (session.round as { attempts: Record<string, unknown> }).attempts.one = { tries: 1, hinted: false, outcome: 'good', eventId: 'e' };
     })],
     ['a round while meeting', withSession(good, session => { session.phase = 'meet'; })],
     ['a practice mode', withSession(practice, session => { session.mode = 'loud'; })],
@@ -177,7 +190,7 @@ test('the record is written again only when the session moves, chooses or answer
   assert.equal(loopRecordChanged(session, { ...session, promptStartedAt: T0 + 5 }), false);
   assert.equal(loopRecordChanged(session, { ...session, phase: 'summary' }), true);
   assert.equal(loopRecordChanged(session, { ...session, id: 'other' }), true);
-  const items = new Map([['p', vocabItem('p', 'p', { srs: practicing(T0 - 9 * DAY, { nextReview: T0 - HOUR, lastReviewDate: T0 - 2 * DAY }) })]]);
+  const items = new Map([['p', line('p', practicing(T0 - 9 * DAY, { nextReview: T0 - HOUR, lastReviewDate: T0 - 2 * DAY }))]]);
   const practice = settleSession(startPracticeSession('ps', ['p'], 'speak', T0, () => 'e'), id => items.get(id), () => 'x', T0);
   assert.equal(loopRecordChanged(practice, revealAnswer(practice)), false);
   assert.equal(loopRecordChanged(practice, takeHint(practice)), true, 'a hint taken caps the attempt, so it is kept');

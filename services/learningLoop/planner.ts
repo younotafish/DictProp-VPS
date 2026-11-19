@@ -1,30 +1,30 @@
-import { getItemSpelling, isVocabItem, type SentenceData, type StoredItem } from '../../types';
+import { getItemSpelling, type SentenceData, type StoredItem } from '../../types';
 import { isThemeId } from '../../server/src/shared/item-themes';
 import { sentenceSourceResolver } from '../sentenceSource';
-import { partOfSpeechOf } from '../studyPrompt';
-import { normalizeKey } from '../wordMatch';
 import { isLoopEligible, isOwnSentence, itemStanding, localDayKey, sentenceTranslation } from './standing';
 import { DAILY_SET_GOAL } from './stats';
 
 // Today's planner: which theme today's set comes from, what the set holds and in what order, the sets up next, and the
-// numbers the themes browser shows. Pure and deterministic: the same library, theme map, clock and device state give
-// the same plan. It runs over the whole library (about 17k items) as Today opens and after each set, so it is one pass
-// over the items plus sorting; items are compared with each other only while a set is filled, and only with the set.
+// numbers the themes browser shows, all over the learner's own sentences (standing.ts isLoopEligible). Pure and
+// deterministic: the same library, theme map, clock and device state give the same plan. It runs over the whole
+// library (about 17k items, some 3k of them sentences the loop takes) as Today opens and after each set, so it is one
+// pass over the items plus sorting; sentences are compared with each other only while a set is filled, and only with
+// the set.
 
 const DAY_MS = 86_400_000;
 
-/** Items saved this recently count toward their theme's score. */
+/** Sentences saved this recently count toward their theme's score. */
 const RECENT_MS = 14 * DAY_MS;
 /** A theme a set was started from on this device within this time is held back, so the days vary. */
 export const SET_START_PENALTY_MS = 2 * DAY_MS;
-/** A theme with up to this many new items gives them all in one set; a bigger one is split into sets of 12 to 23. */
+/** A theme with up to this many new sentences gives them all in one set; a bigger one is split into sets of 12 to 23. */
 const MAX_SET_SIZE = 20;
 /** The size a big theme's sets aim at; none is smaller than the day's goal (DAILY_SET_GOAL). */
 const TARGET_SET_SIZE = 15;
 /** How many sets the plan simulates after today's. */
 const UP_NEXT_COUNT = 3;
 
-/** The set Today offers, or a themes-browser row starts: its theme (null: Unsorted) and its items in the order met. */
+/** The set Today offers, or a themes-browser row starts: its theme (null: Unsorted) and its sentences in the order met. */
 export interface PlannedSet {
   themeId: string | null;
   itemIds: string[];
@@ -36,28 +36,29 @@ export interface TodayPin {
   themeId: string;
 }
 
-/** A theme's numbers in the themes browser, over the items the loop takes, and the set starting it now would hold. */
+/** A theme's numbers in the themes browser, over the sentences the loop takes, and the set starting it now would hold. */
 export interface ThemePlan {
-  /** Null for Unsorted: items without a theme yet, or with one this build doesn't know. */
+  /** Null for Unsorted: sentences without a theme yet, or with one this build doesn't know. */
   themeId: string | null;
-  /** Never reviewed: what its sets take. */
+  /** Not yet decided in Today, whatever their classic reviews (a Got it'd sentence included): what its sets take. */
   newCount: number;
   practicingCount: number;
   sayableCount: number;
+  /** Every one of its sentences the loop takes, those kept passive included. */
   total: number;
-  /** New items saved in the last 14 days. */
+  /** New sentences saved in the last 14 days. */
   recentCount: number;
-  /** The set it would give now, in the order met; empty without a new item. */
+  /** The set it would give now, in the order met; empty without a new sentence. */
   nextSet: string[];
 }
 
 export interface LoopPlan {
-  /** Each theme of the taxonomy that holds an item the loop takes, by id. */
+  /** Each theme of the taxonomy that holds a sentence the loop takes, by id. */
   themes: Map<string, ThemePlan>;
-  /** The items in no known theme. Never picked on its own; the themes browser lists it last when it has items. */
+  /** The sentences in no known theme. Never picked on its own; the themes browser lists it last when it has any. */
   unsorted: ThemePlan;
-  /** Today's set: the pinned theme's next set, or the best theme's once the day or the pinned theme's items ran out.
-   *  Null while no theme has a new item. */
+  /** Today's set: the pinned theme's next set, or the best theme's once the day or the pinned theme's new sentences ran
+   *  out. Null while no theme has a new sentence. */
   today: PlannedSet | null;
   /** The pin to keep: `today`'s theme for today, or null with no set. */
   pin: TodayPin | null;
@@ -69,7 +70,8 @@ export interface LoopPlan {
 
 export interface PlanInput {
   items: readonly StoredItem[];
-  /** Each classified item's theme id (services/learningLoop/themeMap.ts); ids this build doesn't know count as none. */
+  /** Each classified item's theme id (services/learningLoop/themeMap.ts); ids this build doesn't know count as none, and
+   *  rows for items the loop doesn't take (the words an older build's sweep sorted) are never looked up. */
   themeOf: ReadonlyMap<string, string>;
   now: number;
   /** When a set was last started from each theme on this device (services/learningLoop/sessionStore.ts). */
@@ -79,9 +81,9 @@ export interface PlanInput {
 }
 
 /**
- * How many items a set takes from a theme with `size` new items: all of them up to 20; beyond that the theme is split
+ * How many sentences a set takes from a theme with `size` new ones: all of them up to 20; beyond that the theme is split
  * into m sets of equal size, ceil(size / m) each, as near 15 as keeps every set at the day's goal of 12 or more:
- * m = min(round(size / 15), floor(size / 12)). So 21 to 23 items stay one set, and one set always meets the goal.
+ * m = min(round(size / 15), floor(size / 12)). So 21 to 23 sentences stay one set, and one set always meets the goal.
  */
 export function setSize(size: number): number {
   if (size <= MAX_SET_SIZE) return Math.max(0, size);
@@ -90,9 +92,9 @@ export function setSize(size: number): number {
 }
 
 /**
- * How strongly a theme asks to be today's: 3 points per new item saved in the last two weeks (up to 20) plus a quarter
- * point per new item (up to 60), less 100 when a set was started from it on this device in the last two days and less
- * 30 when it has fewer new items than the day's goal, so its set alone wouldn't meet it.
+ * How strongly a theme asks to be today's: 3 points per new sentence saved in the last two weeks (up to 20) plus a
+ * quarter point per new sentence (up to 60), less 100 when a set was started from it on this device in the last two
+ * days and less 30 when it has fewer new sentences than the day's goal, so its set alone wouldn't meet it.
  */
 export function themeScore(
   theme: { themeId: string; size: number; recentCount: number },
@@ -106,85 +108,31 @@ export function themeScore(
   return score;
 }
 
-/**
- * The segments of a Chinese gloss two cards can share: split at ；;，,、/ and spaces, each at least two characters. Notes
- * in brackets, such as （正式文件的）序言's, qualify a gloss rather than give one, so they are left out.
- */
-export function glossSegments(chinese: string): string[] {
-  return (chinese || '')
-    .replace(/（[^（）]*）|\([^()]*\)/g, ' ')
-    .split(/[；;，,、/\s]+/)
-    .map(segment => segment.trim())
-    .filter(segment => [...segment].length >= 2);
-}
-
-/** What a set compares an item with the set's others by. */
+/** What a set compares a sentence with the set's others by. */
 interface SetProfile {
-  /** What it asks for: a card's spelling; a sentence's source word, and the spelling of the card it came from. */
+  /** The words it asks for: its source word as asked, and the spelling of the card it came from (sentenceSource.ts). */
   targets: string[];
-  /** A card's gloss segments. */
-  segments: string[];
-  /** A card's word, and its listed synonyms, keyed alike (normalizeKey). */
-  word: string;
-  synonyms: string[];
-  partOfSpeech: string;
 }
 
 type ProfileOf = (item: StoredItem) => SetProfile;
 
 /**
- * The items of a set, in the order met: words first, their parts of speech taking turns where they can (a noun, then
- * a verb, then a noun...), then sentences. Within each, the order filling them gave.
- */
-function orderSet(items: readonly StoredItem[], profileOf: ProfileOf): StoredItem[] {
-  const groups = new Map<string, StoredItem[]>();
-  const sentences: StoredItem[] = [];
-  for (const item of items) {
-    if (!isVocabItem(item)) { sentences.push(item); continue; }
-    const key = profileOf(item).partOfSpeech;
-    const group = groups.get(key);
-    if (group) group.push(item);
-    else groups.set(key, [item]);
-  }
-  // Each turn takes the part of speech with the most words left that isn't the one just taken (unless no other is
-  // left); ties go to the one met first.
-  const queues = [...groups.entries()].map(([key, words]) => ({ key, words, next: 0 }));
-  const words: StoredItem[] = [];
-  let last: string | undefined;
-  for (let left = items.length - sentences.length; left > 0; left--) {
-    const open = queues.filter(queue => queue.next < queue.words.length);
-    const choices = open.length > 1 ? open.filter(queue => queue.key !== last) : open;
-    const best = choices.reduce((most, queue) => (queue.words.length - queue.next > most.words.length - most.next ? queue : most));
-    words.push(best.words[best.next++]);
-    last = best.key;
-  }
-  return [...words, ...sentences];
-}
-
-/**
- * A set from a theme's new items, `candidates` newest saved first: two thirds of it from the newest end and the rest from
- * the oldest, so the backlog shrinks too. Filling skips an item that would interfere with one already in the set: one
- * asking for the same word (another meaning of a spelling, a sentence beside its card, two sentences of one word), a
- * card whose Chinese gloss shares a segment with one in the set, or a card that lists one in the set as a synonym or is
- * listed as one. A skipped item stays in the pool for a later set.
+ * A set from a theme's new sentences, `candidates` newest saved first, in the order filling it gives, which is the order
+ * they are met: two thirds of it from the newest end, then the rest from the oldest, so the backlog shrinks too.
+ * Filling skips a sentence that asks for a word one already in the set asks for, as its source word or through the
+ * card it came from (another spelling or a listed form reaches the same card), so no two sentences of one word cue each
+ * other. A skipped sentence stays in the pool for a later set.
  */
 function composeSet(candidates: readonly StoredItem[], profileOf: ProfileOf): StoredItem[] {
   const size = setSize(candidates.length);
   const fromNewest = Math.ceil((2 * size) / 3);
   const targets = new Set<string>();
-  const segments = new Set<string>();
-  const words = new Set<string>();
-  const synonyms = new Set<string>();
   const chosen: StoredItem[] = [];
   const taken = new Set<number>();
   const tryTake = (index: number) => {
     const profile = profileOf(candidates[index]);
-    if (profile.targets.some(target => targets.has(target)) || profile.segments.some(segment => segments.has(segment)) ||
-      (profile.word !== '' && synonyms.has(profile.word)) || profile.synonyms.some(synonym => words.has(synonym))) return;
+    if (profile.targets.some(target => targets.has(target))) return;
     for (const target of profile.targets) targets.add(target);
-    for (const segment of profile.segments) segments.add(segment);
-    if (profile.word !== '') words.add(profile.word);
-    for (const synonym of profile.synonyms) synonyms.add(synonym);
     chosen.push(candidates[index]);
     taken.add(index);
   };
@@ -192,33 +140,21 @@ function composeSet(candidates: readonly StoredItem[], profileOf: ProfileOf): St
   for (let index = candidates.length - 1; index >= 0 && chosen.length < size; index--) {
     if (!taken.has(index)) tryTake(index);
   }
-  return orderSet(chosen, profileOf);
+  return chosen;
 }
 
-/** The profiles of the library's items, each made once, the first time a set looks at it. */
+/** The profiles of the library's sentences, each made once, the first time a set looks at it. */
 function profiles(items: readonly StoredItem[]): ProfileOf {
   let sourceOf: ReturnType<typeof sentenceSourceResolver> | undefined;
   const made = new Map<string, SetProfile>();
   return item => {
     let profile = made.get(item.data.id);
     if (profile) return profile;
-    if (isVocabItem(item)) {
-      const card = item.data;
-      profile = {
-        targets: [getItemSpelling(item)],
-        segments: glossSegments(card.chinese),
-        word: normalizeKey(card.word),
-        synonyms: (card.synonyms ?? []).filter(synonym => typeof synonym === 'string').map(normalizeKey).filter(Boolean),
-        partOfSpeech: partOfSpeechOf(card.sense),
-      };
-    } else {
-      const data = item.data as SentenceData;
-      sourceOf ??= sentenceSourceResolver(items);
-      const source = sourceOf(data.sourceWord, data.sourceSense);
-      const asked = (data.sourceWord || '').toLowerCase().trim();
-      const targets = new Set([asked, source ? getItemSpelling(source) : ''].filter(Boolean));
-      profile = { targets: [...targets], segments: [], word: '', synonyms: [], partOfSpeech: '' };
-    }
+    const data = item.data as SentenceData;
+    sourceOf ??= sentenceSourceResolver(items);
+    const source = sourceOf(data.sourceWord, data.sourceSense);
+    const asked = (data.sourceWord || '').toLowerCase().trim();
+    profile = { targets: [...new Set([asked, source ? getItemSpelling(source) : ''].filter(Boolean))] };
     made.set(item.data.id, profile);
     return profile;
   };
@@ -231,7 +167,7 @@ const emptyTheme = (themeId: string | null): ThemePlan & { candidates: StoredIte
   themeId, newCount: 0, practicingCount: 0, sayableCount: 0, total: 0, recentCount: 0, nextSet: [], candidates: [],
 });
 
-/** The theme with the highest score among those with new items, ties to the lower id; null when none has any. */
+/** The theme with the highest score among those with new sentences, ties to the lower id; null when none has any. */
 function bestTheme(
   pools: ReadonlyMap<string, readonly StoredItem[]>,
   recentCounts: ReadonlyMap<string, number>,
@@ -252,7 +188,7 @@ function bestTheme(
 }
 
 /**
- * The plan for Today from the library, the theme map and this device's state. Unsorted items are never picked; their
+ * The plan for Today from the library, the theme map and this device's state. Unsorted sentences are never picked; their
  * set is offered only from the themes browser (`unsorted.nextSet`).
  */
 export function planLoop({ items, themeOf, now, recentStarts, pin }: PlanInput): LoopPlan {
@@ -297,14 +233,15 @@ export function planLoop({ items, themeOf, now, recentStarts, pin }: PlanInput):
   }
   const { candidates: _unsortedCandidates, ...unsortedPlan } = unsorted;
 
-  // Today's theme: the pin while it is today's and its theme still has new items, else the best theme now.
+  // Today's theme: the pin while it is today's and its theme still has new sentences, else the best theme now.
   const day = localDayKey(now);
   const pinned = pin && pin.day === day && (pools.get(pin.themeId)?.length ?? 0) > 0 ? pin.themeId : null;
   const todayTheme = pinned ?? bestTheme(pools, recentCounts, recentStarts, now);
   if (todayTheme === null) return { themes: plans, unsorted: unsortedPlan, today: null, pin: null, upNext: [], awaitingTranslation };
   const today: PlannedSet = { themeId: todayTheme, itemIds: plans.get(todayTheme)?.nextSet ?? [] };
 
-  // Up next: each set as if the ones before it were started now, its items gone from its pool and its theme held back.
+  // Up next: each set as if the ones before it were started now, its sentences gone from its pool and its theme held
+  // back.
   const upNext: PlannedSet[] = [];
   const starts: Record<string, number> = { ...recentStarts, [todayTheme]: now };
   const remaining = new Map(pools);

@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { IDBKeyRange, indexedDB } from 'fake-indexeddb';
-import type { ThemesResponse } from '../../server/src/shared/item-themes.ts';
+import { THEMES, type ThemesResponse } from '../../server/src/shared/item-themes.ts';
+import { sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
 
 Object.assign(globalThis, { indexedDB, IDBKeyRange });
 
 const {
-  applyThemeRows, createThemeSync, idbThemeStore, loadCachedThemes, refreshThemes, sortingPercent, THEME_POLL_MS,
+  applyThemeRows, createThemeSync, idbThemeStore, loadCachedThemes, refreshThemes, sortingPercent, sortingProgress, THEME_POLL_MS,
 } = await import('../../services/learningLoop/themeMap.ts');
+const { planLoop } = await import('../../services/learningLoop/planner.ts');
 type ThemeStore = import('../../services/learningLoop/themeMap.ts').ThemeStore;
 type ThemeState = import('../../services/learningLoop/themeMap.ts').ThemeState;
 const { META_STORE } = await import('../../services/idb.ts');
@@ -108,11 +110,31 @@ test('a refresh whose keeping fails still returns the map, and one whose request
   await assert.rejects(refreshThemes('u', null, server({ 0: new Error('offline') }).fetch, failing), /offline/);
 });
 
-test('sorting progress is the share of items sorted among those sorted or pending', () => {
-  assert.equal(sortingPercent(state(1, [['a', 'x'], ['b', 'y']]), 6), 25);
-  assert.equal(sortingPercent(null, 10), 0);
-  assert.equal(sortingPercent(state(1, [['a', 'x']]), 0), 100);
-  assert.equal(sortingPercent(null, 0), 100);
+test('sorting progress is the share of sentences sorted among those sorted or pending', () => {
+  assert.equal(sortingPercent(2, 6), 25);
+  assert.equal(sortingPercent(0, 10), 0);
+  assert.equal(sortingPercent(1, 0), 100);
+  assert.equal(sortingPercent(0, 0), 100);
+});
+
+test('sorting progress counts the loop\'s sentences in a known theme, never the rows a kept map holds for words', () => {
+  const [first, second] = THEMES.map(theme => theme.id);
+  const words = Array.from({ length: 60 }, (_, i) => vocabItem(`w${i}`, `word${i}`));
+  const items = [
+    sentenceItem('sorted-1', 'One.'), sentenceItem('sorted-2', 'Two.'), sentenceItem('waiting', 'Not sorted yet.'),
+    sentenceItem('retired', 'In a theme this build doesn\'t know.'), sentenceItem('untranslated', 'No translation.', { translation: null }),
+    ...words,
+  ];
+  // The map an older build kept: the words its sweep sorted beside the sentences sorted so far.
+  const themeOf = new Map<string, string>([
+    ['sorted-1', first], ['sorted-2', second], ['retired', 'a-retired-theme'], ['untranslated', first],
+    ...words.map(word => [word.data.id, first] as [string, string]),
+  ]);
+  const plan = planLoop({ items, themeOf, now: Date.UTC(2026, 10, 18), recentStarts: {}, pin: null });
+  assert.equal(sortingProgress(plan, { pending: 2 }), 50, 'two sentences sorted, two waiting; the map\'s size would say 96%');
+  assert.equal(sortingProgress(plan, { pending: 6 }), 25);
+  assert.equal(sortingProgress(plan, { pending: 0 }), null, 'nothing left to sort');
+  assert.equal(sortingProgress(plan, null), null, 'no refresh yet');
 });
 
 /** Timers run by hand. */

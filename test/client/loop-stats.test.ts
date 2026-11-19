@@ -14,31 +14,32 @@ import {
   todayAction,
   todaySetCount,
 } from '../../services/learningLoop/stats.ts';
-import { DAY, HOUR, practicing, reviewed, sayable, sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
+import { DAY, HOUR, passive, practicing, reviewed, sayable, sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
 
 const NOW = new Date(2026, 10, 18, 15, 0).getTime();
 const MIDNIGHT = localDayStart(NOW);
 
 let nextEvent = 0;
 const event = (itemId: string, reviewedAt: number, extra: Partial<ReviewEvent> & { taskType?: ReviewTaskType } = {}): ReviewEvent => ({
-  id: `e${nextEvent++}`, itemId, itemType: 'vocab', reviewedAt, previousStep: 0, nextStep: 1, rating: 'good',
+  id: `e${nextEvent++}`, itemId, itemType: 'sentence', reviewedAt, previousStep: 0, nextStep: 1, rating: 'good',
   taskType: 'triage', sessionId: 'set:s1', ...extra,
 });
 const history = (recent: ReviewEvent[]): ReviewHistory => ({ recent, olderTimes: [], olderCount: 0 });
 
-test('today\'s count is the distinct items first met in a set since local midnight', () => {
+test('today\'s count is the distinct sentences decided in a set since local midnight, whatever reviews they had before', () => {
   const recent = [
     event('a', MIDNIGHT + HOUR),
-    event('a', MIDNIGHT + 2 * HOUR, { rating: 'easy' }), // met again after Back: still one item
+    event('a', MIDNIGHT + 2 * HOUR, { rating: 'easy', previousStep: 1, nextStep: 2 }), // met again after Back: still one
     event('b', NOW, { rating: 'again', sessionId: 'set:s2' }),
     event('c', MIDNIGHT - 1), // yesterday
-    event('d', MIDNIGHT + HOUR, { previousStep: 3, nextStep: 4 }), // not its first review
+    event('d', MIDNIGHT + HOUR, { previousStep: 3, nextStep: 4 }), // Got it'd three times in the Sentences tab first
     event('e', MIDNIGHT + HOUR, { taskType: 'speak', sessionId: 'set:s1' }), // the round
-    event('f', MIDNIGHT + HOUR, { sessionId: undefined }), // the practice toggle
+    event('f', MIDNIGHT + HOUR, { sessionId: undefined }), // the practice pill
     event('g', MIDNIGHT + HOUR, { sessionId: 'practice:p1' }),
-    event('h', localDayStart(NOW, 1)), // stamped tomorrow
+    event('h', MIDNIGHT + HOUR, { taskType: 'quick', sessionId: undefined }), // a Got it
+    event('i', localDayStart(NOW, 1)), // stamped tomorrow
   ];
-  assert.equal(todaySetCount(history(recent), NOW), 2);
+  assert.equal(todaySetCount(history(recent), NOW), 3);
   assert.equal(todaySetCount(history([]), NOW), 0);
 });
 
@@ -85,33 +86,38 @@ test('the set days load once a day and offset, and a failed load is tried again'
   assert.deepEqual(new Set(loads), new Set([-new Date(NOW).getTimezoneOffset(), -new Date(NOW + DAY).getTimezoneOffset()]));
 });
 
-test('the progress line counts what you can say (and this week\'s), practice, tomorrow\'s practice and this week\'s saves', () => {
+test('the progress line counts what you can say (and this week\'s), practice, tomorrow\'s practice and this week\'s saved sentences', () => {
+  const line = (id: string, options: Parameters<typeof sentenceItem>[2] = {}) => sentenceItem(id, `A line called ${id}.`, options);
   const items = [
-    vocabItem('say-old', 'a', { srs: sayable(NOW - 30 * DAY) }),
-    vocabItem('say-new', 'b', { srs: sayable(localDayStart(NOW, -6)) }),
-    vocabItem('due', 'c', { srs: practicing(NOW - 9 * DAY, { nextReview: NOW - HOUR, lastReviewDate: MIDNIGHT - DAY }) }),
-    vocabItem('done-today', 'd', { srs: practicing(NOW - 9 * DAY, { nextReview: NOW + DAY, lastReviewDate: MIDNIGHT + HOUR }) }),
-    vocabItem('later', 'e', { srs: practicing(NOW - 9 * DAY, { nextReview: localDayStart(NOW, 2), lastReviewDate: MIDNIGHT - DAY }) }),
-    vocabItem('passive', 'f', { srs: reviewed(NOW - DAY) }),
-    vocabItem('saved', 'g', { savedAt: localDayStart(NOW, -6) }),
-    vocabItem('saved-earlier', 'h', { savedAt: localDayStart(NOW, -7) }),
-    sentenceItem('sentence', 'A {{line}}.', { translation: null, savedAt: NOW - HOUR }),
+    line('say-old', { srs: sayable(NOW - 30 * DAY) }),
+    line('say-new', { srs: sayable(localDayStart(NOW, -6)) }),
+    line('due', { srs: practicing(NOW - 9 * DAY, { nextReview: NOW - HOUR, lastReviewDate: MIDNIGHT - DAY }) }),
+    line('done-today', { srs: practicing(NOW - 9 * DAY, { nextReview: NOW + DAY, lastReviewDate: MIDNIGHT + HOUR }) }),
+    line('later', { srs: practicing(NOW - 9 * DAY, { nextReview: localDayStart(NOW, 2), lastReviewDate: MIDNIGHT - DAY }) }),
+    line('passive', { srs: passive(NOW - DAY) }),
+    line('got-it', { srs: reviewed(NOW - DAY) }),
+    line('saved', { savedAt: localDayStart(NOW, -6) }),
+    line('saved-earlier', { savedAt: localDayStart(NOW, -7) }),
+    line('untranslated', { translation: null, savedAt: NOW - HOUR }),
+    vocabItem('word', 'saved this week', { savedAt: NOW - HOUR }),
+    vocabItem('word-practicing', 'from before', { srs: practicing(NOW - 9 * DAY, { nextReview: NOW - HOUR, lastReviewDate: MIDNIGHT - DAY }) }),
+    vocabItem('word-sayable', 'from before', { srs: sayable(NOW - DAY) }),
     sentenceItem('real-life-sentence:x:y:01', 'Line.', { catalogKind: 'real-life', catalogSentenceId: 'x:y:01', catalogCollectionId: 'x', savedAt: NOW }),
-    vocabItem('gone', 'i', { isDeleted: true, savedAt: NOW, srs: sayable(NOW) }),
-    vocabItem('kept', 'j', { isArchived: true, savedAt: NOW, srs: practicing(NOW, { nextReview: NOW - 1, lastReviewDate: MIDNIGHT - DAY }) }),
+    line('gone', { isDeleted: true, savedAt: NOW, srs: sayable(NOW) }),
+    line('kept', { isArchived: true, savedAt: NOW, srs: practicing(NOW, { nextReview: NOW - 1, lastReviewDate: MIDNIGHT - DAY }) }),
   ];
   assert.deepEqual(loopProgress(items, NOW), {
     sayable: 2, sayableThisWeek: 1, practicing: 3, practiceDue: 1, tomorrow: 2, savedThisWeek: 2,
   });
 });
 
-test('sorted this week counts each item\'s first triage, in a set or with the toggle, over today and the six days before', () => {
+test('sorted this week counts each sentence decided by a triage, in a set or with the pill, over today and the six days before', () => {
   const weekStart = localDayStart(NOW, -6);
   const recent = [
     event('a', weekStart), event('a', NOW), event('b', NOW, { sessionId: undefined }),
-    event('c', weekStart - 1), event('d', NOW, { previousStep: 2 }), event('e', NOW, { taskType: 'quick', sessionId: undefined }),
+    event('c', weekStart - 1), event('d', NOW, { previousStep: 2, nextStep: 3 }), event('e', NOW, { taskType: 'quick', sessionId: undefined }),
   ];
-  assert.equal(sortedThisWeek(history(recent), NOW), 2);
+  assert.equal(sortedThisWeek(history(recent), NOW), 3, 'a, b, and d, which had two reviews before');
 });
 
 test('the plan offers practice while any is due, then a set until the goal is met, then done', () => {
@@ -129,10 +135,10 @@ test('the plan offers practice while any is due, then a set until the goal is me
   assert.equal(isPracticeFirst(40), true);
 });
 
-test('the practice count next changes when an item not reviewed today falls due, or at midnight', () => {
+test('the practice count next changes when a sentence not reviewed today falls due, or at midnight', () => {
   const tonight = localDayStart(NOW, 1);
   const item = (id: string, nextReview: number, lastReviewDate = MIDNIGHT - DAY) =>
-    vocabItem(id, id, { srs: practicing(NOW - 9 * DAY, { nextReview, lastReviewDate }) });
+    sentenceItem(id, `Practicing ${id}.`, { srs: practicing(NOW - 9 * DAY, { nextReview, lastReviewDate }) });
   assert.equal(nextPracticeClockChange([], NOW), tonight);
   assert.equal(nextPracticeClockChange([item('a', NOW + 2 * HOUR), item('b', NOW + HOUR)], NOW), NOW + HOUR);
   // Already due, due after midnight, reviewed today (its 10-minute step), or not in practice: nothing before midnight.
@@ -140,7 +146,9 @@ test('the practice count next changes when an item not reviewed today falls due,
     item('due', NOW - HOUR),
     item('later', tonight + HOUR),
     item('today', NOW + 10 * 60_000, MIDNIGHT + HOUR),
-    vocabItem('passive', 'passive', { srs: reviewed(MIDNIGHT - DAY, { nextReview: NOW + HOUR }) }),
+    sentenceItem('passive', 'Kept passive.', { srs: passive(MIDNIGHT - DAY, { nextReview: NOW + HOUR }) }),
+    sentenceItem('got-it', 'Got it.', { srs: reviewed(MIDNIGHT - DAY, { nextReview: NOW + HOUR }) }),
+    vocabItem('word', 'from before', { srs: practicing(NOW - 9 * DAY, { nextReview: NOW + HOUR, lastReviewDate: MIDNIGHT - DAY }) }),
     { ...item('kept', NOW + HOUR), isArchived: true },
   ];
   assert.equal(nextPracticeClockChange(unchanged, NOW), tonight);

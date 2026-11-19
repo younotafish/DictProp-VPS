@@ -29,11 +29,11 @@ const actionLabel = (action: SummaryAction): string =>
 export interface LoopSummaryProps {
   /** The set's theme, or null for a practice session. */
   theme: ThemeLabel | null;
-  /** 'Set complete · 14 met', 'Ended early · 6 of 14 met', 'Practice complete · 20 items'. */
+  /** 'Set complete · 14 met', 'Ended early · 6 of 14 met', 'Practice complete · 20 sentences'. */
   headline: string;
   set?: SetSummary;
   practice?: PracticeSummary;
-  /** The items this practice made ones you can say, by name. */
+  /** The sentences this practice made ones you can say, as they read. */
   graduated: readonly string[];
   /** Practice due by the end of tomorrow. */
   tomorrow: number;
@@ -52,10 +52,10 @@ export interface LoopSummaryProps {
 }
 
 /**
- * The end of a set or a practice session (DESIGN-v2 §6). A set's: how many items you can say, keep passive and now
+ * The end of a set or a practice session (DESIGN-v2 §6). A set's: how many sentences you can say, keep passive and now
  * practice, and how its round went. A practice session's: how many came on the first try, with a hint or not yet, the
- * recall rate, and the items it made ones you can say. Both: today's goal and tomorrow's practice, an undo for the last
- * answer, Resume for a session ended early, and what to do next, the primary first.
+ * recall rate, and the sentences it made ones you can say. Both: today's goal and tomorrow's practice, an undo for the
+ * last answer, Resume for a session ended early, and what to do next, the primary first.
  */
 export function LoopSummary(props: LoopSummaryProps) {
   const { set, practice, actions } = props;
@@ -104,9 +104,9 @@ export function LoopSummary(props: LoopSummaryProps) {
             {props.graduated.length > 0 && (
               <section className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
                 <h3 className="text-sm font-semibold text-emerald-800">Can say it now</h3>
-                <ul className="mt-2 flex flex-wrap gap-2">
-                  {props.graduated.map(word => (
-                    <li key={word} className="rounded-full bg-white px-2.5 py-1 text-sm text-emerald-800">{word}</li>
+                <ul className="mt-2 space-y-1.5">
+                  {props.graduated.map((sentence, index) => (
+                    <li key={index} className="rounded-lg bg-white px-3 py-2 text-sm leading-snug text-emerald-800">{sentence}</li>
                   ))}
                 </ul>
               </section>
@@ -118,7 +118,7 @@ export function LoopSummary(props: LoopSummaryProps) {
           <GoalRing count={props.todayCount} />
           <div className="min-w-0">
             <p className="font-semibold text-slate-800">
-              <span className="tabular-nums">{props.todayCount ?? '—'}</span> of {DAILY_SET_GOAL} new items today
+              <span className="tabular-nums">{props.todayCount ?? '—'}</span> of {DAILY_SET_GOAL} new sentences today
             </p>
             <p className="text-sm text-slate-500">Tomorrow: <span className="tabular-nums">{props.tomorrow}</span> to practice</p>
           </div>

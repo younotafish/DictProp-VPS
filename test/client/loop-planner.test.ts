@@ -1,21 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { StoredItem } from '../../types.ts';
+import type { SRSData, StoredItem } from '../../types.ts';
 import { THEMES } from '../../server/src/shared/item-themes.ts';
-import { glossSegments, planLoop, setSize, SET_START_PENALTY_MS, themeScore, type PlanInput } from '../../services/learningLoop/planner.ts';
+import { planLoop, setSize, SET_START_PENALTY_MS, themeScore, type PlanInput } from '../../services/learningLoop/planner.ts';
 import { localDayKey } from '../../services/learningLoop/standing.ts';
 import { DAILY_SET_GOAL } from '../../services/learningLoop/stats.ts';
-import { DAY, HOUR, practicing, reviewed, sayable, sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
+import { DAY, HOUR, passive, practicing, reviewed, sayable, sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
 
 const NOW = new Date(2026, 10, 18, 15, 0).getTime();
 const TODAY = localDayKey(NOW);
 // Theme ids come from the taxonomy, which the designed one replaces: the tests take the first few, in id order.
 const [A, B, C] = THEMES.map(theme => theme.id).sort();
 
-/** `count` new words in `theme`, saved `daysAgo` days back and then a minute apart, the last saved newest. */
-function words(prefix: string, count: number, daysAgo = 30): StoredItem[] {
+/** `count` new sentences, each of its own word, saved `daysAgo` days back and then a minute apart, the last saved newest. */
+function sentences(prefix: string, count: number, daysAgo = 30): StoredItem[] {
   return Array.from({ length: count }, (_, i) =>
-    vocabItem(`${prefix}${i}`, `${prefix}-word-${i}`, { chinese: `${prefix}释义${i}`, savedAt: NOW - daysAgo * DAY + i * 60_000 }));
+    sentenceItem(`${prefix}${i}`, `A ${prefix} line, number ${i}.`, { sourceWord: `${prefix}-word-${i}`, savedAt: NOW - daysAgo * DAY + i * 60_000 }));
 }
 
 function plan(items: StoredItem[], themeOf: Record<string, string>, extra: Partial<PlanInput> = {}) {
@@ -23,8 +23,9 @@ function plan(items: StoredItem[], themeOf: Record<string, string>, extra: Parti
 }
 
 const inTheme = (items: StoredItem[], theme: string) => Object.fromEntries(items.map(item => [item.data.id, theme]));
+const withSrs = (item: StoredItem, srs: Partial<SRSData>): StoredItem => ({ ...item, srs: { ...item.srs, ...srs } });
 
-test('a theme with up to 20 new items gives them all; a bigger one is split into equal sets near 15, none below the day\'s goal', () => {
+test('a theme with up to 20 new sentences gives them all; a bigger one is split into equal sets near 15, none below the day\'s goal', () => {
   const cases: [size: number, set: number][] = [
     [0, 0], [1, 1], [8, 8], [20, 20], [21, 21], [23, 23], [24, 12], [30, 15], [37, 19], [38, 13], [60, 15], [61, 16], [1000, 15],
   ];
@@ -44,105 +45,92 @@ test('a theme scores for its recent saves and its size, and is held back after a
   assert.equal(themeScore({ ...theme, themeId: 'constructor' }, {}, NOW), 22.5, 'starts are looked up as own keys');
 });
 
-test('gloss segments split at Chinese and Latin separators, leave out notes in brackets and single characters', () => {
-  assert.deepEqual(glossSegments('虚假；虚伪；做作'), ['虚假', '虚伪', '做作']);
-  assert.deepEqual(glossSegments('（正式文件的）序言；开篇说明'), ['序言', '开篇说明']);
-  assert.deepEqual(glossSegments('（in stitches）笑得停不下来；笑得前仰后合'), ['笑得停不下来', '笑得前仰后合']);
-  assert.deepEqual(glossSegments('跑；走, 行走 / 步行、(informal) 溜达'), ['行走', '步行', '溜达']);
-  assert.deepEqual(glossSegments(''), []);
-});
-
-test('the plan counts each theme\'s items by standing, sends unknown and missing themes to Unsorted, and counts sentences waiting for a translation', () => {
+test('the plan counts each theme\'s sentences by standing, sends unknown and missing themes to Unsorted, and counts sentences waiting for a translation', () => {
   const items = [
-    vocabItem('n1', 'one', { savedAt: NOW - DAY }),
-    vocabItem('n2', 'two', { savedAt: NOW - 20 * DAY }),
-    vocabItem('p', 'three', { srs: practicing(NOW - DAY) }),
-    vocabItem('s', 'four', { srs: sayable(NOW - DAY) }),
-    vocabItem('r', 'five', { srs: reviewed(NOW - DAY) }),
-    vocabItem('gone', 'six', { isDeleted: true }),
-    vocabItem('kept', 'seven', { isArchived: true }),
-    vocabItem('future', 'eight'),
-    vocabItem('loose', 'nine'),
+    sentenceItem('n1', 'One.', { savedAt: NOW - DAY }),
+    sentenceItem('n2', 'Two.', { savedAt: NOW - 20 * DAY }),
+    sentenceItem('got-it', 'Got it in the Sentences tab.', { srs: reviewed(NOW - DAY) }),
+    sentenceItem('p', 'Practicing.', { srs: practicing(NOW - DAY) }),
+    sentenceItem('s', 'Can say it.', { srs: sayable(NOW - DAY) }),
+    sentenceItem('kept-passive', 'Kept passive.', { srs: passive(NOW - DAY) }),
+    sentenceItem('gone', 'Deleted.', { isDeleted: true }),
+    sentenceItem('kept', 'Archived.', { isArchived: true }),
+    vocabItem('word', 'word', { chinese: '词' }),
+    sentenceItem('future', 'A theme from a newer taxonomy.'),
+    sentenceItem('loose', 'No theme yet.'),
     sentenceItem('untranslated', 'Soon {{translated}}.', { translation: null }),
-    sentenceItem('untranslated-reviewed', 'Old.', { translation: null, srs: reviewed(NOW - DAY) }),
+    sentenceItem('untranslated-got-it', 'Got it, then waiting.', { translation: null, srs: reviewed(NOW - DAY) }),
+    sentenceItem('untranslated-passive', 'Decided, then its translation went.', { translation: null, srs: passive(NOW - DAY) }),
     sentenceItem('untranslated-archived', 'Kept.', { translation: null, isArchived: true }),
     sentenceItem('real-life-sentence:x:y:01', 'Line.', { translation: null, catalogKind: 'real-life', catalogSentenceId: 'x:y:01', catalogCollectionId: 'x' }),
   ];
-  const result = plan(items, { n1: A, n2: A, p: A, s: A, r: A, gone: A, kept: A, future: 'a-theme-from-a-newer-taxonomy' });
+  const result = plan(items, {
+    n1: A, n2: A, 'got-it': A, p: A, s: A, 'kept-passive': A, gone: A, kept: A, word: A, future: 'a-theme-from-a-newer-taxonomy',
+  });
   assert.deepEqual([...result.themes.keys()], [A]);
   const { nextSet, ...counts } = result.themes.get(A)!;
-  assert.deepEqual(counts, { themeId: A, newCount: 2, practicingCount: 1, sayableCount: 1, total: 5, recentCount: 1 });
-  assert.deepEqual(nextSet, ['n1', 'n2']);
+  assert.deepEqual(counts, { themeId: A, newCount: 3, practicingCount: 1, sayableCount: 1, total: 6, recentCount: 1 });
+  assert.deepEqual(nextSet, ['n1', 'n2', 'got-it'], 'the word card in the theme is no part of it');
   assert.deepEqual({ ...result.unsorted, nextSet: [...result.unsorted.nextSet].sort() }, {
     themeId: null, newCount: 2, practicingCount: 0, sayableCount: 0, total: 2, recentCount: 0, nextSet: ['future', 'loose'],
   });
-  assert.equal(result.awaitingTranslation, 1);
+  assert.equal(result.awaitingTranslation, 2, 'new to the loop, a Got it\'d one included');
 });
 
-test('a set takes two thirds from the newest saves and the rest from the oldest', () => {
-  const items = words('a', 30);
+test('a sentence Got it\'d in the Sentences tab enters a set; one decided in Today, passive included, never does', () => {
+  const items = [
+    sentenceItem('fresh', 'Never reviewed.', { sourceWord: 'fresh', savedAt: NOW - 3 * HOUR }),
+    sentenceItem('got-it', 'Got it twice.', { sourceWord: 'got', savedAt: NOW - 2 * HOUR, srs: reviewed(NOW - DAY, { totalReviews: 2, stability: 30 }) }),
+    sentenceItem('passive', 'Kept passive.', { sourceWord: 'kept', savedAt: NOW - HOUR, srs: passive(NOW - DAY) }),
+    sentenceItem('practicing', 'Practicing.', { sourceWord: 'practice', savedAt: NOW - HOUR, srs: practicing(NOW - DAY) }),
+    sentenceItem('sayable', 'Can say it.', { sourceWord: 'say', savedAt: NOW - HOUR, srs: sayable(NOW - DAY) }),
+  ];
+  const result = plan(items, inTheme(items, A));
+  assert.deepEqual(result.today, { themeId: A, itemIds: ['got-it', 'fresh'] });
+  assert.equal(result.themes.get(A)?.newCount, 2);
+  assert.equal(result.themes.get(A)?.total, 5);
+});
+
+test('a set takes two thirds from the newest saves and the rest from the oldest, in the order filling them gives', () => {
+  const items = sentences('a', 30);
   const { today } = plan(items, inTheme(items, A));
-  // 30 new items make two sets of 15: the newest 10 (a29 back to a20), then the oldest 5 (a0 up to a4).
+  // 30 new sentences make two sets of 15: the newest 10 (a29 back to a20), then the oldest 5 (a0 up to a4).
   assert.deepEqual(today, { themeId: A, itemIds: ['a29', 'a28', 'a27', 'a26', 'a25', 'a24', 'a23', 'a22', 'a21', 'a20', 'a0', 'a1', 'a2', 'a3', 'a4'] });
 });
 
-test('filling a set skips a second meaning of a spelling, which stays for a later set', () => {
+test('filling a set skips a second sentence of a word, which stays for a later set', () => {
   const items = [
-    vocabItem('lead-verb', 'lead', { sense: 'verb: guide', savedAt: NOW - 3 * HOUR }),
-    vocabItem('lead-metal', 'Lead ', { sense: 'noun: metal', savedAt: NOW - 2 * HOUR }),
-    vocabItem('walk', 'walk', { savedAt: NOW - HOUR }),
+    sentenceItem('lead-1', 'She will {{lead}} the team.', { sourceWord: 'lead', savedAt: NOW - 3 * HOUR }),
+    sentenceItem('lead-2', 'Who {{leads}} today?', { sourceWord: 'Lead ', savedAt: NOW - 2 * HOUR }),
+    sentenceItem('walk', 'Let\'s {{walk}}.', { sourceWord: 'walk', savedAt: NOW - HOUR }),
   ];
   const result = plan(items, inTheme(items, A));
-  assert.deepEqual(result.today?.itemIds, ['walk', 'lead-metal']);
-  assert.equal(result.themes.get(A)?.newCount, 3, 'the skipped meaning is still new in the theme');
-  assert.deepEqual(result.upNext, [{ themeId: A, itemIds: ['lead-verb'] }], 'the next set from the theme takes it');
+  assert.deepEqual(result.today?.itemIds, ['walk', 'lead-2']);
+  assert.equal(result.themes.get(A)?.newCount, 3, 'the skipped sentence is still new in the theme');
+  assert.deepEqual(result.upNext, [{ themeId: A, itemIds: ['lead-1'] }], 'the next set from the theme takes it');
 });
 
-test('a sentence and the card it came from go to different sets, matched by spelling, sense or a listed form', () => {
+test('two sentences that reach one card, by its spelling, sense or a listed form, go to different sets', () => {
   const items = [
-    vocabItem('run', 'run', { sense: 'verb: move fast', forms: ['ran', 'running'], savedAt: NOW - 5 * HOUR }),
-    sentenceItem('s-ran', 'He {{ran}} home.', { sourceWord: 'ran', savedAt: NOW - 4 * HOUR }),
-    vocabItem('run-noun', 'run', { sense: 'noun: a jog', savedAt: NOW - 3 * HOUR }),
-    sentenceItem('s-make-time', 'She is {{making time}} for it.', { sourceWord: 'making time', savedAt: NOW - 2 * HOUR }),
-    vocabItem('make-time', 'make time', { forms: ['making time'], savedAt: NOW - HOUR }),
+    vocabItem('run', 'run', { sense: 'verb: move fast', forms: ['ran', 'running'], savedAt: NOW - 9 * HOUR }),
+    vocabItem('make-time', 'make time', { forms: ['making time'], savedAt: NOW - 9 * HOUR }),
+    sentenceItem('s-ran', 'He {{ran}} home.', { sourceWord: 'ran', savedAt: NOW - 5 * HOUR }),
+    sentenceItem('s-run', 'I {{run}} every morning.', { sourceWord: 'run', savedAt: NOW - 4 * HOUR }),
+    sentenceItem('s-making-time', 'She is {{making time}} for it.', { sourceWord: 'making time', savedAt: NOW - 3 * HOUR }),
+    sentenceItem('s-make-time', 'Please {{make time}} for this.', { sourceWord: 'make time', savedAt: NOW - 2 * HOUR }),
     sentenceItem('s-other', 'An {{unrelated}} line.', { sourceWord: 'unrelated', savedAt: NOW }),
   ];
   const result = plan(items, inTheme(items, A));
-  // Newest first: s-other, make-time (s-make-time asks for it through its forms), run-noun (s-ran asks for 'run'
-  // through the verb's forms, and the verb is another meaning of it).
-  assert.deepEqual(result.today?.itemIds, ['make-time', 'run-noun', 's-other']);
-  assert.deepEqual(result.upNext.map(set => set.itemIds), [['s-make-time', 's-ran'], ['run']]);
-});
-
-test('two cards whose glosses share a segment, or that list each other as synonyms, go to different sets', () => {
-  const items = [
-    vocabItem('alliance', 'alliance', { chinese: '联盟；同盟', savedAt: NOW - 4 * HOUR }),
-    vocabItem('coalition', 'coalition', { chinese: '（政党的）联盟', savedAt: NOW - 3 * HOUR }),
-    vocabItem('glad', 'glad', { chinese: '高兴的', synonyms: ['Happy'], savedAt: NOW - 2 * HOUR }),
-    vocabItem('happy', 'happy', { chinese: '快乐的', savedAt: NOW - HOUR }),
-    vocabItem('joyful', 'joyful', { chinese: '喜悦的', savedAt: NOW - 30 * 60_000 }),
-    vocabItem('cheerful', 'cheerful', { chinese: '开朗的', savedAt: NOW - 20 * 60_000 }),
-    vocabItem('elated', 'elated', { chinese: '兴高采烈的', synonyms: ['cheerful'], savedAt: NOW - 10 * 60_000 }),
-  ];
-  const result = plan(items, inTheme(items, A));
-  // Newest first: elated (lists cheerful), joyful, happy (glad lists it), coalition (alliance shares 联盟).
-  assert.deepEqual(result.today?.itemIds, ['elated', 'joyful', 'happy', 'coalition']);
-  assert.deepEqual(result.upNext[0], { themeId: A, itemIds: ['cheerful', 'glad', 'alliance'] });
-});
-
-test('in a set the words come first, their parts of speech taking turns where they can, then the sentences', () => {
-  const pos = (id: string, sense: string, minutes: number) => vocabItem(id, id, { sense, savedAt: NOW - minutes * 60_000 });
-  const items = [
-    pos('n1', 'noun: a', 1), pos('n2', 'noun: b', 2), sentenceItem('s1', 'A {{line}}.', { sourceWord: 'line', savedAt: NOW - 3 * 60_000 }),
-    pos('n3', 'noun: c', 4), pos('v1', 'verb: d', 5), pos('v2', 'verb: e', 6), pos('a1', 'adjective: f', 7),
-  ];
-  assert.deepEqual(plan(items, inTheme(items, A)).today?.itemIds, ['n1', 'v1', 'n2', 'v2', 'n3', 'a1', 's1']);
+  // Newest first: s-other, s-make-time (s-making-time reaches its card through a form), s-run (s-ran reaches 'run'
+  // through the card's forms).
+  assert.deepEqual(result.today?.itemIds, ['s-other', 's-make-time', 's-run']);
+  assert.deepEqual(result.upNext.map(set => set.itemIds), [['s-making-time', 's-ran']]);
 });
 
 test('today\'s set comes from the best theme, and Unsorted is never picked however big it is', () => {
-  const a = words('a', 12, 30);
-  const b = words('b', 12, 1); // saved yesterday: 12 recent saves
-  const loose = words('u', 50, 1);
+  const a = sentences('a', 12, 30);
+  const b = sentences('b', 12, 1); // saved yesterday: 12 recent saves
+  const loose = sentences('u', 50, 1);
   const result = plan([...a, ...b, ...loose], { ...inTheme(a, A), ...inTheme(b, B) });
   assert.equal(result.today?.themeId, B);
   assert.deepEqual(result.pin, { day: TODAY, themeId: B });
@@ -152,59 +140,69 @@ test('today\'s set comes from the best theme, and Unsorted is never picked howev
   // Recently started, B is held back for two days.
   assert.equal(plan([...a, ...b], { ...inTheme(a, A), ...inTheme(b, B) }, { recentStarts: { [B]: NOW - HOUR } }).today?.themeId, A);
   // Equal scores go to the lower id.
-  const c = words('c', 12, 30);
+  const c = sentences('c', 12, 30);
   assert.equal(plan([...a, ...c], { ...inTheme(a, A), ...inTheme(c, C) }).today?.themeId, A < C ? A : C);
   assert.deepEqual(plan(loose, {}), { themes: new Map(), unsorted: plan(loose, {}).unsorted, today: null, pin: null, upNext: [], awaitingTranslation: 0 });
 });
 
-test('the day pin keeps today\'s theme while it has new items, and gives way on a new day or once they run out', () => {
-  const a = words('a', 12, 30);
-  const b = words('b', 12, 1);
+test('the day pin keeps today\'s theme while it has new sentences, and gives way on a new day or once they are all decided', () => {
+  const a = sentences('a', 12, 30);
+  const b = sentences('b', 12, 1);
   const themeOf = { ...inTheme(a, A), ...inTheme(b, B) };
   // B scores higher, but A is pinned for today.
   const pinned = plan([...a, ...b], themeOf, { pin: { day: TODAY, themeId: A } });
   assert.equal(pinned.today?.themeId, A);
   assert.deepEqual(pinned.pin, { day: TODAY, themeId: A });
   assert.equal(plan([...a, ...b], themeOf, { pin: { day: localDayKey(NOW - DAY), themeId: A } }).today?.themeId, B, 'yesterday\'s pin');
-  const metA = a.map(item => ({ ...item, srs: { ...item.srs, ...reviewed(NOW - HOUR) } }));
-  const repicked = plan([...metA, ...b], themeOf, { pin: { day: TODAY, themeId: A } });
-  assert.deepEqual(repicked.pin, { day: TODAY, themeId: B }, 'A has no new items left');
+  const gotIt = a.map(item => withSrs(item, reviewed(NOW - HOUR)));
+  assert.deepEqual(plan([...gotIt, ...b], themeOf, { pin: { day: TODAY, themeId: A } }).pin, { day: TODAY, themeId: A }, 'Got it decides nothing');
+  const decided = a.map(item => withSrs(item, passive(NOW - HOUR)));
+  assert.deepEqual(plan([...decided, ...b], themeOf, { pin: { day: TODAY, themeId: A } }).pin, { day: TODAY, themeId: B }, 'A has no new sentence left');
   assert.equal(plan([...a, ...b], themeOf, { pin: { day: TODAY, themeId: 'retired-theme' } }).today?.themeId, B);
 });
 
-test('up next simulates three more sets, each holding its theme back, and a theme with items left can come round again', () => {
-  const a = words('a', 40, 1);
-  const b = words('b', 12, 1);
-  const c = words('c', 10, 30);
+test('up next simulates three more sets, each holding its theme back, and a theme with sentences left can come round again', () => {
+  const a = sentences('a', 40, 1);
+  const b = sentences('b', 12, 1);
+  const c = sentences('c', 10, 30);
   const result = plan([...a, ...b, ...c], { ...inTheme(a, A), ...inTheme(b, B), ...inTheme(c, C) });
   assert.equal(result.today?.themeId, A);
   // A's 40 make three sets of 14; held back after today's, it comes round again once B and C are used up, with 26 left.
   assert.equal(result.today?.itemIds.length, 14);
   assert.deepEqual(result.upNext.map(set => [set.themeId, set.itemIds.length]), [[B, 12], [C, 10], [A, 13]]);
   const all = [result.today!, ...result.upNext].flatMap(set => set.itemIds);
-  assert.equal(new Set(all).size, all.length, 'no item is in two sets');
-  // With fewer themes the simulation stops when no new item is left.
-  const only = words('o', 5);
+  assert.equal(new Set(all).size, all.length, 'no sentence is in two sets');
+  // With fewer themes the simulation stops when no new sentence is left.
+  const only = sentences('o', 5);
   assert.deepEqual(plan(only, inTheme(only, A)).upNext, []);
 });
 
 test('the plan is the same whatever order the library holds the items in', () => {
-  const items = [...words('a', 25, 3), ...words('b', 9, 1), vocabItem('dup', 'a-word-3', { savedAt: NOW - HOUR })];
-  const themeOf = { ...inTheme(items, A), ...inTheme(words('b', 9, 1), B) };
+  const b = sentences('b', 9, 1);
+  const items = [
+    ...sentences('a', 25, 3), ...b, vocabItem('card', 'a-word-3', { savedAt: NOW - HOUR }),
+    sentenceItem('dup', 'Another a line.', { sourceWord: 'a-word-3', savedAt: NOW - HOUR }),
+  ];
+  const themeOf = { ...inTheme(items, A), ...inTheme(b, B) };
   const forward = plan(items, themeOf);
   const backward = plan([...items].reverse(), themeOf);
   assert.deepEqual(backward, forward);
 });
 
-test('planning a library of 17,000 items stays fast: items are compared only with the set being filled', () => {
-  const items = Array.from({ length: 17_000 }, (_, i) => vocabItem(`i${i}`, `word${i}`, {
-    chinese: `释义${i % 997}；说明${i}`, synonyms: [`word${(i * 7) % 17_000}`], sense: i % 2 ? 'noun: x' : 'verb: y', savedAt: i * 1_000,
+test('planning a library of 20,000 sentences beside 13,000 cards stays fast: sentences are compared only with the set being filled', () => {
+  const cards = Array.from({ length: 13_000 }, (_, i) => vocabItem(`c${i}`, `word${i}`, { forms: [`word${i}s`], savedAt: i * 1_000 }));
+  // Four sentences of each of 5,000 words, half of them reaching their card through a form, some Got it'd or decided.
+  const lines = Array.from({ length: 20_000 }, (_, i) => sentenceItem(`s${i}`, `A line about word${i % 5_000}, number ${i}.`, {
+    sourceWord: i % 2 ? `word${i % 5_000}` : `word${i % 5_000}s`,
+    savedAt: i * 1_000,
+    ...(i % 7 === 0 ? { srs: reviewed(NOW - DAY) } : i % 11 === 0 ? { srs: passive(NOW - DAY) } : {}),
   }));
-  const themeOf = Object.fromEntries(items.slice(0, 12_000).map((item, i) => [item.data.id, THEMES[i % THEMES.length].id]));
+  const items = [...cards, ...lines];
+  const themeOf = Object.fromEntries([...lines.slice(0, 15_000), ...cards].map((item, i) => [item.data.id, THEMES[i % THEMES.length].id]));
   const started = performance.now();
   const result = plan(items, themeOf);
   const elapsed = performance.now() - started;
-  assert.equal(result.unsorted.newCount, 5_000);
-  assert.ok(result.today && result.today.itemIds.length > 0);
+  assert.equal(result.unsorted.total, 5_000);
+  assert.ok(result.today && result.today.itemIds.length >= DAILY_SET_GOAL);
   assert.ok(elapsed < 2_000, `planned in ${Math.round(elapsed)} ms`);
 });

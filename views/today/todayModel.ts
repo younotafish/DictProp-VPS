@@ -1,4 +1,4 @@
-import { isSentenceItem, isVocabItem, type ReviewRating, type SentenceData, type StoredItem } from '../../types';
+import { isSentenceItem, type ReviewRating, type SentenceData, type StoredItem } from '../../types';
 import { THEME_DOMAINS, themeById } from '../../server/src/shared/item-themes';
 import type { LoopCard } from '../../services/learningLoop/cues';
 import type { LoopPlan, PlannedSet, ThemePlan } from '../../services/learningLoop/planner';
@@ -51,13 +51,16 @@ export function todayHandlers(screen: TodayScreen, hasSession: boolean, covered:
   return { keys: screen === 'plan' || inSession, escape: screen === 'themes' || inSession };
 }
 
-/** Items with no theme yet, or one this build doesn't know. */
+/** Sentences with no theme yet, or one this build doesn't know. */
 export const UNSORTED: ThemeLabel = { emoji: '🗂️', title: 'Unsorted' };
 
 export function themeLabel(themeId: string | null): ThemeLabel {
   const theme = themeId === null ? undefined : themeById(themeId);
   return theme ? { emoji: theme.emoji, title: theme.title } : UNSORTED;
 }
+
+/** A count of sentences in words: '1 sentence', '14 sentences'. */
+export const sentenceCount = (count: number): string => `${count} ${count === 1 ? 'sentence' : 'sentences'}`;
 
 /** The plan's date line: 'Wednesday, November 18'. */
 export const formatPlanDate = (now: number): string =>
@@ -85,12 +88,12 @@ export type SetRow =
   /** The load governor: 'Practice first · 46 due'. */
   | { kind: 'practice-first'; due: number }
   | { kind: 'set'; theme: ThemeLabel; size: number }
-  /** No set yet, while the server sorts the library into themes. */
+  /** No set yet, while the server sorts the sentences into themes. */
   | { kind: 'sorting'; percent: number }
   | { kind: 'loading' }
   /** No theme map on this device, and the server out of reach: 'Themes load when you're online.' */
   | { kind: 'offline' }
-  /** Every theme's new items are met. */
+  /** No theme has a new sentence left. */
   | { kind: 'empty' };
 
 export interface PlanCardModel {
@@ -110,7 +113,8 @@ export interface PlanCardInput {
   /** The plan's next set (LoopPlan.today). */
   next: PlannedSet | null;
   themes: ThemesStatus;
-  /** How far the server's sorting has got (sortingPercent), while it still has items to sort; null otherwise. */
+  /** How far the server's sorting has got (themeMap.ts sortingProgress), while it still has sentences to sort; null
+   *  otherwise. */
   sortingPercent: number | null;
 }
 
@@ -133,7 +137,7 @@ export function planCardModel({ progress, todayCount, historyLoaded, next, theme
 }
 
 /**
- * When a practice item answered now comes back to practice: practice waits for the day after a review, so any
+ * When a practice sentence answered now comes back to practice: practice waits for the day after a review, so any
  * interval ending before tomorrow is out reads 'tomorrow', and a longer one 'in 6d', by calendar days.
  */
 export function practiceReturn(nextReview: number, now: number): string {
@@ -142,16 +146,16 @@ export function practiceReturn(nextReview: number, now: number): string {
   return `in ${Math.round((localDayStart(back) - localDayStart(now)) / DAY_MS)}d`;
 }
 
-/** What each of a run card's two buttons leads to, from the item's schedule after each outcome. */
+/** What each of a run card's two buttons leads to, from the sentence's schedule after each outcome. */
 export interface RunCaptions {
   notYet: string;
   gotIt: string;
 }
 
 /**
- * The captions under Not yet and Got it on a run's card. On the first try Not yet records nothing and the item comes
- * back later in the session; Got it is Good, or Hard with the hint, and Good may make it one you can say. On the second
- * try Not yet is Again and Got it is Hard. `next` holds each outcome's nextReview.
+ * The captions under Not yet and Got it on a run's card. On the first try Not yet records nothing and the sentence
+ * comes back later in the session; Got it is Good, or Hard with the hint, and Good may make it one you can say. On the
+ * second try Not yet is Again and Got it is Hard. `next` holds each outcome's nextReview.
  */
 export function runCaptions(
   stage: 'first' | 'second',
@@ -179,6 +183,7 @@ export const MEET_CHOICES: readonly { choice: MeetChoice; label: string; tone: L
 
 /** The line above a card's footer about the review Undo (or, in the Meet, Back) would take back. */
 export interface LoopReceipt {
+  /** The sentence the review was of (itemText). */
   word: string;
   label: string;
   tone: LoopTone;
@@ -190,16 +195,16 @@ export function meetReceipt(word: string, choice: MeetChoice): LoopReceipt {
   return { word, label, tone };
 }
 
-/** A run's recorded answer: Got it (Good), Got it with a hint or on the second try (Hard), or Not yet (Again). */
+/** A run's recorded answer: Got it (Good), Got it with a hint or on the second try (Hard), or Not yet (Again), with where
+ *  the sentence goes. */
 export function runReceipt(word: string, rating: ReviewRating, tries: number, detail: string): LoopReceipt {
   if (rating === 'hard') return { word, label: tries >= 2 ? 'Got it on the second try' : 'Got it with a hint', tone: 'amber', detail };
   if (rating === 'again') return { word, label: 'Not yet', tone: 'rose', detail };
   return { word, label: 'Got it', tone: 'emerald', detail };
 }
 
-/** How an item reads in a receipt or a list: a word card's word, a sentence's text without its markers. */
+/** How a sentence reads in a receipt or a list: its text without its markers ('' for anything else). */
 export function itemText(item: StoredItem): string {
-  if (isVocabItem(item)) return item.data.word.trim();
   return isSentenceItem(item) ? stripSentenceMarkers(item.data.text || '').trim() : '';
 }
 
@@ -241,16 +246,15 @@ export function recordNeedsWrite(previous: LoopSession | null, next: LoopSession
   return loopRecordChanged(previous, next) || (previous?.kind === 'practice' && next.kind === 'practice' && previous.mode !== next.mode);
 }
 
-/** What the answer says aloud: a word in the system voice, a sentence's clip in the voice it was last heard in. */
+/** What the answer says aloud: the sentence's clip, in the voice it was last heard in. */
 export function answerSpeech(item: StoredItem, card: LoopCard): LoopSpeech {
-  if (card.answer.kind === 'word') return { kind: 'word', text: card.answer.word };
   const style = isSentenceItem(item) ? (item.data as SentenceData).preferredSpeechStyle : undefined;
-  return { kind: 'sentence', text: card.answer.text, ...(style ? { style } : {}) };
+  return { text: card.answer.text, ...(style ? { style } : {}) };
 }
 
 /**
- * The sentences the session shows next, up to `limit`, whose clips can be fetched before their answers play: the items
- * still to meet, or the run's next cards. Words read in the system voice, so they need nothing.
+ * The sentences the session shows next, up to `limit`, whose clips can be fetched before their answers play: the
+ * sentences still to meet, or the run's next cards.
  */
 export function upcomingSentences(session: LoopSession, getItem: (id: string) => StoredItem | undefined, limit = 2): LoopSpeech[] {
   const run = runOf(session);
@@ -262,12 +266,12 @@ export function upcomingSentences(session: LoopSession, getItem: (id: string) =>
     if (!item || !isSentenceItem(item)) continue;
     const data = item.data as SentenceData;
     const text = stripSentenceMarkers(data.text || '').trim();
-    if (text) speech.push({ kind: 'sentence', text, ...(data.preferredSpeechStyle ? { style: data.preferredSpeechStyle } : {}) });
+    if (text) speech.push({ text, ...(data.preferredSpeechStyle ? { style: data.preferredSpeechStyle } : {}) });
   }
   return speech;
 }
 
-/** A button on a session's summary: practice the items still due, start the plan's next set, or close. */
+/** A button on a session's summary: practice the sentences still due, start the plan's next set, or close. */
 export type SummaryAction =
   | { kind: 'practice'; count: number }
   | { kind: 'set'; set: PlannedSet; theme: ThemeLabel; label: 'Next set' | 'Start a set' }
@@ -287,7 +291,7 @@ export function summaryActions(kind: LoopSession['kind'], due: number, todayCoun
   return goalOpen ? [set, done] : [done, set];
 }
 
-/** A theme in the themes browser: its numbers, and the set a tap starts (null without a new item). */
+/** A theme in the themes browser: its numbers, and the set a tap starts (null without a new sentence). */
 export interface ThemeRow {
   themeId: string | null;
   theme: ThemeLabel;
@@ -298,7 +302,7 @@ export interface ThemeRow {
   set: PlannedSet | null;
 }
 
-/** The themes browser's domains, each with its themes that hold an item, and Unsorted, when it has any. */
+/** The themes browser's domains, each with its themes that hold a sentence, and Unsorted, when it has any. */
 export interface ThemesBrowserModel {
   domains: { id: string; title: string; emoji: string; themes: ThemeRow[] }[];
   unsorted: ThemeRow | null;
@@ -316,7 +320,7 @@ const themeRow = (plan: ThemePlan, theme: ThemeLabel): ThemeRow => ({
 
 /**
  * The themes browser from the plan, in the taxonomy's order, which never changes, so a theme keeps its place as its
- * numbers move. Themes and domains without an item the loop takes are left out; Unsorted comes last.
+ * numbers move. Themes and domains without a sentence the loop takes are left out; Unsorted comes last.
  */
 export function themesBrowserModel(plan: Pick<LoopPlan, 'themes' | 'unsorted'>): ThemesBrowserModel {
   const domains = THEME_DOMAINS.flatMap(domain => {
@@ -329,7 +333,7 @@ export function themesBrowserModel(plan: Pick<LoopPlan, 'themes' | 'unsorted'>):
   return { domains, unsorted: plan.unsorted.total > 0 ? themeRow(plan.unsorted, UNSORTED) : null };
 }
 
-/** A summary's headline: 'Set complete · 14 met', 'Practice complete · 20 items', or 'Ended early · 6 of 14 met'. */
+/** A summary's headline: 'Set complete · 14 met', 'Practice complete · 20 sentences', or 'Ended early · 6 of 14 met'. */
 export function summaryHeadline(session: LoopSession, endedEarly: boolean): string {
   const total = session.itemIds.length;
   if (session.kind === 'set') {
@@ -337,7 +341,7 @@ export function summaryHeadline(session: LoopSession, endedEarly: boolean): stri
     return endedEarly ? `Ended early · ${met} of ${total} met` : `Set complete · ${met} met`;
   }
   const practiced = session.itemIds.filter(id => session.attempts[id]?.outcome !== undefined).length;
-  return endedEarly ? `Ended early · ${practiced} of ${total} practiced` : `Practice complete · ${practiced} ${practiced === 1 ? 'item' : 'items'}`;
+  return endedEarly ? `Ended early · ${practiced} of ${total} practiced` : `Practice complete · ${sentenceCount(practiced)}`;
 }
 
 /** The plan's offer to take up a session kept from before, when classic Study's was newer and opened instead. */

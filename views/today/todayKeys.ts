@@ -8,7 +8,7 @@
 import type { MeetChoice } from '../../services/learningLoop/session';
 
 /** Which buttons a card's footer shows: the cue's Hint and Reveal, the Meet's three choices, a run's Not yet and Got
- *  it, or one Next (after Practice while it's said twice, and on the last look at an item missed twice). */
+ *  it, or one Next (after Practice while it's said twice, and on the last look at a sentence missed twice). */
 export type TodayFooter = 'cue' | 'meet' | 'encode' | 'run' | 'look';
 
 /** What Today shows, and the facts about the key's target that the table needs. */
@@ -22,8 +22,6 @@ export interface TodayKeyState {
   sayOpen?: boolean;
   /** The answer showed under 350 ms ago, so Enter isn't Got it yet: the second press of a double press. */
   justRevealed?: boolean;
-  /** The answer has an example sentence, which E plays or pauses. */
-  hasExample?: boolean;
   /** The last review (in the Meet, the last choice) can be taken back, and whether that is under way. */
   canUndo: boolean;
   undoing: boolean;
@@ -48,12 +46,10 @@ export type TodayKeyAction =
   | { type: 'hint' }
   | { type: 'choose'; choice: MeetChoice }
   | { type: 'answer'; gotIt: boolean }
-  /** Next: on from saying an item twice, or from the last look. */
+  /** Next: on from saying a sentence twice, or from the last look. */
   | { type: 'next' }
   /** P: say the answer again. */
   | { type: 'play' }
-  /** E: play, pause or resume the answer's example. */
-  | { type: 'example' }
   | { type: 'undo' }
   /** Enter on the plan or a summary: its primary button. */
   | { type: 'primary' }
@@ -81,9 +77,9 @@ const isUndoChord = (event: TodayKeyEvent, isMac: boolean): boolean =>
  *   Meet, 1/← is Practice, 2/↓ Passive and 3/→ Can say it, once the answer shows (3 and → do nothing once a hint closed
  *   Can say it); in a run, 1 is Not yet and 3 Got it, and Enter is Got it too, except as the second press of a double
  *   press within 350 ms of the reveal.
- * - Space or Enter shows the answer, and moves on from saying an item twice or from the last look; H takes the hint;
- *   P says the answer again and E plays its example; U, or ⌘Z while the app's undo pill isn't up, takes back the last
- *   review (Back, in the Meet). On a summary Enter is its primary button and R resumes a session ended early.
+ * - Space or Enter shows the answer, and moves on from saying a sentence twice or from the last look; H takes the
+ *   hint; P says the answer again; U, or ⌘Z while the app's undo pill isn't up, takes back the last review (Back, in
+ *   the Meet). On a summary Enter is its primary button and R resumes a session ended early.
  * - While an undo is under way, answers, choices, the reveal and Next wait: the undo is about to bring back its card.
  * A held key acts once, when pressed; held 1-3 stay the session's, so their repeats don't switch tabs either.
  */
@@ -127,7 +123,6 @@ export function resolveTodayKey(event: TodayKeyEvent, state: TodayKeyState): Tod
   const answerShowing = footer !== undefined && footer !== 'cue';
   if (letter === 'h') return footer === 'cue' && state.canHint && !state.undoing ? { type: 'hint' } : null;
   if (letter === 'p') return answerShowing && !state.undoing ? { type: 'play' } : null;
-  if (letter === 'e') return answerShowing && state.hasExample && !state.undoing ? { type: 'example' } : null;
   if (!pressing) return null;
   if (footer === 'cue') return state.undoing ? { type: 'swallow' } : { type: 'reveal' };
   if (footer === 'encode' || footer === 'look') return state.undoing ? { type: 'swallow' } : { type: 'next' };

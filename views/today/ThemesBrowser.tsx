@@ -4,8 +4,8 @@ import type { PlannedSet } from '../../services/learningLoop/planner';
 import { Chevron } from './TodayPlan';
 import type { ThemeRow, ThemesBrowserModel } from './todayModel';
 
-/** One theme: its emoji and title, what its items stand at, and a thin bar of the share you can say. A theme with new
- *  items is a button that starts its next set; one without is a plain row. */
+/** One theme: its emoji and title, where its sentences stand, and a thin bar of the share you can say. A theme with new
+ *  sentences is a button that starts its next set; one without is a plain row. */
 function ThemeRowView({ row, onStart }: { row: ThemeRow; onStart: (set: PlannedSet) => void }) {
   const share = row.total > 0 ? Math.round((row.sayableCount / row.total) * 100) : 0;
   const body = (
@@ -52,8 +52,8 @@ export interface ThemesBrowserProps {
 }
 
 /**
- * All themes (DESIGN-v2 §8): each domain with the themes that hold an item, in the taxonomy's order, then Unsorted.
- * A tap on a theme with new items starts its next set; Back, or Esc, returns to the plan.
+ * All themes (DESIGN-v2 §8): each domain with the themes that hold a sentence, in the taxonomy's order, then Unsorted.
+ * A tap on a theme with new sentences starts its next set; Back, or Esc, returns to the plan.
  */
 export function ThemesBrowser({ model, onBack, onStart, onScroll }: ThemesBrowserProps) {
   // Unsorted needs no heading of its own: its row says what it is.
@@ -70,7 +70,7 @@ export function ThemesBrowser({ model, onBack, onStart, onScroll }: ThemesBrowse
           </button>
           <h2 className="text-2xl font-bold text-slate-800">All themes</h2>
         </header>
-        {groups.length === 0 && <p className="px-1 text-sm text-slate-500">No themes yet: they appear as your library is sorted.</p>}
+        {groups.length === 0 && <p className="px-1 text-sm text-slate-500">No themes yet: they appear as your sentences are sorted.</p>}
         {groups.map(group => (
           <section key={group.key} className="mt-6 first:mt-0" aria-label={group.title ?? 'Unsorted'}>
             {group.title && <h3 className="mb-2 px-1 text-xs font-bold uppercase tracking-[0.18em] text-slate-400">{group.title}</h3>}

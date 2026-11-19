@@ -10,7 +10,8 @@ import { loopSessionKey, writeLoopSession } from '../../services/learningLoop/se
 import { encodeStudySession } from '../../services/studySessionRecord.ts';
 import { STUDY_SESSION_KEY } from '../../services/studySessionStore.ts';
 import { installFakeMedia } from '../support/audio/fakeMedia.ts';
-import { DAY, HOUR, practicing, reviewed, vocabItem } from '../support/loop-fixtures.ts';
+import { WHAT_COUNTS } from '../../services/learningLoop/cues.ts';
+import { DAY, HOUR, practicing, reviewed, sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
 import { readRepoFile } from '../support/paths.ts';
 
@@ -27,10 +28,14 @@ const THEME = THEME_DOMAINS[0].themes[0];
 const noop = () => {};
 const textOf = (markup: string) => markup.replace(/<[^>]+>/g, ' ').replace(/&#x27;/g, '\'').replace(/\s+/g, ' ').trim();
 
-const NEW_WORDS = ['a', 'b', 'c'].map(id => vocabItem(id, `word-${id}`, { chinese: `词${id}`, definition: `Meaning of ${id}.` }));
-const DUE = ['p1', 'p2'].map(id => vocabItem(id, `practice-${id}`, { srs: practicing(NOW - 3 * DAY, { lastReviewDate: NOW - 2 * DAY, nextReview: NOW - HOUR }) }));
+// Sentences new to the loop, the first Got it'd often enough that a run would ask it at level 2.
+const NEW_SENTENCES = ['a', 'b', 'c'].map(id => sentenceItem(id, `A line about {{word ${id}}}.`, {
+  sourceWord: `word ${id}`, translation: `关于${id}的一句话`, ...(id === 'a' ? { srs: reviewed(NOW - 9 * DAY, { totalReviews: 5, stability: 20 }) } : {}),
+}));
+const DUE = ['p1', 'p2'].map(id => sentenceItem(id, `Practice line ${id}.`, { srs: practicing(NOW - 3 * DAY, { lastReviewDate: NOW - 2 * DAY, nextReview: NOW - HOUR }) }));
+// Card review's words, due the classic way.
 const CARDS = ['r1', 'r2'].map(id => vocabItem(id, `card-${id}`, { srs: reviewed(NOW - 3 * DAY, { nextReview: NOW - HOUR, memoryStrength: 20 }) }));
-const ITEMS: StoredItem[] = [...NEW_WORDS, ...DUE, ...CARDS];
+const ITEMS: StoredItem[] = [...NEW_SENTENCES, ...DUE, ...CARDS];
 
 /** A fresh device for the test, at NOW. */
 function device(t: TestContext): MemoryStorage {
@@ -65,13 +70,14 @@ test('with nothing kept Today opens on its plan, which offers the practice due f
   assert.match(text, /Card review 2 due ›$/);
 });
 
-test('Today takes up its own kept session at its card when it is newer than classic Study\'s', t => {
+test('Today takes up its own kept session at its card when it is newer than classic Study\'s, and meets each sentence at level 1', t => {
   const storage = device(t);
   keepClassic(storage, NOW - 2 * HOUR);
   keepSet(NOW - HOUR);
   const markup = render();
   assert.match(markup, /^<div class="h-full" data-today-mode="set">/);
-  assert.match(textOf(markup), new RegExp(`^${THEME.emoji} ${THEME.title} 1 / 3 Speak Card 1 of 3 Say the word 词a Meaning of a\\. Hint Reveal`));
+  // However strong its Got its made it, the Meet asks with the expression to use, never the picture-only level 2.
+  assert.match(textOf(markup), new RegExp(`^${THEME.emoji} ${THEME.title} 1 / 3 Speak Card 1 of 3 Say the whole sentence 关于a的一句话 Use word a ${WHAT_COUNTS.expression} Hint Reveal`));
 });
 
 test('Today opens Card review on classic Study\'s kept session when that is the newer one', t => {
@@ -93,7 +99,7 @@ test('a kept practice session opens at its card in the mode it runs in', t => {
   })()), USER, NOW - HOUR);
   const markup = render();
   assert.match(markup, /^<div class="h-full" data-today-mode="practice">/);
-  assert.match(textOf(markup), /^Practice 1 \/ 2 Quiet Card 1 of 2 Think of the word/);
+  assert.match(textOf(markup), /^Practice 1 \/ 2 Quiet Card 1 of 2 Think of the whole sentence 译文 p1 /);
 });
 
 test('a kept session Today or Card review couldn\'t take up opens the plan instead', t => {
@@ -105,7 +111,7 @@ test('a kept session Today or Card review couldn\'t take up opens the plan inste
   // Every card of classic Study's session was reviewed since it was kept: Card review would have nothing to show.
   keepClassic(storage, NOW - HOUR);
   const reviewedSince = CARDS.map(card => ({ ...card, srs: { ...card.srs, lastReviewDate: NOW - 30 * 60_000 } }));
-  assert.match(render({ studyItems: reviewedSince, items: [...NEW_WORDS, ...DUE, ...reviewedSince] }), /data-today-mode="plan"/);
+  assert.match(render({ studyItems: reviewedSince, items: [...NEW_SENTENCES, ...DUE, ...reviewedSince] }), /data-today-mode="plan"/);
   assert.match(render({ studyItems: [] }), /data-today-mode="plan"/, 'no cards at all');
 });
 

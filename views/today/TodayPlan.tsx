@@ -3,7 +3,7 @@ import { Brain, Flame, GalleryVerticalEnd, Loader2, Play, Speech, Target, WifiOf
 import type { LoopMode } from '../../services/learningLoop/cues';
 import type { PlannedSet } from '../../services/learningLoop/planner';
 import { DAILY_SET_GOAL, type LoopProgress } from '../../services/learningLoop/stats';
-import { formatPlanDate, type PlanCardModel, type SetRow, type ThemeLabel } from './todayModel';
+import { formatPlanDate, sentenceCount, type PlanCardModel, type SetRow, type ThemeLabel } from './todayModel';
 
 const EYEBROW = 'text-xs font-bold uppercase tracking-[0.18em] text-slate-400';
 
@@ -12,7 +12,7 @@ export const Chevron = ({ className = 'text-slate-300' }: { className?: string }
   <span aria-hidden="true" className={`shrink-0 text-xl leading-none ${className}`}>›</span>
 );
 
-/** The day's goal as a ring: how many new items were met in sets today, of DAILY_SET_GOAL. */
+/** The day's goal as a ring: how many new sentences were met in sets today, of DAILY_SET_GOAL. */
 export function GoalRing({ count, size = 48 }: { count: number | null; size?: number }) {
   const radius = size / 2 - 4;
   const circumference = 2 * Math.PI * radius;
@@ -22,7 +22,7 @@ export function GoalRing({ count, size = 48 }: { count: number | null; size?: nu
       className="relative shrink-0"
       style={{ width: size, height: size }}
       role="img"
-      aria-label={count === null ? 'Today’s goal: loading' : `Today’s goal: ${count} of ${DAILY_SET_GOAL} new items met`}
+      aria-label={count === null ? 'Today’s goal: loading' : `Today’s goal: ${count} of ${DAILY_SET_GOAL} new sentences met`}
     >
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90" aria-hidden="true">
         <circle cx={size / 2} cy={size / 2} r={radius} fill="none" strokeWidth="4" className="stroke-slate-200" />
@@ -76,10 +76,10 @@ function setRowContent(row: SetRow): { icon: React.ReactNode; text: React.ReactN
       icon: <span className="text-base">{row.theme.emoji}</span>,
       text: <><span className="font-semibold text-slate-800">Set</span> · {row.theme.title} · <span className="tabular-nums">{row.size}</span></>,
     };
-    case 'sorting': return { icon: <Loader2 size={16} className="animate-spin text-indigo-500" />, text: <>Sorting your library into themes… <span className="tabular-nums">{row.percent}%</span></> };
+    case 'sorting': return { icon: <Loader2 size={16} className="animate-spin text-indigo-500" />, text: <>Sorting your sentences into themes… <span className="tabular-nums">{row.percent}%</span></> };
     case 'loading': return { icon: <Loader2 size={16} className="animate-spin text-slate-400" />, text: <span className="text-slate-500">Loading themes…</span> };
     case 'offline': return { icon: <WifiOff size={16} className="text-slate-400" />, text: <span className="text-slate-500">Themes load when you’re online.</span> };
-    case 'empty': return { icon: done, text: <span className="text-slate-500">No new items left in your themes</span> };
+    case 'empty': return { icon: done, text: <span className="text-slate-500">No new sentences left in your themes</span> };
   }
 }
 
@@ -103,7 +103,7 @@ export function ModeSwitch({ mode, onChange }: { mode: LoopMode; onChange: (mode
         {option('quiet', 'Quiet', Brain)}
       </div>
       <p className="text-xs text-slate-500">
-        {/* Practice earns Can say it only aloud; meeting an item you already say in daily life is your call in either. */}
+        {/* Practice earns Can say it only aloud; meeting a sentence you already say in daily life is your call in either. */}
         {mode === 'speak' ? 'Say each answer aloud' : 'Think each answer · quiet practice never earns Can say it'}
       </p>
     </div>
@@ -125,9 +125,9 @@ export interface TodayPlanProps {
   /** Whether the themes browser has anything to list. */
   hasThemes: boolean;
   progress: LoopProgress;
-  /** Items first sorted by a triage choice this week; null until the history has loaded. */
+  /** Sentences decided by a triage choice this week; null until the history has loaded. */
   sortedThisWeek: number | null;
-  /** The server's sorting, while it still has items to sort and the set row doesn't already say so. */
+  /** The server's sorting, while it still has sentences to sort and the set row doesn't already say so. */
   sorting: { percent: number; error?: string } | null;
   /** Classic Study's due count, and whether a classic session waits to be taken up. */
   classicDue: number;
@@ -221,7 +221,7 @@ export function TodayPlan(props: TodayPlanProps) {
             {card.set.kind !== 'sorting' && (
               <p className="flex items-center gap-1.5">
                 <Loader2 size={13} aria-hidden="true" className="animate-spin text-indigo-500" />
-                Sorting your library into themes… <span className="tabular-nums">{props.sorting.percent}%</span>
+                Sorting your sentences into themes… <span className="tabular-nums">{props.sorting.percent}%</span>
               </p>
             )}
             {props.sorting.error && <p className="mt-1 text-rose-700">{props.sorting.error}</p>}
@@ -245,7 +245,7 @@ export function TodayPlan(props: TodayPlanProps) {
                     <button
                       type="button"
                       onClick={() => props.onStartSet(set)}
-                      aria-label={`Start set: ${theme.title}, ${set.itemIds.length} items`}
+                      aria-label={`Start set: ${theme.title}, ${sentenceCount(set.itemIds.length)}`}
                       className="flex h-14 w-full items-center gap-3 px-4 text-left hover:bg-slate-50"
                     >
                       <span className="text-xl" aria-hidden="true">{theme.emoji}</span>

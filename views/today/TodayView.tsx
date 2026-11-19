@@ -11,7 +11,7 @@
  */
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { isVocabItem, type ItemGroup, type ReviewHistory, type ReviewRating, type StoredItem } from '../../types';
+import type { ItemGroup, ReviewHistory, ReviewRating, StoredItem } from '../../types';
 import { loadSetDays, loadThemes } from '../../services/api/learningLoop';
 import { loopCard, sourceFormsLookup, type LoopMode } from '../../services/learningLoop/cues';
 import { planLoop, type PlannedSet } from '../../services/learningLoop/planner';
@@ -56,15 +56,15 @@ import {
 } from '../../services/learningLoop/sessionStore';
 import { graduationDots, localDayKey } from '../../services/learningLoop/standing';
 import { loopProgress, loopStreak, nextPracticeClockChange, setDaysLoader, sortedThisWeek, todaySetCount } from '../../services/learningLoop/stats';
-import { createThemeSync, sortingPercent, type ThemeSorting, type ThemeState } from '../../services/learningLoop/themeMap';
+import { createThemeSync, sortingProgress, type ThemeSorting, type ThemeState } from '../../services/learningLoop/themeMap';
 import { previewRatings, updateAfterRating } from '../../services/fsrsScheduler';
 import { warn } from '../../services/logger';
-import { getPlaybackProgress, getPlaybackState, pauseCurrent, prefetchTTS, resumeCurrent, speakNatural, speakWord } from '../../services/neuralTts';
+import { prefetchTTS, speakNatural } from '../../services/neuralTts';
 import { isMacPlatform } from '../../services/platform';
 import { readPendingReviewMutations } from '../../services/reviewQueue';
 import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { countDueSpellings } from '../../services/studyStats';
-import { acceptFooterTap, openCardGroup, undoFailureText, type SessionReview, type UndoFailure } from '../../services/studySession';
+import { acceptFooterTap, undoFailureText, type SessionReview, type UndoFailure } from '../../services/studySession';
 import { decodeStudySession, restoreQueue } from '../../services/studySessionRecord';
 import { readStoredStudySession } from '../../services/studySessionStore';
 import { getTtsStyle, setTtsStyle } from '../../services/ttsSettings';
@@ -111,7 +111,7 @@ export interface TodayViewProps {
   /** The signed-in user, whose session record, pin and set starts this device keeps, and whose outbox tells when a
    *  review has reached the server. */
   userId: string;
-  /** The whole library: Today plans from its words and the learner's own sentences. */
+  /** The whole library: Today plans from the learner's own sentences in it. */
   items: StoredItem[];
   /** Classic Study's cards (useLibraryViews' studyItems), for Card review. */
   studyItems: StoredItem[];
@@ -122,9 +122,9 @@ export interface TodayViewProps {
   /** Takes back a review on the server: false while it's still in the outbox, and a request that fails throws. */
   onUndoReview: (eventId: string) => Promise<boolean>;
   onOpenExampleSentence: (text: string, sourceWord: string, sourceSense?: string) => void;
-  /** Opens the card view on `groups` (App's handleViewStoredItem): ↗ on a word, and Card review's cards. */
+  /** Opens the card view on `groups` (App's handleViewStoredItem), for Card review's cards. */
   onViewCards: (groups: ItemGroup[], groupIndex: number, itemIndex: number) => void;
-  /** Opens saved sentences in their lesson (App's handleViewSentence): ↗ on a sentence. */
+  /** Opens saved sentences in their lesson (App's handleViewSentence): ↗ on a session's card. */
   onOpenSentence: (ordered: StoredItem[], index: number) => void;
   onLazyLoadImage: (itemId: string, imageVersion?: string) => Promise<string | null>;
   /** The app's undo pill is up, so ⌘Z takes back what it offers rather than the session's last review. */
@@ -146,9 +146,7 @@ interface LastReview {
 }
 
 /** The speech engine Today's audio goes through. */
-const LOOP_AUDIO_ENGINE: LoopAudioEngine = {
-  speakNatural, speakWord, getPlaybackState, getPlaybackProgress, pauseCurrent, resumeCurrent, prefetchTTS, getTtsStyle, setTtsStyle,
-};
+const LOOP_AUDIO_ENGINE: LoopAudioEngine = { speakNatural, prefetchTTS, getTtsStyle, setTtsStyle };
 
 /** How long a failed undo is said in the receipt line before the receipt comes back. */
 const UNDO_ERROR_MS = 4_000;
@@ -312,9 +310,11 @@ export function TodayView({
   const currentId = session ? currentItemId(session) : undefined;
   const currentItem = currentId === undefined ? undefined : getItem(currentId);
   const formsOf = useMemo(() => (playing ? sourceFormsLookup(items) : null), [items, playing]);
+  // The Meet asks each sentence at level 1, however strong its classic reviews made it; a run follows cueLevel.
+  const meeting = session?.kind === 'set' && session.phase === 'meet';
   const card = useMemo(
-    () => (currentItem && formsOf ? loopCard(currentItem, sessionMode, formsOf(currentItem)) : null),
-    [currentItem, sessionMode, formsOf],
+    () => (currentItem && formsOf ? loopCard(currentItem, sessionMode, formsOf(currentItem), meeting ? 1 : undefined) : null),
+    [currentItem, sessionMode, formsOf, meeting],
   );
 
   const over = !!session && isSessionOver(session);
@@ -479,7 +479,7 @@ export function TodayView({
     setSession(current => current && step.advance(current));
   };
 
-  /** Next: on from saying an item chosen for practice twice, or from the last look at an item missed twice. */
+  /** Next: on from saying a sentence chosen for practice twice, or from the last look at one missed twice. */
   const goNext = () => {
     if (!session || undoing) return;
     audio.stopAll();
@@ -493,10 +493,6 @@ export function TodayView({
 
   const replay = () => {
     if (currentItem && card) audio.replay(answerSpeech(currentItem, card));
-  };
-
-  const toggleExample = () => {
-    if (card?.answer.kind === 'word' && card.answer.example) audio.toggleExample(card.answer.example.text);
   };
 
   const undo = async () => {
@@ -573,22 +569,16 @@ export function TodayView({
     replan();
   }, [replan]);
 
-  // ↗: the card in the card view among its senses, or the sentence in its lesson, over the session. A Got it given
-  // there counts, and the session moves past the item, as it does past any item reviewed elsewhere.
+  // ↗: the sentence in its lesson, over the session. What is done there counts as anywhere else: a decision with its
+  // practice pill moves the Meet past the sentence, and any review moves a run past it.
   const openItem = () => {
-    if (!currentItem) return;
-    if (!isVocabItem(currentItem)) {
-      onOpenSentence([currentItem], 0);
-      return;
-    }
-    const { group, index } = openCardGroup(currentItem, studyItems);
-    onViewCards([group], 0, index);
+    if (currentItem) onOpenSentence([currentItem], 0);
   };
 
   // A cached map whose refresh failed may be from before the server sorted more, so with no set in it the plan says the
   // themes load online rather than that none is left.
   const themesStatus: ThemesStatus = themesFailed ? 'offline' : themeState === null || sorting === null ? 'loading' : 'ready';
-  const sortingShare = sorting && sorting.pending > 0 ? sortingPercent(themeState, sorting.pending) : null;
+  const sortingShare = sortingProgress(plan, sorting);
   const planCard = planCardModel({ progress, todayCount, historyLoaded, next: plan.today, themes: themesStatus, sortingPercent: sortingShare });
   // A session ended early offers Resume first and Done, never another session, which would replace it with its place.
   const actions: SummaryAction[] = !session || !showingSummary ? []
@@ -632,7 +622,6 @@ export function TodayView({
         footer: footer ?? undefined,
         canHint: !!session && session.step === 'cue' && !session.hintShown,
         sayOpen: !!session && meetChoiceOpen(session, 'say'),
-        hasExample: card?.answer.kind === 'word' && !!card.answer.example,
         canUndo,
         undoing,
         appUndoOpen: undoOffered,
@@ -645,7 +634,6 @@ export function TodayView({
       case 'answer': answer(action.gotIt); return;
       case 'next': goNext(); return;
       case 'play': replay(); return;
-      case 'example': toggleExample(); return;
       case 'undo': void undo(); return;
       case 'primary':
         if (screen === 'plan') planPrimary();

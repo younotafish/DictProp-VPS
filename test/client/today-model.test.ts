@@ -36,6 +36,7 @@ import {
   resumeLabel,
   runCaptions,
   runReceipt,
+  sentenceCount,
   sessionHasProgress,
   summaryActions,
   summaryHeadline,
@@ -61,28 +62,28 @@ const nextId = () => `id-${ids++}`;
 const withStyle = (item: StoredItem, style: SentenceData['preferredSpeechStyle']): StoredItem =>
   ({ ...item, data: { ...item.data, preferredSpeechStyle: style } } as StoredItem);
 
-const WORDS = ['a', 'b', 'c'].map(id => vocabItem(id, `word-${id}`));
+const LINES = ['a', 'b', 'c'].map(id => sentenceItem(id, `A line called {{${id}}}.`, { sourceWord: id }));
 const byId = (items: readonly StoredItem[]) => {
   const map = new Map(items.map(item => [item.data.id, item]));
   return (id: string) => map.get(id);
 };
-const getWord = byId(WORDS);
+const getLine = byId(LINES);
 
-/** The set over a, b and c with the given choices made in order, each item revealed first, practice said twice. */
+/** The set over a, b and c with the given choices made in order, each sentence revealed first, practice said twice. */
 function setAfter(choices: readonly MeetChoice[]): SetSession {
   let session = startSetSession('s', { themeId: FIRST.id, itemIds: ['a', 'b', 'c'] }, NOW);
   for (const [index, choice] of choices.entries()) {
     session = revealAnswer(session);
-    const step = chooseInMeet(session, WORDS[index], choice, nextId(), NOW);
-    assert.ok(step, `${choice} on ${WORDS[index].data.id}`);
+    const step = chooseInMeet(session, LINES[index], choice, nextId(), NOW);
+    assert.ok(step, `${choice} on ${LINES[index].data.id}`);
     session = step.advance(session);
     if (choice === 'practice') session = finishEncoding(session, NOW);
   }
-  return settleSession(session, getWord, nextId, NOW);
+  return settleSession(session, getLine, nextId, NOW);
 }
 
 /** `session` answered on its run's card: revealed, then Not yet or Got it. */
-function answered<S extends LoopSession>(session: S, gotIt: boolean, getItem = getWord): S {
+function answered<S extends LoopSession>(session: S, gotIt: boolean, getItem = getLine): S {
   const revealed = revealAnswer(session);
   const id = revealed.kind === 'set' ? revealed.round.queue[revealed.round.index] : revealed.queue[revealed.index];
   const step = answerAttempt(revealed, getItem(id)!, gotIt, NOW, 'speak');
@@ -195,28 +196,33 @@ test('the run\'s captions say where Not yet and Got it lead on each try', () => 
 
 test('the Meet\'s choices are Practice, Passive and Can say it, each with its colour, and a choice\'s receipt names it', () => {
   assert.deepEqual(MEET_CHOICES.map(({ label, tone }) => `${label}:${tone}`), ['Practice:amber', 'Passive:slate', 'Can say it:emerald']);
-  assert.deepEqual(meetReceipt('crestfallen', 'say'), { word: 'crestfallen', label: 'Can say it', tone: 'emerald' });
-  assert.deepEqual(meetReceipt('crestfallen', 'practice'), { word: 'crestfallen', label: 'Practice', tone: 'amber' });
+  assert.deepEqual(meetReceipt('Keep an eye on it.', 'say'), { word: 'Keep an eye on it.', label: 'Can say it', tone: 'emerald' });
+  assert.deepEqual(meetReceipt('Keep an eye on it.', 'practice'), { word: 'Keep an eye on it.', label: 'Practice', tone: 'amber' });
 });
 
-test('a run\'s receipt says Got it, Got it with a hint or on the second try, or Not yet, with where the item goes', () => {
-  assert.deepEqual(runReceipt('run', 'good', 1, 'next in 4d'), { word: 'run', label: 'Got it', tone: 'emerald', detail: 'next in 4d' });
-  assert.deepEqual(runReceipt('run', 'hard', 1, 'back tomorrow'), { word: 'run', label: 'Got it with a hint', tone: 'amber', detail: 'back tomorrow' });
-  assert.deepEqual(runReceipt('run', 'hard', 2, 'back tomorrow'), { word: 'run', label: 'Got it on the second try', tone: 'amber', detail: 'back tomorrow' });
-  assert.deepEqual(runReceipt('run', 'again', 2, 'back tomorrow'), { word: 'run', label: 'Not yet', tone: 'rose', detail: 'back tomorrow' });
+test('a run\'s receipt says Got it, Got it with a hint or on the second try, or Not yet, with where the sentence goes', () => {
+  const run = 'I run every morning.';
+  assert.deepEqual(runReceipt(run, 'good', 1, 'next in 4d'), { word: run, label: 'Got it', tone: 'emerald', detail: 'next in 4d' });
+  assert.deepEqual(runReceipt(run, 'hard', 1, 'back tomorrow'), { word: run, label: 'Got it with a hint', tone: 'amber', detail: 'back tomorrow' });
+  assert.deepEqual(runReceipt(run, 'hard', 2, 'back tomorrow'), { word: run, label: 'Got it on the second try', tone: 'amber', detail: 'back tomorrow' });
+  assert.deepEqual(runReceipt(run, 'again', 2, 'back tomorrow'), { word: run, label: 'Not yet', tone: 'rose', detail: 'back tomorrow' });
 });
 
-test('an item reads as its word, or its sentence without markers', () => {
-  assert.equal(itemText(vocabItem('v', ' crestfallen ')), 'crestfallen');
-  assert.equal(itemText(sentenceItem('s', 'Keep {{an eye on}} it. ')), 'Keep an eye on it.');
-  assert.equal(itemText({ type: 'phrase', data: { id: 'p', query: 'x' }, srs: WORDS[0].srs, savedAt: 0 } as unknown as StoredItem), '');
+test('a sentence reads as its text without markers, and anything else as nothing', () => {
+  assert.equal(itemText(sentenceItem('s', ' Keep {{an eye on}} my [[bag]]. ')), 'Keep an eye on my bag.');
+  assert.equal(itemText(vocabItem('v', 'crestfallen')), '');
+  assert.equal(itemText({ type: 'phrase', data: { id: 'p', query: 'x' }, srs: LINES[0].srs, savedAt: 0 } as unknown as StoredItem), '');
+});
+
+test('a count of sentences reads in the singular for one', () => {
+  assert.deepEqual([0, 1, 2, 14].map(sentenceCount), ['0 sentences', '1 sentence', '2 sentences', '14 sentences']);
 });
 
 test('the footer follows the card: Hint and Reveal on a cue, the Meet\'s choices, saying it twice, a run\'s answers and the last look', () => {
   const meeting = startSetSession('s', { themeId: FIRST.id, itemIds: ['a', 'b', 'c'] }, NOW);
   assert.equal(cardFooter(meeting), 'cue');
   assert.equal(cardFooter(revealAnswer(meeting)), 'meet');
-  const step = chooseInMeet(revealAnswer(meeting), WORDS[0], 'practice', nextId(), NOW);
+  const step = chooseInMeet(revealAnswer(meeting), LINES[0], 'practice', nextId(), NOW);
   assert.equal(cardFooter(step!.advance(revealAnswer(meeting))), 'encode');
 
   const round = setAfter(['practice', 'passive', 'say']);
@@ -242,7 +248,7 @@ test('the footer follows the card: Hint and Reveal on a cue, the Meet\'s choices
 test('a session has progress once it has a Meet choice or a run answer, a first Not yet included', () => {
   assert.equal(sessionHasProgress(startSetSession('s', { themeId: null, itemIds: ['a'] }, NOW)), false);
   assert.equal(sessionHasProgress(setAfter(['passive'])), true);
-  const items = ['x', 'y'].map(id => vocabItem(id, id, { srs: practicing(NOW - 3 * DAY, { lastReviewDate: NOW - 2 * DAY }) }));
+  const items = ['x', 'y'].map(id => sentenceItem(id, `Practicing ${id}.`, { srs: practicing(NOW - 3 * DAY, { lastReviewDate: NOW - 2 * DAY }) }));
   const practice = startPracticeSession('p', ['x', 'y'], 'speak', NOW, nextId);
   assert.equal(sessionHasProgress(practice), false);
   assert.equal(sessionHasProgress(revealAnswer(practice)), false, 'a reveal does nothing');
@@ -264,16 +270,14 @@ test('the mode chip switches a practice session\'s mode, which its record keeps;
   assert.equal(recordNeedsWrite(set, setAfter(['say'])), true);
 });
 
-test('a word\'s answer is said as the word; a sentence\'s plays its text in the voice it was last heard in', () => {
-  const word = vocabItem('w', 'crestfallen', { chinese: '垂头丧气', definition: 'sad' });
-  assert.deepEqual(answerSpeech(word, loopCard(word, 'speak')), { kind: 'word', text: 'crestfallen' });
+test('the answer plays the sentence\'s text in the voice it was last heard in', () => {
   const plain = sentenceItem('s', 'Keep {{an eye on}} it.', { sourceWord: 'keep an eye on' });
-  assert.deepEqual(answerSpeech(plain, loopCard(plain, 'speak')), { kind: 'sentence', text: 'Keep an eye on it.' });
+  assert.deepEqual(answerSpeech(plain, loopCard(plain, 'speak')), { text: 'Keep an eye on it.' });
   const casual = withStyle(plain, 'casual');
-  assert.deepEqual(answerSpeech(casual, loopCard(casual, 'speak')), { kind: 'sentence', text: 'Keep an eye on it.', style: 'casual' });
+  assert.deepEqual(answerSpeech(casual, loopCard(casual, 'speak')), { text: 'Keep an eye on it.', style: 'casual' });
 });
 
-test('the sentences coming next, which their clips are fetched for, are the items still to meet or the run\'s next cards', () => {
+test('the sentences coming next, which their clips are fetched for, are those still to meet or the run\'s next cards', () => {
   const items = [
     vocabItem('w1', 'one'),
     sentenceItem('s1', 'First {{line}}.'),
@@ -283,14 +287,15 @@ test('the sentences coming next, which their clips are fetched for, are the item
   ];
   const getItem = byId(items);
   const set = startSetSession('s', { themeId: null, itemIds: items.map(item => item.data.id) }, NOW);
+  // The words a session kept from before Today took sentences only are passed over.
   assert.deepEqual(upcomingSentences(set, getItem), [
-    { kind: 'sentence', text: 'First line.' },
-    { kind: 'sentence', text: 'Second line.', style: 'casual' },
+    { text: 'First line.' },
+    { text: 'Second line.', style: 'casual' },
   ]);
   assert.deepEqual(upcomingSentences(set, getItem, 3).map(speech => speech.text), ['First line.', 'Second line.', 'Third line.']);
   assert.deepEqual(upcomingSentences(set, id => (id === 's1' ? undefined : getItem(id)), 1), [
-    { kind: 'sentence', text: 'Second line.', style: 'casual' },
-  ], 'an item gone meanwhile is passed over');
+    { text: 'Second line.', style: 'casual' },
+  ], 'a sentence gone meanwhile is passed over');
 
   const practiceItems = ['s1', 's3', 'w1'].map(id => {
     const item = getItem(id)!;
@@ -342,13 +347,13 @@ test('the themes browser lists the domains and themes that hold items in the tax
 test('a summary\'s headline says what was met or practiced, and how far a session ended early got', () => {
   assert.equal(summaryHeadline(setAfter(['passive', 'say', 'passive']), false), 'Set complete · 3 met');
   assert.equal(summaryHeadline(setAfter(['passive']), true), 'Ended early · 1 of 3 met');
-  const items = ['x', 'y'].map(id => vocabItem(id, id, { srs: practicing(NOW - 3 * DAY, { lastReviewDate: NOW - 2 * DAY }) }));
+  const items = ['x', 'y'].map(id => sentenceItem(id, `Practicing ${id}.`, { srs: practicing(NOW - 3 * DAY, { lastReviewDate: NOW - 2 * DAY }) }));
   const practice = startPracticeSession('p', ['x', 'y'], 'speak', NOW, nextId);
   const one = answered(practice, true, byId(items));
   assert.equal(summaryHeadline(one, true), 'Ended early · 1 of 2 practiced');
-  assert.equal(summaryHeadline(answered(one, true, byId(items)), false), 'Practice complete · 2 items');
+  assert.equal(summaryHeadline(answered(one, true, byId(items)), false), 'Practice complete · 2 sentences');
   const single = answered(startPracticeSession('q', ['x'], 'speak', NOW, nextId), true, byId(items));
-  assert.equal(summaryHeadline(single, false), 'Practice complete · 1 item');
+  assert.equal(summaryHeadline(single, false), 'Practice complete · 1 sentence');
 });
 
 test('the plan\'s Resume row names the kept session and where it stands', () => {

@@ -1,12 +1,15 @@
 import type { ThemesResponse } from '../../server/src/shared/item-themes';
 import { META_STORE, requestResult, transactionDone, withDB } from '../idb';
+import type { LoopPlan } from './planner';
 
-// The theme each item belongs to, as the server's classifier assigned it (GET /api/themes), kept on this device in the
-// library database's META store, so Today plans at once and offline, and each refresh asks only for the rows changed
-// since the last. Ids this build's taxonomy doesn't know stay in the map: the planner counts their items as Unsorted.
-// The store holds a plain object under its own key; no database version change is needed.
+// The theme each of the learner's sentences belongs to, as the server's classifier assigned it (GET /api/themes), kept
+// on this device in the library database's META store, so Today plans at once and offline, and each refresh asks only
+// for the rows changed since the last. Ids this build's taxonomy doesn't know stay in the map: the planner counts their
+// sentences as Unsorted. A map kept from before Today took sentences only also holds rows for words, which nothing
+// reads: the planner looks up only the sentences the loop takes. The store holds a plain object under its own key; no
+// database version change is needed.
 
-/** How often a refresh runs again while the server is still sorting items into themes. */
+/** How often a refresh runs again while the server is still sorting sentences into themes. */
 export const THEME_POLL_MS = 60_000;
 
 /** The map in memory: item id to theme id, and where the server's change sequence stood. */
@@ -114,10 +117,21 @@ export async function refreshThemes(
   return { state, sorting };
 }
 
-/** How far the server's sorting has got, as a whole percentage of the items it has sorted or still has to. */
-export function sortingPercent(state: ThemeState | null, pending: number): number {
-  const sorted = state?.themes.size ?? 0;
+/** How far the server's sorting has got, as a whole percentage: `sorted` sentences have a theme, `pending` wait for one. */
+export function sortingPercent(sorted: number, pending: number): number {
   return sorted + pending > 0 ? Math.floor((sorted / (sorted + pending)) * 100) : 100;
+}
+
+/**
+ * How far the server's sorting has got, while it still has sentences to sort; null otherwise. What it has sorted is the
+ * plan's count of the loop's sentences in a known theme, never the map's size: a map kept from before Today took
+ * sentences only also holds rows for thousands of words.
+ */
+export function sortingProgress(plan: Pick<LoopPlan, 'themes'>, sorting: Pick<ThemeSorting, 'pending'> | null): number | null {
+  if (!sorting || sorting.pending <= 0) return null;
+  let sorted = 0;
+  for (const theme of plan.themes.values()) sorted += theme.total;
+  return sortingPercent(sorted, sorting.pending);
 }
 
 export interface ThemeSyncOptions {
@@ -140,7 +154,7 @@ export interface ThemeSync {
 
 /**
  * Keeps the theme map current while started: the map kept on the device first (or the one held, when started again),
- * then a refresh, and another every minute while the server still has items to sort, or after a failed refresh
+ * then a refresh, and another every minute while the server still has sentences to sort, or after a failed refresh
  * (offline, say). Only the latest start's refreshes are heard, and nothing once stopped.
  */
 export function createThemeSync({

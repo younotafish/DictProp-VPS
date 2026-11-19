@@ -19,8 +19,8 @@ const resolve = (key: string, state: Partial<TodayKeyState>, event: Partial<Toda
 const SWALLOW: TodayKeyAction = { type: 'swallow' };
 const PLAN: Partial<TodayKeyState> = { screen: 'plan', hasPrimary: true };
 const CUE: Partial<TodayKeyState> = { screen: 'card', footer: 'cue', canHint: true };
-const MEET: Partial<TodayKeyState> = { screen: 'card', footer: 'meet', sayOpen: true, hasExample: true };
-const RUN: Partial<TodayKeyState> = { screen: 'card', footer: 'run', hasExample: true };
+const MEET: Partial<TodayKeyState> = { screen: 'card', footer: 'meet', sayOpen: true };
+const RUN: Partial<TodayKeyState> = { screen: 'card', footer: 'run' };
 const SUMMARY: Partial<TodayKeyState> = { screen: 'summary', hasPrimary: true, canResume: true, canUndo: true };
 
 test('on the plan Enter presses the primary button, once per press, and every other key is left to the app', () => {
@@ -39,7 +39,6 @@ test('on a cue Space and Enter reveal and H takes the hint while it can still be
   assert.deepEqual(resolve('H', CUE), { type: 'hint' }, 'with Caps Lock on');
   assert.equal(resolve('h', { ...CUE, canHint: false }), null, 'already shown');
   assert.equal(resolve('p', CUE), null, 'no answer to say yet');
-  assert.equal(resolve('e', { ...CUE, hasExample: true }), null);
   assert.equal(resolve(' ', CUE, { repeat: true }), null, 'a held Space reveals once');
   assert.equal(resolve(' ', { ...CUE, onControl: true }), null, 'a focused button presses itself');
   assert.equal(resolve('ArrowLeft', CUE), null, 'the Meet\'s arrows wait for its answer');
@@ -85,7 +84,7 @@ test('in a run 1 is Not yet and 3 Got it; Enter is Got it too, except as the sec
   assert.equal(resolve('Enter', RUN, { repeat: true }), null, 'a held Enter answers once');
 });
 
-test('Space or Enter moves on from saying an item twice and from the last look, unless an undo is under way', () => {
+test('Space or Enter moves on from saying a sentence twice and from the last look, unless an undo is under way', () => {
   for (const footer of ['encode', 'look'] as const) {
     assert.deepEqual(resolve(' ', { screen: 'card', footer }), { type: 'next' }, `Space on ${footer}`);
     assert.deepEqual(resolve('Enter', { screen: 'card', footer }), { type: 'next' }, `Enter on ${footer}`);
@@ -94,11 +93,10 @@ test('Space or Enter moves on from saying an item twice and from the last look, 
   assert.deepEqual(resolve(' ', { ...CUE, undoing: true }), SWALLOW, 'nor reveals');
 });
 
-test('P says the answer again and E plays its example, once the answer shows', () => {
-  for (const footer of ['meet', 'encode', 'run', 'look'] as const) {
-    assert.deepEqual(resolve('p', { screen: 'card', footer }), { type: 'play' }, `P on ${footer}`);
-    assert.deepEqual(resolve('e', { screen: 'card', footer, hasExample: true }), { type: 'example' }, `E on ${footer}`);
-    assert.equal(resolve('e', { screen: 'card', footer, hasExample: false }), null, 'a sentence, or a word without an example');
+test('P says the answer again once it shows, and E is no key of Today\'s', () => {
+  for (const footer of ['cue', 'meet', 'encode', 'run', 'look'] as const) {
+    if (footer !== 'cue') assert.deepEqual(resolve('p', { screen: 'card', footer }), { type: 'play' }, `P on ${footer}`);
+    assert.equal(resolve('e', { screen: 'card', footer }), null, `E on ${footer}`);
   }
   assert.equal(resolve('p', { ...RUN, undoing: true }), null);
   assert.equal(resolve('p', RUN, { repeat: true }), null);

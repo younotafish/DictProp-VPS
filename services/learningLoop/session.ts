@@ -7,17 +7,20 @@ import { isLoopEligible, isPracticeDue, localDayStart } from './standing';
 // Today's two sessions as serializable records and pure steps, as services/studySession.ts is for classic Study: the
 // Today screen renders a session, calls updateSRS / undoSRSReview with what these steps return, and applies the result.
 //
-// - A set session meets each item of a set (cue, reveal, then Practice, Passive or Can say it, each recorded at once
-//   as a triage review), then runs a round over the items chosen for practice, in the order met, then sums up.
-// - A practice session runs over the practice items due today.
-// A run (the round, or a practice session) records exactly one review per item: Got it on the first try unaided is
-// Good; with the hint, or on the second try (after a Not yet, which records nothing and brings the item back at least
-// three cards later), Hard; Not yet twice is Again, after which the item comes back once more to look at, unrecorded.
+// - A set session meets each sentence of a set (cue, reveal, then Practice, Passive or Can say it, each recorded at
+//   once as a triage review), then runs a round over the sentences chosen for practice, in the order met, then sums up.
+// - A practice session runs over the practice sentences due today.
+// A run (the round, or a practice session) records exactly one review per sentence: Got it on the first try unaided is
+// Good; with the hint, or on the second try (after a Not yet, which records nothing and brings the sentence back at
+// least three cards later), Hard; Not yet twice is Again, after which it comes back once more to look at, unrecorded.
 
 export type MeetChoice = 'practice' | 'passive' | 'say';
 export type AttemptOutcome = 'good' | 'hard' | 'again';
 
-/** The triage rating each Meet choice records: Practice joins practice, Passive is understood only, Can say it. */
+/**
+ * The triage rating each Meet choice records: Practice joins practice, Passive keeps the sentence passive (understood,
+ * not practiced), Can say it marks it one you can say. Each is a decision, so a set never offers the sentence again.
+ */
 export const MEET_RATINGS: Readonly<Record<MeetChoice, ReviewRating>> = { practice: 'again', passive: 'good', say: 'easy' };
 /** The task type a practice attempt is recorded as: said aloud, or thought (Quiet, which never graduates). */
 export const MODE_TASK_TYPES: Readonly<Record<LoopMode, ReviewTaskType>> = { speak: 'speak', quiet: 'recall' };
@@ -222,9 +225,12 @@ function ownReview(session: LoopSession, itemId: string): OwnReview | undefined 
   return session.kind === 'set' ? session.meet.choices[itemId] : undefined;
 }
 
-/** Whether an item being met can still be: in the loop and never reviewed (not met elsewhere meanwhile). */
+/**
+ * Whether an item being met can still be: in the loop and new to it, whatever classic reviews it has had (a Got it
+ * says a sentence was understood, not that it can be said), so not decided in Today elsewhere meanwhile.
+ */
 export const isMeetItemLive = (item: StoredItem | undefined): item is StoredItem =>
-  !!item && isLoopEligible(item) && !(Number(item.srs?.totalReviews) > 0);
+  !!item && isLoopEligible(item) && loopStanding(item.srs) === 'new';
 
 /**
  * Whether a run still shows an item: in the loop, practicing, and not reviewed elsewhere since the session began or
@@ -247,11 +253,12 @@ const roundAnswered = (run: PracticeRun): boolean =>
   Object.values(run.attempts).some(attempt => attempt.tries > 0 || attempt.outcome !== undefined);
 
 /**
- * The session moved on to what it shows next: past items it can no longer show (deleted, archived, reviewed elsewhere,
- * or no longer new or practicing), from the Meet into the round once every item is met (or to the summary when none
- * was chosen for practice), and to the summary once the round is done. The same session when nothing changes, so
- * the screen can apply it after every change of the library or the session. Moving to a card shows its cue, with the
- * hint already showing on a second try.
+ * The session moved on to what it shows next: past items it can no longer show (out of the loop, as a deleted or
+ * archived sentence is, or a word a session kept from before Today took sentences only; in the Meet, a sentence decided
+ * elsewhere meanwhile; in a run, one reviewed elsewhere or no longer practicing), from the Meet into the round once
+ * every item is met (or to the summary when none was chosen for practice), and to the summary once the round is done.
+ * The same session when nothing changes, so the screen can apply it after every change of the library or the session.
+ * Moving to a card shows its cue, with the hint already showing on a second try.
  */
 export function settleSession<S extends LoopSession>(
   session: S,
@@ -263,7 +270,8 @@ export function settleSession<S extends LoopSession>(
   if (current.kind === 'set' && current.phase === 'meet') {
     const { itemIds, meet } = current;
     let index = meet.index;
-    // The card saying an item twice stays until Next; any other item already chosen, or no longer new, is passed.
+    // The card saying an item twice stays until Next; any other item already chosen, or no longer new to the loop, is
+    // passed.
     if (!(current.step === 'encode' && meet.choices[itemIds[index]])) {
       while (index < itemIds.length && (meet.choices[itemIds[index]] || !isMeetItemLive(getItem(itemIds[index])))) index++;
     }
@@ -323,8 +331,8 @@ export const meetChoiceOpen = (session: Pick<LoopSession, 'hintShown'>, choice: 
  * The choice made for the item being met, once its answer shows: the triage review to record now, and `advance`, which
  * keeps the choice (with the count its review leaves) and moves on, or, after Practice, keeps the card on its answer to
  * say it twice before Next (finishEncoding). Null when the item can't be chosen now: not the one being met, its answer
- * not shown, the choice closed (meetChoiceOpen), or no longer new (met elsewhere, deleted or archived), which
- * settleSession then passes.
+ * not shown, the choice closed (meetChoiceOpen), or no longer new to the loop (decided elsewhere, deleted or archived),
+ * which settleSession then passes.
  */
 export function chooseInMeet(
   session: SetSession,

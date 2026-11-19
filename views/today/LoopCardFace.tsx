@@ -6,28 +6,16 @@ import type { LoopCard, LoopCue, LoopHint, LoopMode, TextPart } from '../../serv
 import { GRADUATION_DOTS } from '../../services/learningLoop/standing';
 import type { SpeakHandle } from '../../services/neuralTts';
 import { OfflineImage } from '../../components/OfflineImage';
-import { PronunciationBlock } from '../../components/PronunciationBlock';
 import { SentenceSpeakerButton } from '../../components/SentenceSpeakerButton';
 
 const EYEBROW = 'text-xs font-bold uppercase tracking-[0.18em] text-slate-400';
 
-/** A blank where the answer goes. Every blank is the same width, so none gives the answer's length away. */
-const Blank = () => <span role="img" aria-label="blank" className="mx-0.5 inline-block w-12 border-b-2 border-slate-400 align-[-0.15em]" />;
-
-/** Text with the answer masked as underscores (studyPrompt's maskAnswer), each run drawn as a blank. */
-function Blanked({ text }: { text: string }) {
-  const pieces = text.split(/_{3,}/);
-  return <>{pieces.map((piece, index) => <Fragment key={index}>{index > 0 && <Blank />}{piece}</Fragment>)}</>;
-}
-
-/** A sentence cut around its expression (cues.ts TextPart): blanked on a cue, marked on an answer. */
-function Parts({ parts, blank, mark }: { parts: readonly TextPart[]; blank?: boolean; mark?: string }) {
+/** A sentence cut around its expression (cues.ts TextPart), the expression marked. */
+function Parts({ parts, mark }: { parts: readonly TextPart[]; mark: string }) {
   return (
     <>
       {parts.map((part, index) => (
-        !part.target ? <Fragment key={index}>{part.text}</Fragment>
-          : blank ? <Blank key={index} />
-            : <mark key={index} className={mark}>{part.text}</mark>
+        part.target ? <mark key={index} className={mark}>{part.text}</mark> : <Fragment key={index}>{part.text}</Fragment>
       ))}
     </>
   );
@@ -42,41 +30,27 @@ function Picture({ src, item, onLazyLoadImage }: { src: string; item: StoredItem
   );
 }
 
+/** The cue: the translation, large, then at level 1 the expression to use, or at level 2 the picture. */
 function CueBody({ cue, item, onLazyLoadImage }: { cue: LoopCue; item: StoredItem; onLazyLoadImage: LoopCardFaceProps['onLazyLoadImage'] }) {
-  if (cue.kind === 'word' && cue.level === 1) {
-    return (
-      <>
-        {cue.chinese && <p className="mt-3 text-3xl font-semibold leading-snug text-slate-900">{cue.chinese}</p>}
-        {cue.definition && <p className="mt-3 text-base leading-relaxed text-slate-600"><Blanked text={cue.definition} /></p>}
-        {cue.partOfSpeech && <p className="mt-3"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">{cue.partOfSpeech}</span></p>}
-        {cue.imageUrl && <Picture src={cue.imageUrl} item={item} onLazyLoadImage={onLazyLoadImage} />}
-      </>
-    );
-  }
-  if (cue.kind === 'word') {
-    return (
-      <>
-        <p className="mt-3 text-xl leading-relaxed text-slate-800"><Parts parts={cue.example} blank /></p>
-        {cue.chinese && <p className="mt-3 text-lg text-slate-600">{cue.chinese}</p>}
-      </>
-    );
-  }
   return (
     <>
       <p className="mt-3 text-2xl font-semibold leading-snug text-slate-900">{cue.translation}</p>
-      {cue.level === 1 && <p className="mt-4 text-lg leading-relaxed text-slate-700"><Parts parts={cue.sentence} blank /></p>}
+      {cue.level === 1 && cue.expression && (
+        <p className="mt-3 text-sm text-slate-600">
+          Use <span className="rounded bg-violet-100 px-1.5 font-semibold text-violet-950">{cue.expression}</span>
+        </p>
+      )}
       {cue.level === 2 && cue.imageUrl && <Picture src={cue.imageUrl} item={item} onLazyLoadImage={onLazyLoadImage} />}
     </>
   );
 }
 
+/** The hint once taken: the first letter of each of the sentence's words. */
 function HintBox({ hint }: { hint: LoopHint }) {
   return (
     <div className="mt-5 rounded-xl bg-indigo-50 px-4 py-3 text-indigo-950">
       <p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo-400">Hint</p>
-      {hint.kind === 'letters'
-        ? <p className="mt-1 font-mono text-lg tracking-wider">{hint.text}</p>
-        : <p className="mt-1 text-lg leading-relaxed"><Parts parts={hint.parts} blank /></p>}
+      <p className="mt-1 font-mono text-lg leading-relaxed tracking-wider">{hint.text}</p>
     </div>
   );
 }
@@ -107,17 +81,17 @@ export interface LoopCardFaceProps {
   attemptLabel: string | null;
   /** A practice item's graduation dots, once its answer shows; null for an item being met. */
   dots: number | null;
-  /** ↗: the item in the card view or its sentence lesson, over the session. */
+  /** ↗: the sentence in its lesson, over the session. */
   onOpenItem: () => void;
-  /** Hears each read the example's or sentence's speaker starts, so the session's audio can stop it. */
+  /** Hears each read the sentence's speaker starts, so the session's audio can stop it. */
   onPlaybackStart: (handle: SpeakHandle) => void;
   onLazyLoadImage: (itemId: string, imageVersion?: string) => Promise<string | null>;
 }
 
 /**
- * One card of a set or practice session: the prompt and its cue (cues.ts loopCard), the hint once taken, and the answer
- * once revealed, under the cue, so showing it moves nothing. After Practice in a set, the answer stays while the item is
- * said twice.
+ * One card of a set or practice session: the prompt, its cue (cues.ts loopCard) and what counts, the hint once taken,
+ * and the answer once revealed, under the cue, so showing it moves nothing. After Practice in a set, the answer stays
+ * while the sentence is said twice.
  */
 export function LoopCardFace({ item, card, step, hintShown, mode, attemptLabel, dots, onOpenItem, onPlaybackStart, onLazyLoadImage }: LoopCardFaceProps) {
   const { answer } = card;
@@ -125,7 +99,7 @@ export function LoopCardFace({ item, card, step, hintShown, mode, attemptLabel, 
     <div className="mx-auto max-w-2xl pb-6 pt-[5vh]">
       <p className={EYEBROW}>{attemptLabel ? `${attemptLabel} · ${card.prompt}` : card.prompt}</p>
       <CueBody cue={card.cue} item={item} onLazyLoadImage={onLazyLoadImage} />
-      {card.note && <p className="mt-3 text-xs text-slate-500">{card.note}</p>}
+      <p className="mt-3 text-xs text-slate-500">{card.note}</p>
       {hintShown && <HintBox hint={card.hint} />}
 
       {step !== 'cue' && (
@@ -135,52 +109,22 @@ export function LoopCardFace({ item, card, step, hintShown, mode, attemptLabel, 
               {mode === 'speak' ? 'Say it twice, out loud' : 'Say it twice in your head'}
             </p>
           )}
-          {answer.kind === 'word' ? (
-            <>
-              <div className="flex items-start gap-2">
-                <h3 className="min-w-0 flex-1 break-words text-4xl font-bold text-slate-900">{answer.word}</h3>
-                <button type="button" onClick={onOpenItem} className={OPEN_BUTTON} aria-label="Open the card" title="Open the card">
-                  <ArrowUpRight size={20} />
-                </button>
-              </div>
-              {answer.ipa && <div className="mt-2"><PronunciationBlock text={answer.word} ipa={answer.ipa} /></div>}
-              {answer.sense && <p className="mt-2 text-sm text-slate-500">{answer.sense}</p>}
-              {answer.chinese && <p className="mt-2 text-lg text-slate-700">{answer.chinese}</p>}
-              {answer.definition && <p className="mt-1 text-sm leading-relaxed text-slate-600">{answer.definition}</p>}
-              {answer.example && (
-                <div className="mt-4 flex items-start gap-2 border-l-2 border-slate-300 pl-3">
-                  <p className="min-w-0 flex-1 pt-1.5 text-sm leading-relaxed text-slate-600">
-                    <Parts parts={answer.example.parts} mark="bg-transparent font-semibold text-slate-800" />
-                  </p>
-                  <SentenceSpeakerButton
-                    text={answer.example.text}
-                    iconSize={17}
-                    onPlaybackStart={onPlaybackStart}
-                    className="grid h-9 w-9 shrink-0 place-items-center rounded-md hover:bg-slate-200"
-                  />
-                </div>
-              )}
-            </>
-          ) : (
-            <>
-              <div className="flex items-start gap-2">
-                <p className="min-w-0 flex-1 text-2xl font-semibold leading-snug text-slate-900">
-                  <Parts parts={answer.parts} mark="rounded bg-violet-100 px-0.5 text-violet-950" />
-                </p>
-                <SentenceSpeakerButton
-                  text={answer.text}
-                  iconSize={20}
-                  onPlaybackStart={onPlaybackStart}
-                  className="grid h-11 w-11 shrink-0 place-items-center rounded-full hover:bg-slate-200"
-                />
-                <button type="button" onClick={onOpenItem} className={OPEN_BUTTON} aria-label="Open the sentence lesson" title="Open the sentence lesson">
-                  <ArrowUpRight size={20} />
-                </button>
-              </div>
-              {answer.ipa && <p className="mt-2 text-sm text-slate-500">{answer.ipa}</p>}
-              <p className="mt-3 text-base leading-relaxed text-slate-600">{answer.translation}</p>
-            </>
-          )}
+          <div className="flex items-start gap-2">
+            <p className="min-w-0 flex-1 text-2xl font-semibold leading-snug text-slate-900">
+              <Parts parts={answer.parts} mark="rounded bg-violet-100 px-0.5 text-violet-950" />
+            </p>
+            <SentenceSpeakerButton
+              text={answer.text}
+              iconSize={20}
+              onPlaybackStart={onPlaybackStart}
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-full hover:bg-slate-200"
+            />
+            <button type="button" onClick={onOpenItem} className={OPEN_BUTTON} aria-label="Open the sentence lesson" title="Open the sentence lesson">
+              <ArrowUpRight size={20} />
+            </button>
+          </div>
+          {answer.ipa && <p className="mt-2 text-sm text-slate-500">{answer.ipa}</p>}
+          <p className="mt-3 text-base leading-relaxed text-slate-600">{answer.translation}</p>
           {dots !== null && <GraduationDots filled={dots} />}
         </section>
       )}

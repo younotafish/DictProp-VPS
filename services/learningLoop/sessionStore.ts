@@ -19,7 +19,7 @@ export const setStartsKey = (userId: string): string => `today_set_starts_v1:${u
 
 /** The most set starts kept: only the last two days' count (planner.ts SET_START_PENALTY_MS). */
 const MAX_SET_STARTS = 50;
-/** The most items a stored session may hold (a set takes at most 20, a practice session 30). */
+/** The most items a stored session may hold (a set takes at most 23, a practice session 30). */
 const MAX_SESSION_ITEMS = 100;
 /** The longest id kept, as the server allows for ids. */
 const MAX_ID_LENGTH = 200;
