@@ -148,6 +148,28 @@ test('the receipt line names the last review and what Undo takes back; a review 
   assert.match(back, /aria-label="Back: take back the last choice" aria-keyshortcuts="U">Back<\/button>/);
 });
 
+test('a long sentence in the receipt line is cut short by itself, so the outcome and its detail after it always show', () => {
+  const sentence = 'Could you keep an eye on my bag while I go to the restroom?';
+  const markup = renderCard(SENTENCE, {
+    receipt: { word: sentence, label: 'Not yet', tone: 'rose', detail: 'back tomorrow' }, canUndo: true, waiting: true,
+  });
+  assert.match(textOf(markup), /↶ Could you keep an eye on my bag while I go to the restroom\? · Not yet · back tomorrow · saved on this device Undo/);
+  // The arrow and the outcome never shrink, and the outcome is capped at the width after the arrow; only the sentence
+  // between them truncates.
+  assert.match(markup, new RegExp([
+    '<span aria-hidden="true" class="shrink-0 whitespace-pre">↶ </span><span class="flex min-w-0 flex-1">',
+    '<span class="min-w-0 truncate">Could you keep an eye on my bag while I go to the restroom\\?</span>',
+    '<span class="max-w-full shrink-0 overflow-hidden text-ellipsis whitespace-pre"> · <span class="text-rose-700">Not yet</span>',
+    ' · back tomorrow · saved on this device</span></span>',
+  ].join('')));
+});
+
+test('Back on a choice with no sentence to name (its item deleted, or a word an older session kept) names the choice alone', () => {
+  const gone = renderCard(SENTENCE, { receipt: { word: '', label: 'Passive', tone: 'slate' }, canUndo: true, undoLabel: 'Back' });
+  assert.match(textOf(gone), /↶ Passive Back/);
+  assert.match(gone, /<span class="flex min-w-0 flex-1"><span class="[^"]*"><span class="text-slate-700">Passive<\/span><\/span><\/span>/);
+});
+
 test('while an undo is under way the footer waits, and a failed undo takes the receipt\'s place', () => {
   const undoing = renderCard(SENTENCE, { receipt: { word: 'See you soon.', label: 'Got it', tone: 'emerald' }, canUndo: true, undoing: true });
   assert.match(textOf(undoing), /↶ See you soon\. · Got it · Undoing…/);

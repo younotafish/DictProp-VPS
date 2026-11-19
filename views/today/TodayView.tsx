@@ -286,7 +286,9 @@ export function TodayView({
   }, [getSetDays, snapshot.now, day]);
   const streak = historyLoaded && setDays?.day === day ? loopStreak(setDays.days, todayCount, snapshot.now) : null;
 
-  // The session's items as they are now: an item deleted, archived or reviewed elsewhere is passed over.
+  // The session's items as they are now: a sentence out of the loop (deleted, archived, or a word an older session
+  // kept) is passed over; in the Meet, so is one decided elsewhere (a Got it elsewhere decides nothing), and in a run,
+  // one reviewed elsewhere or no longer practicing.
   const playing = session !== null;
   const itemsById = useMemo(() => (playing ? new Map(items.map(item => [item.data.id, item])) : NO_ITEMS), [items, playing]);
   const getItem = useCallback((id: string) => itemsById.get(id), [itemsById]);

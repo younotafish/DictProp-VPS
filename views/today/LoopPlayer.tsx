@@ -19,7 +19,12 @@ const PRIMARY = 'h-14 rounded-xl bg-indigo-600 font-semibold text-white hover:bg
 const SECONDARY = 'h-14 rounded-xl border border-slate-300 bg-white font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50 inline-flex items-center justify-center gap-2';
 const MEET_KEYS: Record<MeetChoice, string> = { practice: '1 ArrowLeft', passive: '2 ArrowDown', say: '3 ArrowRight' };
 
-/** The line above the footer's buttons: the review Undo (Back, in the Meet) would take back, or why an undo failed. */
+/**
+ * The line above the footer's buttons: the review Undo (Back, in the Meet) would take back, or why an undo failed. A
+ * whole sentence rarely fits a phone's line, so the sentence alone is cut short and the outcome after it always shows;
+ * only an outcome wider than the line itself is cut short. A choice with no sentence to name (its item deleted, or a
+ * word an older session kept) is named by its outcome alone.
+ */
 function ReceiptLine({ receipt, undoLabel, canUndo, undoing, waiting, error, onUndo }: {
   receipt: LoopReceipt | null;
   undoLabel: 'Undo' | 'Back';
@@ -34,10 +39,16 @@ function ReceiptLine({ receipt, undoLabel, canUndo, undoing, waiting, error, onU
     <div className="flex h-8 items-center gap-2 text-xs text-slate-500">
       <div className="min-w-0 flex-1 truncate" aria-live="polite">
         {error ? <span className="text-rose-700" role="alert">{error}</span> : receipt && (
-          <>
-            <span aria-hidden="true">↶ </span>{receipt.word} · <span className={TONE_TEXT[receipt.tone]}>{receipt.label}</span>
-            {detail && ` · ${detail}`}
-          </>
+          <span className="flex">
+            <span aria-hidden="true" className="shrink-0 whitespace-pre">↶ </span>
+            {/* The width after the arrow, which caps the outcome. */}
+            <span className="flex min-w-0 flex-1">
+              {receipt.word && <span className="min-w-0 truncate">{receipt.word}</span>}
+              <span className="max-w-full shrink-0 overflow-hidden text-ellipsis whitespace-pre">
+                {receipt.word && ' · '}<span className={TONE_TEXT[receipt.tone]}>{receipt.label}</span>{detail && ` · ${detail}`}
+              </span>
+            </span>
+          </span>
         )}
       </div>
       {canUndo && (
