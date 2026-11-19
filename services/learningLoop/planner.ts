@@ -117,63 +117,116 @@ interface SetProfile {
 type ProfileOf = (item: StoredItem) => SetProfile;
 
 /**
- * A set from a theme's new sentences, `candidates` newest saved first: two thirds of it from the newest end, then the
- * rest from the oldest, so the backlog shrinks too. Filling prefers sentences of different words (as their source word
- * or through the card they came from: another spelling or a listed form reaches the same card), so a set covers as many
- * expressions as it can and a word's other sentences come back on later days. Only when that can't fill the set does it
- * take a second sentence of a word, newest first, so a set is always setSize's size and one set meets the day's goal:
- * half the learner's sentences share their word with another. spreadSiblings then sets such a pair apart.
+ * Each candidate's word: sentences that ask for the same word, as their source word or through the card they came from
+ * (another spelling or a listed form reaches the same card), share one key, joined transitively. A sentence that asks
+ * for nothing is a word of its own.
  */
-function composeSet(candidates: readonly StoredItem[], profileOf: ProfileOf): StoredItem[] {
-  const size = setSize(candidates.length);
-  const fromNewest = Math.ceil((2 * size) / 3);
-  const targets = new Set<string>();
-  const chosen: StoredItem[] = [];
-  const taken = new Set<number>();
-  const take = (index: number, anyWord: boolean) => {
-    const profile = profileOf(candidates[index]);
-    if (!anyWord && profile.targets.some(target => targets.has(target))) return;
-    for (const target of profile.targets) targets.add(target);
-    chosen.push(candidates[index]);
-    taken.add(index);
+function wordKeys(candidates: readonly StoredItem[], profileOf: ProfileOf): (item: StoredItem) => string {
+  const parent = new Map<string, string>();
+  const find = (key: string): string => {
+    let root = key;
+    while (parent.get(root) !== root) root = parent.get(root) ?? root;
+    for (let at = key; at !== root;) {
+      const up = parent.get(at) ?? root;
+      parent.set(at, root);
+      at = up;
+    }
+    return root;
   };
-  for (let index = 0; index < candidates.length && chosen.length < fromNewest; index++) take(index, false);
-  for (let index = candidates.length - 1; index >= 0 && chosen.length < size; index--) {
-    if (!taken.has(index)) take(index, false);
+  for (const item of candidates) {
+    const [first, ...rest] = profileOf(item).targets.map(target => `w:${target}`);
+    if (first === undefined) continue;
+    if (!parent.has(first)) parent.set(first, first);
+    for (const target of rest) {
+      if (!parent.has(target)) parent.set(target, target);
+      const a = find(first);
+      const b = find(target);
+      // The smaller key wins, so the keys are the same whatever order the library holds the items in.
+      if (a !== b) parent.set(a < b ? b : a, a < b ? a : b);
+    }
   }
-  for (let index = 0; index < candidates.length && chosen.length < size; index++) {
-    if (!taken.has(index)) take(index, true);
-  }
-  return spreadSiblings(chosen, profileOf);
+  return item => {
+    const first = profileOf(item).targets[0];
+    return first === undefined ? `i:${item.data.id}` : find(`w:${first}`);
+  };
 }
 
 /**
- * A set in the order it is met: the order filling gave, with each sentence that shares a word with one before it moved
- * to the place furthest from every sentence it shares one with (the earliest such place), so the same expression isn't
- * asked for twice in a row. A set holds at most 23 sentences, so comparing each with the rest costs nothing.
+ * A set from a theme's new sentences, `candidates` newest saved first: two thirds of it from the newest end, then the
+ * rest from the oldest, so the backlog shrinks too, one sentence per word (wordKeys), so a set covers as many
+ * expressions as it can and a word's other sentences come back on later days. Only when that can't fill the set does it
+ * take more, in rounds: each round adds at most one more sentence of each word, newest first, so no word gets a third
+ * sentence before every word has had its second. A set is always setSize's size, so one set meets the day's goal: half
+ * the learner's sentences share their word with another. spreadSiblings then orders it.
  */
-function spreadSiblings(set: readonly StoredItem[], profileOf: ProfileOf): StoredItem[] {
-  const shares = (a: StoredItem, b: StoredItem) => profileOf(a).targets.some(target => profileOf(b).targets.includes(target));
-  const order: StoredItem[] = [];
+function composeSet(candidates: readonly StoredItem[], profileOf: ProfileOf): StoredItem[] {
+  const size = setSize(candidates.length);
+  if (size === 0) return [];
+  const keyOf = wordKeys(candidates, profileOf);
+  const fromNewest = Math.ceil((2 * size) / 3);
+  const used = new Set<string>();
+  const chosen: StoredItem[] = [];
+  const taken = new Set<number>();
+  const take = (index: number) => {
+    used.add(keyOf(candidates[index]));
+    chosen.push(candidates[index]);
+    taken.add(index);
+  };
+  for (let index = 0; index < candidates.length && chosen.length < fromNewest; index++) {
+    if (!used.has(keyOf(candidates[index]))) take(index);
+  }
+  for (let index = candidates.length - 1; index >= 0 && chosen.length < size; index--) {
+    if (!taken.has(index) && !used.has(keyOf(candidates[index]))) take(index);
+  }
+  while (chosen.length < size) {
+    const round = new Set<string>();
+    const before = chosen.length;
+    for (let index = 0; index < candidates.length && chosen.length < size; index++) {
+      const key = keyOf(candidates[index]);
+      if (taken.has(index) || round.has(key)) continue;
+      round.add(key);
+      take(index);
+    }
+    if (chosen.length === before) break;
+  }
+  return spreadSiblings(chosen, keyOf);
+}
+
+/**
+ * A set in the order it is met, so the same word is never asked for twice in a row where the set allows it: each place
+ * takes the word with the most sentences left that isn't the last place's (a word holding more than half the set can't
+ * be kept apart everywhere), ties to the sentence filling took first. A set of different words keeps filling's order.
+ */
+function spreadSiblings(set: readonly StoredItem[], keyOf: (item: StoredItem) => string): StoredItem[] {
+  const groups = new Map<string, StoredItem[]>();
   for (const item of set) {
-    if (!order.some(other => shares(item, other))) {
-      order.push(item);
-      continue;
-    }
-    let best = order.length;
-    let bestDistance = -1;
-    for (let at = 0; at <= order.length; at++) {
-      // Inserted at `at`, a sentence before it stays put and one from `at` on moves one place later.
-      let distance = Infinity;
-      order.forEach((other, index) => {
-        if (shares(item, other)) distance = Math.min(distance, index < at ? at - index : index + 1 - at);
-      });
-      if (distance > bestDistance) {
-        bestDistance = distance;
-        best = at;
+    const key = keyOf(item);
+    const group = groups.get(key);
+    if (group) group.push(item);
+    else groups.set(key, [item]);
+  }
+  const filled = new Map(set.map((item, index) => [item, index]));
+  const queues = [...groups.values()].map(items => ({ items, next: 0 }));
+  const order: StoredItem[] = [];
+  let last: (typeof queues)[number] | undefined;
+  while (order.length < set.length) {
+    let best: (typeof queues)[number] | undefined;
+    for (const queue of queues) {
+      const left = queue.items.length - queue.next;
+      if (left === 0) continue;
+      if (!best) {
+        best = queue;
+        continue;
       }
+      const bestLeft = best.items.length - best.next;
+      const better = (queue !== last) !== (best !== last) ? queue !== last
+        : left !== bestLeft ? left > bestLeft
+        : (filled.get(queue.items[queue.next]) ?? 0) < (filled.get(best.items[best.next]) ?? 0);
+      if (better) best = queue;
     }
-    order.splice(best, 0, item);
+    if (!best) break;
+    order.push(best.items[best.next++]);
+    last = best;
   }
   return order;
 }

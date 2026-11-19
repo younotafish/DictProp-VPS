@@ -125,13 +125,13 @@ test('when sentences of other words can\'t fill a set, it takes a word\'s second
   assert.ok((today?.itemIds.length ?? 0) >= DAILY_SET_GOAL, 'one set meets the day\'s goal');
   assert.equal(adjacentPair(today?.itemIds ?? [], id => words.get(id) ?? ''), false);
 
-  // A small theme takes all it has: the second sentence of 'lead' goes as far from the first as three places allow.
+  // A small theme takes all it has, its two sentences of 'lead' kept apart.
   const small = [
     sentenceItem('lead-1', 'She will {{lead}} the team.', { sourceWord: 'lead', savedAt: NOW - 3 * HOUR }),
     sentenceItem('lead-2', 'Who {{leads}} today?', { sourceWord: 'Lead ', savedAt: NOW - 2 * HOUR }),
     sentenceItem('walk', 'Let\'s {{walk}}.', { sourceWord: 'walk', savedAt: NOW - HOUR }),
   ];
-  assert.deepEqual(plan(small, inTheme(small, A)).today?.itemIds, ['lead-1', 'walk', 'lead-2']);
+  assert.deepEqual(plan(small, inTheme(small, A)).today?.itemIds, ['lead-2', 'walk', 'lead-1']);
 });
 
 test('two sentences that reach one card, by its spelling, sense or a listed form, count as one word: set apart in a set', () => {
@@ -146,9 +146,32 @@ test('two sentences that reach one card, by its spelling, sense or a listed form
   ];
   const result = plan(items, inTheme(items, A));
   // Filling takes s-other, s-make-time and s-run first; s-making-time reaches the make-time card through a form and
-  // s-ran the run card, so they come in only to fill the set, each moved as far from its twin as the set allows.
-  assert.deepEqual(result.today?.itemIds, ['s-ran', 's-making-time', 's-other', 's-make-time', 's-run']);
+  // s-ran the run card, so they come in only to fill the set, and no two of one card stand together.
+  assert.deepEqual(result.today?.itemIds, ['s-make-time', 's-run', 's-other', 's-making-time', 's-ran']);
   assert.deepEqual(result.upNext, []);
+});
+
+test('topping up a set gives every word a second sentence before any word a third', () => {
+  // 24 sentences over six words, word A's four saved newest: two sets of 12, each word twice in the first.
+  const items = Array.from({ length: 24 }, (_, i) =>
+    sentenceItem(`r${i}`, `Round line ${i}.`, { sourceWord: i >= 18 ? 'word-a' : `word-${i % 5}`, savedAt: NOW - DAY + i * 60_000 }));
+  const words = new Map(items.map(item => [item.data.id, (item.data as { sourceWord: string }).sourceWord]));
+  const { today } = plan(items, inTheme(items, A));
+  const counts = new Map<string, number>();
+  for (const id of today?.itemIds ?? []) counts.set(words.get(id) ?? '', (counts.get(words.get(id) ?? '') ?? 0) + 1);
+  assert.equal(today?.itemIds.length, 12);
+  assert.deepEqual([...counts.values()], [2, 2, 2, 2, 2, 2]);
+  assert.equal(adjacentPair(today?.itemIds ?? [], id => words.get(id) ?? ''), false);
+});
+
+test('a word with many sentences in a set is spread across it, alternating with the others where the set allows', () => {
+  // Seven of thirteen sentences ask for one word: only strict alternation keeps them apart, and the set finds it.
+  const items = 'ABCDEFCCCCCCA'.split('').map((word, i) =>
+    sentenceItem(`g${i}`, `Spread line ${i}.`, { sourceWord: `word-${word}`, savedAt: NOW - DAY + i * 60_000 }));
+  const words = new Map(items.map(item => [item.data.id, (item.data as { sourceWord: string }).sourceWord]));
+  const ids = plan(items, inTheme(items, A)).today?.itemIds ?? [];
+  assert.equal(ids.length, 13);
+  assert.equal(ids.map(id => words.get(id)?.slice(-1)).join(''), 'CACFCECDCBCAC');
 });
 
 test('today\'s set comes from the best theme, and Unsorted is never picked however big it is', () => {

@@ -140,7 +140,7 @@ test('the receipt line names the last review and what Undo takes back; a review 
     receipt: { word: 'Could you keep an eye on my bag?', label: 'Got it', tone: 'emerald', detail: 'next in 4d' }, canUndo: true, waiting: true,
   });
   assert.match(textOf(markup), /↶ Could you keep an eye on my bag\? · Got it · next in 4d · saved on this device Undo/);
-  assert.match(markup, /<span class="shrink-0 whitespace-nowrap text-emerald-700">Got it<\/span>/);
+  assert.match(markup, /<span class="text-emerald-700">Got it<\/span>/);
   assert.match(markup, /aria-label="Undo the last answer" aria-keyshortcuts="U">Undo<\/button>/);
 
   const back = renderCard(SENTENCE, { receipt: { word: 'See you soon.', label: 'Practice', tone: 'amber' }, canUndo: true, undoLabel: 'Back' });
@@ -148,26 +148,26 @@ test('the receipt line names the last review and what Undo takes back; a review 
   assert.match(back, /aria-label="Back: take back the last choice" aria-keyshortcuts="U">Back<\/button>/);
 });
 
-test('a long sentence in the receipt line is cut short first, never past its first letters, so the outcome always shows', () => {
+test('a long sentence in the receipt line takes only what the outcome leaves, never less than its first letters', () => {
   const sentence = 'Could you keep an eye on my bag while I go to the restroom?';
   const markup = renderCard(SENTENCE, {
     receipt: { word: sentence, label: 'Not yet', tone: 'rose', detail: 'back tomorrow' }, canUndo: true, waiting: true,
   });
   assert.match(textOf(markup), /↶ Could you keep an eye on my bag while I go to the restroom\? · Not yet · back tomorrow · saved on this device Undo/);
-  // The arrow and the outcome never shrink. The sentence, its separator with it, truncates first but keeps three
-  // characters' width (a letter or two and the ellipsis); the detail truncates once it can't.
+  // The arrow and the outcome never shrink; the outcome is capped to leave the sentence three characters (a letter or
+  // two and the ellipsis) and is cut at its end past that. The sentence, its separator with it, takes what is left.
   assert.match(markup, new RegExp([
     '<span aria-hidden="true" class="shrink-0 whitespace-pre">↶ </span><span class="flex min-w-0 flex-1">',
     '<span class="min-w-\\[3ch\\] truncate">Could you keep an eye on my bag while I go to the restroom\\? ·\u00a0</span>',
-    '<span class="shrink-0 whitespace-nowrap text-rose-700">Not yet</span>',
-    '<span class="min-w-0 truncate">\u00a0· back tomorrow · saved on this device</span></span>',
+    '<span class="shrink-0 truncate max-w-\\[calc\\(100%_-_3ch\\)\\]"><span class="text-rose-700">Not yet</span>',
+    '\u00a0· back tomorrow · saved on this device</span></span>',
   ].join('')));
 });
 
 test('Back on a choice with no sentence to name (its item deleted, or a word an older session kept) names the choice alone', () => {
   const gone = renderCard(SENTENCE, { receipt: { word: '', label: 'Passive', tone: 'slate' }, canUndo: true, undoLabel: 'Back' });
   assert.match(textOf(gone), /↶ Passive Back/);
-  assert.match(gone, /<span class="flex min-w-0 flex-1"><span class="shrink-0 whitespace-nowrap text-slate-700">Passive<\/span><\/span>/);
+  assert.match(gone, /<span class="flex min-w-0 flex-1"><span class="shrink-0 truncate max-w-full"><span class="text-slate-700">Passive<\/span><\/span><\/span>/);
 });
 
 test('while an undo is under way the footer waits, and a failed undo takes the receipt\'s place', () => {
