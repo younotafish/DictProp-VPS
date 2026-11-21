@@ -39,6 +39,9 @@ const LEFT_AT = NOW - 20 * DAY;
 const PRACTICING = { practiceSince: LEFT_AT, practiceChangedAt: LEFT_AT };
 const SAYABLE = { sayableAt: LEFT_AT, practiceChangedAt: LEFT_AT };
 const PASSIVE = { practiceChangedAt: LEFT_AT };
+/** Every character JavaScript's trim() takes besides the space, the tab, the line feed and the carriage return. */
+const TRIMMED_BY_JS_ALONE = '\u000b\u000c\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a' +
+  '\u2028\u2029\u202f\u205f\u3000\ufeff';
 
 /** The THEMES section's node script with its container paths moved to this checkout and the test's database. */
 function themesScript(): string {
@@ -88,8 +91,10 @@ test("the THEMES section counts Today's sentences as the client does, by review 
     { item: sentenceItem('retired', 'Private line, retired scene.', { srs: due() }), theme: 'retired-scene' },
     // Today's even with a blank translation, and not sorted yet.
     { item: sentenceItem('blank-translation', 'Private line, blank translation.', { translation: ' \n' }) },
-    // Own, but out of Today without text.
+    // Own, but out of Today without text: blank to SQL's TRIM, or only to JavaScript's trim(), as isLoopEligible reads
+    // it.
     { item: sentenceItem('no-text', ' \n') },
+    { item: sentenceItem('js-blank', TRIMMED_BY_JS_ALONE) },
     // Not own: a Real Life record, a catalog line saved to the Sentences tab, an archived sentence, and words, one of
     // them practiced while Today still took words.
     { item: sentenceItem('real-life-sentence:cafe:01', 'Private line, catalog.', {

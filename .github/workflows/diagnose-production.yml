@@ -110,6 +110,9 @@ jobs:
               const Database = require('/app/server/node_modules/better-sqlite3');
               const { THEMES } = await import('/app/server/dist/shared/item-themes.js');
               const db = new Database('/app/data/dictprop.db', { readonly: true });
+              // Whether text isn't blank as isLoopEligible reads it, with JavaScript's trim(), which also takes the
+              // no-break space, the ideographic space, the byte order mark and other whitespace SQL's TRIM keeps.
+              db.function('has_text', { deterministic: true }, text => typeof text === 'string' && text.trim() !== '' ? 1 : 0);
               const scalar = (sql, ...args) => Object.values(db.prepare(sql).get(...args))[0];
               const hasTable = scalar(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'item_themes'`) === 1;
               if (!hasTable) {
@@ -117,12 +120,12 @@ jobs:
               } else {
                 const now = Date.now();
                 // Own live sentences as the sweep's candidates and the client's isOwnSentence read them, and those Today
-                // takes (isLoopEligible): with text.
+                // takes (isLoopEligible): with text, a JSON string that isn't blank.
                 const own = `i.type = 'sentence' AND i.is_deleted IS NOT 1 AND i.is_archived IS NOT 1
                   AND i.id NOT LIKE 'real-life-sentence:%' AND i.id NOT LIKE 'essay-sentence:%'
                   AND json_extract(i.data, '$.catalogKind') IS NULL AND json_extract(i.data, '$.catalogSentenceId') IS NULL`;
                 const eligible = `${own} AND json_type(i.data, '$.text') = 'text'
-                  AND TRIM(json_extract(i.data, '$.text'), char(32, 9, 10, 13)) <> ''`;
+                  AND has_text(json_extract(i.data, '$.text'))`;
                 // sentenceReviewState (services/sentenceOrdering.ts), from the schedule's dates alone, as the Sentences
                 // tab and Today's units read it: never reviewed, due again, or memorized until its next review.
                 const reviewState = `CASE WHEN COALESCE(json_extract(i.srs, '$.totalReviews'), 0) = 0 THEN 'unreviewed'
