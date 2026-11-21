@@ -422,7 +422,7 @@ The Today tab studies your own saved sentences in units: each unit gathers the s
 
 ### 8.3 The plan
 
-- **Header:** "Today", the date, the streak (a flame, grey at 0) and the goal ring ("9/12"). Both read "—" until the review history has loaded, and both follow units finished on another device: the history loads again, when it's over a minute old, each time the plan is taken, and every two minutes while the plan or All themes is on screen.
+- **Header:** "Today", the date, the streak (a flame, grey at 0) and the goal ring ("9/12"). Both read "—" until the review history has loaded, and both follow units finished on another device: the history loads again, when it's over a minute old, each time the plan is taken at a new time (every trigger does but a new device's library first arriving, which keeps the plan's time), and every two minutes while the plan or All themes is on screen.
 - **The unit card** shows the first of these that applies:
   - an unfinished unit, from whatever day: its theme ("🍳 Cooking at home"), "15 sentences · 6 memorized", a thin progress bar and **Continue**, which opens the lesson at its first sentence still to review;
   - while the goal isn't met, the next unit: its theme, "15 sentences" and **Start unit**, which opens the lesson at its first sentence;
