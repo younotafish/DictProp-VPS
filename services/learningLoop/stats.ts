@@ -37,34 +37,29 @@ function countsTowardGoal(event: ReviewEvent): boolean {
 }
 
 /**
- * How many days before today the recent history covers whole: it holds every review from eight days back
- * (services/reviewHistory.ts RECENT_DAYS), so the six days before today, with a day to spare across a daylight-saving
- * change.
- */
-const HISTORY_DAYS = 6;
-
-/**
- * The server's set days, with the six days before today counted from the recent history instead, zero where it shows
- * none: it holds those days' reviews whole, this device's unsent ones included and undone ones left out, and buckets
- * them by the local day each was made on, where the server uses today's offset from UTC for every day. So a review
- * still in the outbox when the set days loaded (they load once a day), one undone since, a daylight-saving change, or a
- * server counting by an older rule, as during a rollback to v3, whose set days take only triage, moves none of those
- * days the wrong way. Older days are the server's.
+ * The server's set days with what the recent history shows (the last eight days, this device's unsent reviews
+ * included), the larger count on each day. The history's reviews are bucketed as the server buckets them, by today's
+ * offset from UTC, so the two always agree on a review's day, across a daylight-saving change too, and taking the
+ * larger never counts one review on two days. So a day this device knows met the goal keeps the streak where the
+ * server's count falls short of it: a review still in the outbox when the set days loaded (they load once a day), or a
+ * server counting by an older rule, as during a rollback to v3, whose set days take only triage. Where the history is
+ * the one short (another device's reviews since it loaded, a review whose time the server moved later), the server's
+ * count stands. A review undone after the set days loaded counts until they load again the next day; a unit's Got it
+ * has no undo.
  */
 export function withRecentSetDays(setDays: SetDaysResponse['days'], history: ReviewHistory, now: number): SetDaysResponse['days'] {
+  const offsetMs = -new Date(now).getTimezoneOffset() * 60_000;
   const perDay = new Map<string, Set<string>>();
   for (const event of history.recent) {
     if (!countsTowardGoal(event)) continue;
-    const key = localDayKey(event.reviewedAt);
+    const key = new Date(event.reviewedAt + offsetMs).toISOString().slice(0, 10);
     const met = perDay.get(key) ?? new Set<string>();
     met.add(event.itemId);
     perDay.set(key, met);
   }
+  if (perDay.size === 0) return setDays;
   const merged: SetDaysResponse['days'] = { ...setDays };
-  for (let back = 1; back <= HISTORY_DAYS; back++) {
-    const key = localDayKey(localDayStart(now, -back));
-    merged[key] = perDay.get(key)?.size ?? 0;
-  }
+  for (const [key, met] of perDay) merged[key] = Math.max(Object.hasOwn(setDays, key) ? setDays[key] : 0, met.size);
   return merged;
 }
 

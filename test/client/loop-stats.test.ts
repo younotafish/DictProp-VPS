@@ -52,16 +52,15 @@ test('the streak counts back from yesterday over days that met the goal, and tod
   assert.equal(loopStreak({ constructor: 99 } as Record<string, number>, 0, NOW), 0);
 });
 
-test('the six days before today count from the recent history, older days from the server\'s set days', () => {
+test('the recent history adds to the server\'s set days, the larger count each day, and never takes from them', () => {
   const day = (back: number) => localDayKey(localDayStart(NOW, -back));
   const yesterday = localDayStart(NOW, -1) + 10 * HOUR;
   const unit = Array.from({ length: DAILY_SET_GOAL }, (_, index) => event(`s${index}`, yesterday));
   // A server rolled back to v3 counts only triage, so its set days miss yesterday's unit.
   const rolledBack = { [day(2)]: 12 };
   assert.equal(loopStreak(rolledBack, 0, NOW), 0);
-  const merged = withRecentSetDays(rolledBack, history([...unit, ...Array.from({ length: 12 }, (_, i) => event(`t${i}`, localDayStart(NOW, -2) + HOUR))]), NOW);
-  assert.equal(merged[day(1)], 12);
-  assert.equal(merged[day(2)], 12);
+  const merged = withRecentSetDays(rolledBack, history(unit), NOW);
+  assert.deepEqual(merged, { [day(2)]: 12, [day(1)]: 12 });
   assert.equal(loopStreak(merged, 0, NOW), 2);
 
   // What doesn't count toward the goal adds nothing, and the same sentence twice is one.
@@ -71,27 +70,24 @@ test('the six days before today count from the recent history, older days from t
     event('y', yesterday, { taskType: 'speak' }),
     event('s0', yesterday + HOUR),
   ];
-  assert.equal(withRecentSetDays({}, history([...unit, ...noise]), NOW)[day(1)], 12);
-
-  // The history holds those days whole: a count the server kept from before an undo, or a day it never saw, reads as the
-  // history has it, zero included; a day older than six comes from the server as it is.
-  const kept = withRecentSetDays({ [day(1)]: 30, [day(3)]: 12, [day(7)]: 12, [day(9)]: 5 }, history(noise.slice(0, 3)), NOW);
-  assert.deepEqual([kept[day(1)], kept[day(3)], kept[day(6)], kept[day(7)], kept[day(9)]], [0, 0, 0, 12, 5]);
+  assert.deepEqual(withRecentSetDays({}, history([...unit, ...noise]), NOW), { [day(1)]: 12 });
+  // Where the history is the one short, as when another device reviewed after it loaded, the server's count stands.
+  assert.deepEqual(withRecentSetDays({ [day(1)]: 30 }, history(noise), NOW), { [day(1)]: 30 });
+  const kept = { [day(1)]: 5 };
+  assert.equal(withRecentSetDays(kept, history([]), NOW), kept, 'with nothing to add, the server\'s days as they are');
 });
 
-test('across a daylight-saving change a review counts on the local day it was made, once', () => {
+test('the history buckets reviews as the server does, so across a daylight-saving change none counts on two days', () => {
   const saved = process.env.TZ;
   process.env.TZ = 'America/New_York';
   try {
-    // New York falls back on 2026-11-01. On the 3rd the server buckets with today's offset (UTC-5), so a review made at
-    // 23:30 on Oct 31 (UTC-4) reads as Nov 1 there; the device knows it was Oct 31.
+    // New York falls back at 2:00 on 2026-11-01. On the 3rd the server buckets with today's offset, UTC-5, so a review
+    // made at 00:30 on Nov 1, still UTC-4, reads as Oct 31 there. The history buckets it the same way.
     const now = new Date(2026, 10, 3, 12).getTime();
-    const lateOct31 = new Date(2026, 9, 31, 23, 30).getTime();
-    const unit = Array.from({ length: DAILY_SET_GOAL }, (_, index) => event(`d${index}`, lateOct31 - index * 60_000));
-    const server = { '2026-11-01': 12, '2026-10-31': 0 };
-    const merged = withRecentSetDays(server, history(unit), now);
-    assert.equal(merged['2026-10-31'], 12);
-    assert.equal(merged['2026-11-01'], 0, 'not counted on the next day as well');
+    const earlyNov1 = new Date(2026, 10, 1, 0, 30).getTime();
+    const unit = Array.from({ length: DAILY_SET_GOAL }, (_, index) => event(`d${index}`, earlyNov1 + index * 60_000));
+    const merged = withRecentSetDays({ '2026-10-31': 12 }, history(unit), now);
+    assert.deepEqual(merged, { '2026-10-31': 12 }, 'one day, as the server counted it, not Nov 1 as well');
   } finally {
     if (saved === undefined) delete process.env.TZ;
     else process.env.TZ = saved;

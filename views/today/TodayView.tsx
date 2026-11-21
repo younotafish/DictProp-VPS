@@ -199,7 +199,7 @@ export function TodayView({
     getSetDays(snapshot.now).then(days => { if (current) setSetDays({ day, days }); }, () => {});
     return () => { current = false; };
   }, [getSetDays, snapshot.now, day]);
-  // The last six days before today count from this device's recent history, older ones from the server (withRecentSetDays).
+  // The days before today count by the server and by this device's recent history, whichever saw more (withRecentSetDays).
   const streak = historyLoaded && setDays?.day === day
     ? loopStreak(withRecentSetDays(setDays.days, reviewHistory, snapshot.now), todayCount, snapshot.now)
     : null;
