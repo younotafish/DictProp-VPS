@@ -29,7 +29,7 @@ import {
   type ActiveUnit,
 } from '../../services/learningLoop/sessionStore';
 import { isLoopEligible, localDayStart } from '../../services/learningLoop/standing';
-import { loopStreak, setDaysKey, setDaysLoader, todaySetCount, withRecentSetDays } from '../../services/learningLoop/stats';
+import { deviceTimeZone, loopStreak, setDaysKey, setDaysLoader, todaySetCount, withRecentSetDays } from '../../services/learningLoop/stats';
 import { createThemeSync, sortingProgress, type ThemeSorting, type ThemeState } from '../../services/learningLoop/themeMap';
 import { warn } from '../../services/logger';
 import { needsReview } from '../../services/sentenceOrdering';
@@ -167,10 +167,13 @@ export function TodayView({
     setCovered(interactionLocked);
     if (!interactionLocked) setPlanTick(tick => tick + 1);
   }
-  const now = useNow(useMemo(() => [planTick, themeState], [planTick, themeState]));
-  // The device's day, offset from UTC and time zone at `now` (setDaysKey), read on every render: a zone the device moves
-  // to with Today on screen (a trip, or the clock's zone changed) takes the snapshot again, so the plan, the goal and
-  // the streak all count in the zone the device is in.
+  // The device's time zone, read on every render: a zone the device moves to with Today on screen (a trip, or the
+  // clock's zone changed) takes the time again, and the snapshot with it, so the plan, its pin, the goal and the streak
+  // all count the day it is now in that zone. The time the snapshot held can fall on another date there: 00:31 in New
+  // York is the evening before in Chicago.
+  const zone = deviceTimeZone();
+  const now = useNow(useMemo(() => [planTick, themeState, zone], [planTick, themeState, zone]));
+  // The device's day, offset from UTC and time zone at `now` (setDaysKey), which the set days are asked for under.
   const calendar = setDaysKey(now);
   const [snapshot, setSnapshot] = useState(() => ({ now, calendar, items, studyItems, themes: themeState, unit: activeUnit }));
   const libraryArrived = snapshot.items.length === 0 && items.length > 0;
@@ -223,9 +226,12 @@ export function TodayView({
   useEffect(() => {
     let current = true;
     const load = () => {
+      if (!current) return;
       const key = setDaysKey(snapshot.now);
       getSetDays(snapshot.now).then(response => {
-        if (current) setSetDays(shown => (shown?.key === key && shown.response === response ? shown : { key, response }));
+        // An answer for a zone the device has left while it loaded is no answer for the zone it's in.
+        if (!current || setDaysKey(snapshot.now) !== key) return;
+        setSetDays(shown => (shown?.key === key && shown.response === response ? shown : { key, response }));
       }, () => {});
     };
     load();

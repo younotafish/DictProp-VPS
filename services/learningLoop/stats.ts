@@ -44,7 +44,7 @@ function countsTowardGoal(event: ReviewEvent): boolean {
 }
 
 /** The IANA time zone this device is in ('America/Los_Angeles'), or undefined where the browser doesn't say. */
-function deviceTimeZone(): string | undefined {
+export function deviceTimeZone(): string | undefined {
   try {
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     return typeof zone === 'string' && zone !== '' ? zone : undefined;

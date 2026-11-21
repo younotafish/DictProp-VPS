@@ -62,7 +62,7 @@ const THEME_ROWS: [string, string][] = [
 
 /** How the fake server answers the set days' request: none yet, unless a case says otherwise. */
 const NO_SET_DAYS = () => Response.json({ days: {} });
-let answerSetDays: (url: URL) => Response = NO_SET_DAYS;
+let answerSetDays: (url: URL) => Response | Promise<Response> = NO_SET_DAYS;
 
 /** The server behind fetch: every theme row at once, nothing waiting to be sorted, and the set days as answerSetDays says. */
 function fakeServer(t: TestContext) {
@@ -336,4 +336,59 @@ test('a zone the device moves to with Today on screen takes the snapshot again, 
   assert.notEqual(today.plan().streak, 2);
   await today.until(() => today.plan().streak !== null, 'Chicago\'s set days are in');
   assert.equal(today.plan().streak, 0, 'in Chicago the unit was three days ago');
+});
+
+test('a zone change with Today on screen takes the time again, so the plan keeps today\'s pin on a date the snapshot\'s time has left', async t => {
+  const savedZone = process.env.TZ;
+  process.env.TZ = 'America/New_York';
+  t.after(() => {
+    if (savedZone === undefined) delete process.env.TZ;
+    else process.env.TZ = savedZone;
+  });
+  // 00:31 in New York (mountToday adds the minute), with today's theme the smaller one.
+  clock = localDayStart(clock, 1) + 30 * 60_000;
+  let pin = { day: '', themeId: SMALL.id };
+  const today = await mountToday(t, {}, () => {
+    pin = { day: localDayKey(Date.now()), themeId: SMALL.id };
+    writeTodayPin(USER, pin);
+  });
+  await today.until(() => today.plan().card.kind === 'start', 'the plan offers a unit');
+  const before = today.plan().card;
+  assert.equal(before.kind === 'start' && before.set.themeId, SMALL.id);
+
+  // An hour on, the device's zone becomes Chicago, where it is 00:30 the same day, and a history refresh renders Today.
+  // The snapshot's time, 00:31 in New York, was the evening before in Chicago: a plan taken at it would make yesterday
+  // today and its theme the day's.
+  clock += 59 * 60_000;
+  process.env.TZ = 'America/Chicago';
+  await today.render({ reviewHistory: { recent: [], olderTimes: [], olderCount: 0 } });
+  assert.equal(localDayKey(Date.now()), pin.day, 'the same date in Chicago');
+  const after = today.plan().card;
+  assert.equal(after.kind === 'start' && after.set.themeId, SMALL.id);
+  assert.deepEqual(readTodayPin(USER), pin);
+});
+
+test('an answer for a zone the device left while it loaded leaves the answer for the zone it is in', async t => {
+  const savedZone = process.env.TZ;
+  process.env.TZ = 'America/New_York';
+  t.after(() => {
+    answerSetDays = NO_SET_DAYS;
+    if (savedZone === undefined) delete process.env.TZ;
+    else process.env.TZ = savedZone;
+  });
+  const chicago: { reply?: (response: Response) => void } = {};
+  answerSetDays = url => (url.searchParams.get('tz') === 'America/Chicago'
+    ? new Promise<Response>(resolve => { chicago.reply = resolve; })
+    : Response.json({ days: {}, timeZone: url.searchParams.get('tz') }));
+  const today = await mountToday(t, {});
+  await today.until(() => today.plan().streak !== null, 'New York\'s set days are in');
+
+  // The zone becomes Chicago and the connection returns before Today renders again; the zone is New York again before
+  // Chicago's answer comes back.
+  process.env.TZ = 'America/Chicago';
+  browser.dispatchEvent(new Event('online'));
+  process.env.TZ = 'America/New_York';
+  assert.ok(chicago.reply, 'the connection\'s return asked for Chicago\'s days');
+  await today.tap(() => chicago.reply?.(Response.json({ days: {}, timeZone: 'America/Chicago' })));
+  assert.equal(today.plan().streak, 0, 'New York\'s answer still counts');
 });
