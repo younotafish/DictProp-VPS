@@ -3,7 +3,8 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { THEMES } from '../../server/src/shared/item-themes.ts';
-import { isOwnSentence } from '../../services/learningLoop/standing.ts';
+import { isLoopEligible, isOwnSentence } from '../../services/learningLoop/standing.ts';
+import { sentenceReviewState } from '../../services/sentenceOrdering.ts';
 import type { SRSData, StoredItem } from '../../types.ts';
 import { sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
 import { repoPath } from '../support/paths.ts';
@@ -13,7 +14,7 @@ import { block, readWorkflow } from './support/workflow.ts';
 // the client's: own sentences as isOwnSentence reads them; Today's as isLoopEligible takes them, own, live and with
 // text, translated or not; and each one's review state as sentenceReviewState gives it, from its dates alone, whatever
 // practice membership an older build left on its schedule. So its script runs here as the container runs it, on a
-// library saved through the server, and its counts are checked against those rules on the same items.
+// library saved through the server, and its counts are checked against those functions on the same items.
 
 const { env } = await import('../../server/src/env.js');
 const { db, recordThemeResults, upsertItem } = await import('../../server/src/db.js');
@@ -125,19 +126,15 @@ test("the THEMES section counts Today's sentences as the client does, by review 
   const report = JSON.parse(run.stdout);
 
   const ownLive = (item: StoredItem) => isOwnSentence(item) && !item.isDeleted && !item.isArchived;
-  const takenByToday = (item: StoredItem) =>
-    isOwnSentence(item) && !item.isDeleted && !item.isArchived && item.data.text.trim() !== '';
-  const reviewState = (srs: SRSData | undefined) => ((srs?.totalReviews ?? 0) === 0 ? 'unreviewed'
-    : (srs?.nextReview ?? 0) <= NOW ? 'due' : 'memorized');
   const carriesMembership = (srs: SRSData | undefined) =>
     srs?.practiceSince !== undefined || srs?.sayableAt !== undefined || srs?.practiceChangedAt !== undefined;
 
-  const eligible = library.filter(({ item }) => takenByToday(item));
+  const eligible = library.filter(({ item }) => isLoopEligible(item));
   const byReviewState = { unreviewed: 0, due: 0, memorized: 0 };
   const toReviewPerScene = new Map<string, number>();
   const perTheme = new Map<string, number>();
   for (const { item, theme } of eligible) {
-    const state = reviewState(item.srs);
+    const state = sentenceReviewState(item.srs, NOW);
     byReviewState[state]++;
     if (!theme) continue;
     perTheme.set(theme, (perTheme.get(theme) ?? 0) + 1);

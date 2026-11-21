@@ -102,20 +102,6 @@ export function applyPracticeMembership<T extends PracticeSrs>(
 }
 
 /**
- * Where an item stands in the loop Today ran before units, from its schedule alone: practicing, one you can say, kept
- * passive (decided, out of practice), or new to the loop (no decision yet, whatever classic reviews it has had).
- * Today's units don't read it: they take a sentence while it needs review, by its dates alone.
- */
-export type LoopStanding = 'new' | 'practicing' | 'sayable' | 'passive';
-
-export function loopStanding(srs: PracticeSrs | undefined): LoopStanding {
-  if (srs?.practiceSince !== undefined) return 'practicing';
-  if (srs?.sayableAt !== undefined) return 'sayable';
-  if (srs?.practiceChangedAt !== undefined) return 'passive';
-  return 'new';
-}
-
-/**
  * Whether a stored schedule's membership fields are well formed: each absent or a finite time at or after 0, never in
  * practice and sayable at once, and either one with the time it changed, which the stale-event guard reads (the time
  * alone means kept passive). Only applyPracticeMembership writes them, and it always leaves them so.

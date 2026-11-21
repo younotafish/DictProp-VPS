@@ -11,7 +11,8 @@
  * first bundle, so each side holds one, and both need ts-fsrs, so neither can live in server/src/shared/. KEEP
  * THE SCHEDULER CONFIG, toFsrsCard AND fromFsrsCard IDENTICAL: test/contracts/srs.test.ts runs the same reviews
  * through both copies and compares every schedule field, or each review would visibly jump after the next sync.
- * Today's practice membership needs no copy: both apply the same import-free step from server/src/shared/practice.ts.
+ * The practice membership Today's loop kept before units needs no copy: both apply the same import-free step from
+ * server/src/shared/practice.ts, for the loop's reviews an older build may still have queued.
  */
 
 import { Rating, State, createEmptyCard, fsrs, type Card, type CardInput, type Grade } from 'ts-fsrs';

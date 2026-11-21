@@ -1,23 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  applyPracticeMembership, GRADUATION_MIN_GAP_DAYS, GRADUATION_STABILITY_DAYS, loopStanding, practiceTransition,
+  applyPracticeMembership, GRADUATION_MIN_GAP_DAYS, GRADUATION_STABILITY_DAYS, practiceTransition,
 } from '../src/shared/practice.js';
 
 // The membership step itself; test/contracts/srs.test.ts runs it through both schedulers with real FSRS schedules.
 
 const DAY = 86_400_000;
-
-test('where an item stands in the loop follows its membership fields alone, never its classic reviews', () => {
-  assert.equal(loopStanding(undefined), 'new');
-  assert.equal(loopStanding({}), 'new');
-  // Reviewed the classic way (a Got it, in one of Today's units or on the Sentences tab) but never decided by a triage:
-  // still new to the loop.
-  assert.equal(loopStanding({ lastReviewDate: 5, stability: 9 }), 'new');
-  assert.equal(loopStanding({ practiceSince: 1, practiceChangedAt: 1 }), 'practicing');
-  assert.equal(loopStanding({ sayableAt: 1, practiceChangedAt: 1 }), 'sayable');
-  assert.equal(loopStanding({ practiceChangedAt: 1 }), 'passive');
-});
 
 test('a membership change deletes the key it ends, and leaves the scheduler result alone when nothing changes', () => {
   const next = { practiceSince: 1, practiceChangedAt: 1, stability: 3, fsrsState: 2 };
