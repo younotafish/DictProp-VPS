@@ -1,5 +1,5 @@
 // The themes Today groups the learner's own saved sentences into: a closed list of real-life scenes in domains. The
-// server's classifier (server/src/themes) assigns each sentence one theme id; the client plans sets from those ids
+// server's classifier (server/src/themes) assigns each sentence one theme id; the client plans units from those ids
 // (services/learningLoop). Ids are stable and never reused: a renamed scene keeps its id, and a scene that is split
 // or retired gets new ids while its old one is dropped, so a client that doesn't know an id treats the sentence as
 // unsorted. Bump THEME_TAXONOMY_VERSION when the list changes; the server's sweep then sorts every sentence again, since

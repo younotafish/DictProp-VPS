@@ -23,8 +23,9 @@ reviewRoutes.get('/reviews/history', (c) => {
   return c.json(getReviewHistory(userId, recentSince));
 });
 
-// Today's streak, for the days before today: per local day, how many items were decided in a set. A missing or
-// impossible offset reads as UTC instead of failing, since Today can't show its streak without an answer.
+// Today's streak, for the days before today: per local day, how many sentences were Got it'd in Today's units (or
+// decided in its sets, before units). A missing or impossible offset reads as UTC instead of failing, since Today can't
+// show its streak without an answer.
 reviewRoutes.get('/reviews/set-days', (c) => {
   const userId = c.get('user').id;
   const body: SetDaysResponse = { days: getSetDays(userId, parseTzOffset(c.req.query('tzOffset'))) };

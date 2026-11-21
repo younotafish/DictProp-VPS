@@ -4,9 +4,12 @@ export const REVIEW_RATINGS = ['again', 'hard', 'good', 'easy'] as const;
 export type ReviewRating = typeof REVIEW_RATINGS[number];
 
 /**
- * What a review was. Study's four prompts and the one-tap Got it ('quick'), plus Today's loop:
- * - 'triage': the choice made on meeting a set item, or the practice toggle (again joins practice, good is passive,
- *   easy is "can say it"; services/learningLoop and shared/practice.ts);
+ * What a review was: Study's four prompts and the one-tap Got it ('quick'), which is also what a Got it in one of
+ * Today's units records, in the unit's 'set:' session. The loop's three types are what Today recorded before its units;
+ * they stay accepted because an outbox may still hold reviews an older build queued, and the server still applies their
+ * practice membership (shared/practice.ts), which the app no longer acts on:
+ * - 'triage': the choice made on meeting a set's sentence, or with the practice pill (again joins practice, good is
+ *   passive, easy is "can say it");
  * - 'speak': a practice attempt said aloud;
  * - 'recall': a practice attempt in Quiet mode, thought rather than said.
  */
@@ -19,7 +22,10 @@ export const isReviewRating = (value: unknown): value is ReviewRating =>
 export const isReviewTaskType = (value: unknown): value is ReviewTaskType =>
   (REVIEW_TASK_TYPES as readonly unknown[]).includes(value);
 
-/** The ratings Today's task types take; the others take any rating, or none (a legacy client's Good). */
+/**
+ * The ratings the loop's task types take, the ones their buttons gave; the others take any rating, or none (a legacy
+ * client's Good).
+ */
 const LOOP_TASK_RATINGS: Partial<Record<ReviewTaskType, readonly ReviewRating[]>> = {
   triage: ['again', 'good', 'easy'],
   speak: ['again', 'hard', 'good'],
@@ -33,8 +39,9 @@ export const isRatingAllowedForTask = (taskType: ReviewTaskType | undefined, rat
 };
 
 /**
- * GET /api/reviews/set-days: per local day ('YYYY-MM-DD' under the asked offset), the distinct sentences decided in a
- * set (a triage review of a sentence in a 'set:' session, not undone), whatever reviews each had before.
+ * GET /api/reviews/set-days: per local day ('YYYY-MM-DD' under the asked offset), the distinct sentences Got it'd in
+ * Today's units: 'quick' reviews of sentences in 'set:' sessions, not undone. A 'triage' review there, a choice made in
+ * a set before units, counts too, so the streak keeps the days that sets met.
  */
 export interface SetDaysResponse {
   days: Record<string, number>;

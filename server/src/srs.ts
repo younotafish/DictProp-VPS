@@ -5,7 +5,8 @@
  * out of its first bundle, so each side holds a copy, and both need ts-fsrs, so neither can live in shared/. KEEP
  * THE SCHEDULER CONFIG, toFsrsCard AND fromFsrsCard IDENTICAL: test/contracts/srs.test.ts runs the same reviews
  * through both copies and compares every schedule field, or each review would visibly jump after the next sync.
- * Today's practice membership needs no copy: both apply the same import-free step from shared/practice.ts.
+ * The practice membership Today's loop kept before units needs no copy: both apply the same import-free step from
+ * shared/practice.ts.
  */
 import { Rating, State, createEmptyCard, fsrs, type Card, type CardInput, type Grade } from 'ts-fsrs';
 import { applyPracticeMembership, type PracticeSrs } from './shared/practice.js';
@@ -14,7 +15,7 @@ import type { ReviewRating, ReviewTaskType } from './shared/review.js';
 export type { ReviewRating };
 
 /**
- * The fields of a stored schedule that a review reads, Today's practice membership among them. Rows from the
+ * The fields of a stored schedule that a review reads, the practice membership among them. Rows from the
  * fixed-schedule era lack the FSRS ones.
  */
 export interface SrsLike extends PracticeSrs {

@@ -97,12 +97,14 @@ jobs:
             })();
             NODE
             echo '=== THEMES ==='
-            # Today's sentences: how many own sentences Today takes and where each stands in it, how many of them have
-            # a theme and how many a theme this build's taxonomy knows (all the planner can use), how many scenes hold
-            # 12 or more sentences new to Today (enough for a set that meets the day's goal), 6 to 11 or 1 to 5, and the
-            # largest scenes. Then the theme table itself: the rows of items that aren't sentences (words labelled
-            # before Today took only sentences, which the sweep deletes as it counts), what the model gave up on, and
-            # how recent the last label is. Counts and the taxonomy's own ids only.
+            # Today's units: how many own sentences Today takes and how many of those are unreviewed, due or memorized,
+            # how many own sentences still carry the practice membership Today's loop recorded before units (which the
+            # app ignores), how many of Today's sentences have a theme and how many a theme this build's taxonomy knows
+            # (all the planner can use), how many scenes hold 12 or more sentences to review (enough for a unit that
+            # meets the day's goal), 6 to 11 or 1 to 5, the largest scenes, and how many sentences were Got it'd in a
+            # unit over the last seven days. Then the theme table itself: the rows of items that aren't sentences (words
+            # labelled before Today took only sentences, which the sweep deletes as it counts), what the model gave up
+            # on, and how recent the last label is. Counts and the taxonomy's own ids only.
             docker compose exec -T app node - <<'NODE' || true
             (async () => {
               const Database = require('/app/server/node_modules/better-sqlite3');
@@ -113,41 +115,48 @@ jobs:
               if (!hasTable) {
                 console.log(JSON.stringify({ itemThemes: 'no table yet' }));
               } else {
+                const now = Date.now();
                 // Own live sentences as the sweep's candidates and the client's isOwnSentence read them, and those Today
-                // takes (isLoopEligible): with text and a translation.
+                // takes (isLoopEligible): with text.
                 const own = `i.type = 'sentence' AND i.is_deleted IS NOT 1 AND i.is_archived IS NOT 1
                   AND i.id NOT LIKE 'real-life-sentence:%' AND i.id NOT LIKE 'essay-sentence:%'
                   AND json_extract(i.data, '$.catalogKind') IS NULL AND json_extract(i.data, '$.catalogSentenceId') IS NULL`;
-                const filled = path => `json_type(i.data, '${path}') = 'text'
-                  AND TRIM(json_extract(i.data, '${path}'), char(32, 9, 10, 13)) <> ''`;
-                const eligible = `${own} AND ${filled('$.text')} AND ${filled('$.analysis.translation')}`;
-                // loopStanding (shared/practice.ts): from the membership fields alone, in its order.
-                const standing = `CASE WHEN json_type(i.srs, '$.practiceSince') IS NOT NULL THEN 'practicing'
-                  WHEN json_type(i.srs, '$.sayableAt') IS NOT NULL THEN 'sayable'
-                  WHEN json_type(i.srs, '$.practiceChangedAt') IS NOT NULL THEN 'passive' ELSE 'new' END`;
+                const eligible = `${own} AND json_type(i.data, '$.text') = 'text'
+                  AND TRIM(json_extract(i.data, '$.text'), char(32, 9, 10, 13)) <> ''`;
+                // sentenceReviewState (services/sentenceOrdering.ts), from the schedule's dates alone, as the Sentences
+                // tab and Today's units read it: never reviewed, due again, or memorized until its next review.
+                const reviewState = `CASE WHEN COALESCE(json_extract(i.srs, '$.totalReviews'), 0) = 0 THEN 'unreviewed'
+                  WHEN COALESCE(json_extract(i.srs, '$.nextReview'), 0) <= ${now} THEN 'due' ELSE 'memorized' END`;
+                const membership = `(json_type(i.srs, '$.practiceSince') IS NOT NULL OR json_type(i.srs, '$.sayableAt') IS NOT NULL
+                  OR json_type(i.srs, '$.practiceChangedAt') IS NOT NULL)`;
                 const themed = `JOIN item_themes t ON t.user_id = i.user_id AND t.item_id = i.id`;
                 const taxonomy = { known: JSON.stringify(THEMES.map(theme => theme.id)) };
                 const known = `t.theme_id IN (SELECT value FROM json_each(@known))`;
-                const eligibleByStanding = { new: 0, practicing: 0, sayable: 0, passive: 0 };
-                for (const row of db.prepare(`SELECT ${standing} AS standing, COUNT(*) AS sentences FROM items i
+                const eligibleByReviewState = { unreviewed: 0, due: 0, memorized: 0 };
+                for (const row of db.prepare(`SELECT ${reviewState} AS state, COUNT(*) AS sentences FROM items i
                     WHERE ${eligible} GROUP BY 1`).all()) {
-                  eligibleByStanding[row.standing] = row.sentences;
+                  eligibleByReviewState[row.state] = row.sentences;
                 }
-                const newSentencesPerScene = { '12+': 0, '6-11': 0, '1-5': 0 };
+                const toReviewPerScene = { '12+': 0, '6-11': 0, '1-5': 0 };
                 for (const { sentences } of db.prepare(`SELECT COUNT(*) AS sentences FROM items i ${themed}
-                    WHERE ${eligible} AND ${known} AND ${standing} = 'new' GROUP BY t.theme_id`).all(taxonomy)) {
-                  newSentencesPerScene[sentences >= 12 ? '12+' : sentences >= 6 ? '6-11' : '1-5']++;
+                    WHERE ${eligible} AND ${known} AND ${reviewState} <> 'memorized' GROUP BY t.theme_id`).all(taxonomy)) {
+                  toReviewPerScene[sentences >= 12 ? '12+' : sentences >= 6 ? '6-11' : '1-5']++;
                 }
                 const live = `JOIN items i ON i.id = t.item_id AND i.user_id = t.user_id AND i.is_deleted IS NOT 1 AND i.is_archived IS NOT 1`;
                 console.log(JSON.stringify({
                   ownSentences: scalar(`SELECT COUNT(*) FROM items i WHERE ${own}`),
                   eligibleItems: scalar(`SELECT COUNT(*) FROM items i WHERE ${eligible}`),
-                  eligibleByStanding,
+                  eligibleByReviewState,
+                  membershipLeft: scalar(`SELECT COUNT(*) FROM items i WHERE ${own} AND ${membership}`),
                   eligibleWithTheme: scalar(`SELECT COUNT(*) FROM items i ${themed} WHERE ${eligible} AND t.theme_id IS NOT NULL`),
                   eligibleWithKnownTheme: scalar(`SELECT COUNT(*) FROM items i ${themed} WHERE ${eligible} AND ${known}`, taxonomy),
-                  newSentencesPerScene,
+                  toReviewPerScene,
                   largestThemes: db.prepare(`SELECT t.theme_id AS theme, COUNT(*) AS sentences FROM items i ${themed}
                     WHERE ${eligible} AND t.theme_id IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 12`).all(),
+                  // A unit's Got it: a quick review in a 'set:' session (db/reviews.ts setDays), per user and sentence.
+                  unitSentencesLast7Days: scalar(`SELECT COUNT(*) FROM (SELECT DISTINCT user_id, item_id FROM review_events
+                    WHERE task_type = 'quick' AND item_type = 'sentence' AND session_id LIKE 'set:%' AND undone_at IS NULL
+                      AND reviewed_at >= ?)`, now - 7 * 24 * 60 * 60 * 1000),
                   rows: scalar('SELECT COUNT(*) FROM item_themes'),
                   nonSentenceRows: scalar(`SELECT COUNT(*) FROM item_themes t JOIN items i ON i.id = t.item_id AND i.user_id = t.user_id
                     WHERE i.type <> 'sentence'`),

@@ -30,8 +30,9 @@ export function parseReviewEvent(value: unknown): ReviewEvent | null {
   if (!Number.isInteger(nextStep) || (nextStep as number) < 0) return null;
   if (rating !== undefined && !isReviewRating(rating)) return null;
   if (taskType !== undefined && !isReviewTaskType(taskType)) return null;
-  // Today's task types each take only the ratings their buttons give, so a review that pairs one with another rating
-  // is refused rather than scheduled as something the learner never chose.
+  // The loop's task types (what Today recorded before its units, still arriving from outboxes an older build filled)
+  // each take only the ratings their buttons gave, so a review that pairs one with another rating is refused rather
+  // than scheduled as something the learner never chose.
   if (!isRatingAllowedForTask(taskType, rating)) return null;
   if (durationMs !== undefined &&
       (!Number.isInteger(durationMs) || (durationMs as number) < 0 || (durationMs as number) > MAX_REVIEW_DURATION_MS)) {

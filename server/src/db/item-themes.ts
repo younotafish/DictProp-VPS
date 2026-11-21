@@ -89,7 +89,7 @@ export interface ThemeCandidate {
   inputHash: string;
   /**
    * Never reviewed in any way, as a fresh save is: labelled first, so a sentence just saved has its scene before the
-   * sweep reaches the reviewed ones, which Today's sets offer as well.
+   * sweep reaches the reviewed ones, which Today's units offer too once they are due.
    */
   isNew: boolean;
   savedAt: number;
