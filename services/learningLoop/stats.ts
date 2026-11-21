@@ -43,9 +43,11 @@ function countsTowardGoal(event: ReviewEvent): boolean {
  * larger never counts one review on two days. So a day this device knows met the goal keeps the streak where the
  * server's count falls short of it: a review still in the outbox when the set days loaded (they load once a day), or a
  * server counting by an older rule, as during a rollback to v3, whose set days take only triage. Where the history is
- * the one short (another device's reviews since it loaded, a review whose time the server moved later), the server's
- * count stands. A review undone after the set days loaded counts until they load again the next day; a unit's Got it
- * has no undo.
+ * the one short (another device's reviews since it loaded), the server's count stands. Until the history next loads,
+ * when it takes the server's reviews afresh, two counts can still be off: one day's reviews split between another
+ * device's, on the server, and this device's still in its outbox count as the larger part, not both; and a review the
+ * server moved to a later day, because the sentence was reviewed again elsewhere first, counts on its own day too. A
+ * review undone after the set days loaded counts until they load again the next day; a unit's Got it has no undo.
  */
 export function withRecentSetDays(setDays: SetDaysResponse['days'], history: ReviewHistory, now: number): SetDaysResponse['days'] {
   const offsetMs = -new Date(now).getTimezoneOffset() * 60_000;
