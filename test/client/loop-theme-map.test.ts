@@ -255,6 +255,49 @@ test('a failed refresh is heard and tried again in a minute; once stopped nothin
   assert.deepEqual(asked, [0, 0, 1]);
 });
 
+// Today's callbacks only set state, but a caller may stop or start the sync from inside one: every refresh ends by
+// setting the next poll, and only the latest start may set it.
+test('a stop from inside the sync\'s report of a refresh, or of a failure, leaves no poll behind', async () => {
+  for (const reply of [response([['b', 'chores']], 2), new Error('offline')]) {
+    const { store } = memoryStore({ u: { taxonomyVersion: 1, latestSeq: 1, map: { a: 'cooking' } } });
+    const remote = server({ 1: reply });
+    const timers = manualTimers();
+    const sync = createThemeSync({
+      userId: 'u', fetchThemes: remote.fetch, store, ...timers,
+      onUpdate: (_state, sorting) => { if (sorting) sync.stop(); },
+      onError: () => sync.stop(),
+    });
+    sync.start();
+    await settle();
+    assert.deepEqual(remote.asked, [1]);
+    assert.equal(timers.timers.size, 0, reply instanceof Error ? 'stopped as the failure was heard' : 'stopped as the refresh was heard');
+  }
+});
+
+test('a new start from inside the sync\'s report of a refresh leaves only its own poll, which a stop clears', async () => {
+  const { store } = memoryStore({ u: { taxonomyVersion: 1, latestSeq: 1, map: { a: 'cooking' } } });
+  const remote = server({ 1: response([['b', 'chores']], 2), 2: response([], 2) });
+  const timers = manualTimers();
+  let restarted = false;
+  const sync = createThemeSync({
+    userId: 'u', fetchThemes: remote.fetch, store, ...timers,
+    onUpdate: (_state, sorting) => {
+      if (!sorting || restarted) return;
+      restarted = true;
+      sync.start();
+    },
+  });
+  sync.start();
+  await settle();
+  assert.deepEqual(remote.asked, [1, 2], 'the first start\'s refresh, then the new start\'s');
+  assert.deepEqual([...timers.timers.values()].map(timer => timer.ms), [THEME_IDLE_POLL_MS], 'one poll, the new start\'s');
+  timers.fire();
+  await settle();
+  assert.deepEqual(remote.asked, [1, 2, 2], 'the poll asks once');
+  sync.stop();
+  assert.equal(timers.timers.size, 0, 'the stop clears it, and nothing is left from the first start');
+});
+
 test('the map is kept in the library database\'s META store, per user', async () => {
   const userId = 'theme-user';
   await idbThemeStore.write(userId, { taxonomyVersion: 1, latestSeq: 4, map: { a: 'cooking' } });
