@@ -192,6 +192,12 @@ test("the route counts in the time zone the device names and names it back; a zo
   assert.deepEqual(await answer('?tzOffset=-480&tz=Asia%2FTokyo'), { days: nextDay, timeZone: 'Asia/Tokyo' });
   assert.deepEqual(await answer('?tz=Asia%2FTokyo'), { days: nextDay, timeZone: 'Asia/Tokyo' });
   assert.deepEqual(await answer('?tzOffset=540&tz=America%2FLos_Angeles'), { days: sameDay, timeZone: 'America/Los_Angeles' });
+  // The zone comes back spelled exactly as the device sent it, never as Intl spells it: the client counts its history
+  // by calendar day only when the answer names the very zone it sent. (Node 22's Intl calls Europe/Kyiv and
+  // Asia/Kolkata by their older names, Europe/Kiev and Asia/Calcutta, and corrects a name's case, as every Intl does.)
+  assert.deepEqual(await answer('?tzOffset=-480&tz=Europe%2FKyiv'), { days: nextDay, timeZone: 'Europe/Kyiv' });
+  assert.deepEqual(await answer('?tzOffset=-480&tz=Asia%2FKolkata'), { days: nextDay, timeZone: 'Asia/Kolkata' });
+  assert.deepEqual(await answer('?tzOffset=540&tz=america%2Flos_angeles'), { days: sameDay, timeZone: 'america/los_angeles' });
   // Empty, unknown, padded, too long, or a bare offset, which Intl takes but which names no zone.
   for (const tz of ['', 'Mars/Olympus', 'Etc/Unknown', ' Asia/Tokyo', 'Asia/Tokyo'.padEnd(65, '_'), 'x'.repeat(200), '+09:00']) {
     assert.deepEqual(await answer(`?tzOffset=-480&tz=${encodeURIComponent(tz)}`), { days: sameDay }, tz);

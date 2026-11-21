@@ -31,6 +31,8 @@ function parseTimeZone(value: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
+  // The name as the request spelled it, never Intl's (resolvedOptions() calls Europe/Kyiv Europe/Kiev): the client
+  // counts its history by calendar day only when the answer names the very zone it sent.
   return value;
 }
 
