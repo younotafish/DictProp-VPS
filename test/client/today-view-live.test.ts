@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { Activity, act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { StoredItem } from '../../types.ts';
+import type { ReviewEvent, StoredItem } from '../../types.ts';
 import { THEME_DOMAINS, THEME_TAXONOMY_VERSION } from '../../server/src/shared/item-themes.ts';
 import { readTodayPin, writeActiveUnit, writeTodayPin } from '../../services/learningLoop/sessionStore.ts';
-import { localDayKey } from '../../services/learningLoop/standing.ts';
+import { localDayKey, localDayStart } from '../../services/learningLoop/standing.ts';
 import { installFakeMedia } from '../support/audio/fakeMedia.ts';
 import { HOUR, reviewed, sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
 import { MemoryStorage } from '../support/memory-storage.ts';
@@ -60,7 +60,11 @@ const THEME_ROWS: [string, string][] = [
   ...SMALL_SENTENCES.map(item => [item.data.id, SMALL.id] as [string, string]),
 ];
 
-/** The server behind fetch: every theme row at once, nothing waiting to be sorted, and no set days yet. */
+/** How the fake server answers the set days' request: none yet, unless a case says otherwise. */
+const NO_SET_DAYS = () => Response.json({ days: {} });
+let answerSetDays: (url: URL) => Response = NO_SET_DAYS;
+
+/** The server behind fetch: every theme row at once, nothing waiting to be sorted, and the set days as answerSetDays says. */
 function fakeServer(t: TestContext) {
   const realFetch = globalThis.fetch;
   const themes = (rows: [string, string][]) =>
@@ -69,7 +73,7 @@ function fakeServer(t: TestContext) {
     const url = String(input);
     if (url === '/api/themes?after=0') return themes(THEME_ROWS);
     if (url.startsWith('/api/themes?after=')) return themes([]);
-    if (url.startsWith('/api/reviews/set-days?')) return Response.json({ days: {} });
+    if (url.startsWith('/api/reviews/set-days?')) return answerSetDays(new URL(url, 'https://dictprop.online'));
     throw new Error(`unexpected request ${url}`);
   }) as typeof fetch;
   t.after(() => { globalThis.fetch = realFetch; });
@@ -261,4 +265,42 @@ test('Today asks for a fresh history as it takes each snapshot, and every two mi
   assert.equal(today.intervals(2 * 60_000).length, 1);
   await today.tap(() => today.plan().onClassic());
   assert.equal(today.intervals(2 * 60_000).length, 0);
+});
+
+test('after a trip the streak waits for set days counted in the new zone, never the old zone\'s merged with the history', async t => {
+  const savedZone = process.env.TZ;
+  process.env.TZ = 'America/New_York';
+  t.after(() => {
+    answerSetDays = NO_SET_DAYS;
+    if (savedZone === undefined) delete process.env.TZ;
+    else process.env.TZ = savedZone;
+  });
+  // Yesterday's unit, Got it'd from 00:30 in New York: 23:30 the evening before in Chicago.
+  const from = localDayStart(clock, -1) + 30 * 60_000;
+  const unit: ReviewEvent[] = BIG_SENTENCES.slice(0, 12).map((item, index) => ({
+    id: `trip-${index}`, itemId: item.data.id, itemType: 'sentence', reviewedAt: from + index * 60_000, previousStep: 0,
+    nextStep: 1, rating: 'good', taskType: 'quick', sessionId: 'set:trip',
+  }));
+  // The server counts the calendar days of the zone the device names, which is the zone the test is in.
+  let online = true;
+  answerSetDays = url => {
+    if (!online) throw new TypeError('Failed to fetch');
+    return Response.json({ days: { [localDayKey(from)]: 12 }, timeZone: url.searchParams.get('tz') });
+  };
+  const today = await mountToday(t, { reviewHistory: { recent: unit, olderTimes: [], olderCount: 0 } });
+  await today.until(() => today.plan().streak !== null, 'the set days are in');
+  assert.equal(today.plan().streak, 1, 'yesterday, in New York');
+
+  // The device lands in Chicago the same day, offline. New York's days, with the history bucketed by Chicago's offset,
+  // would put the unit on yesterday and on the day before: a streak of two.
+  online = false;
+  process.env.TZ = 'America/Chicago';
+  await today.resumePage(60_000);
+  assert.equal(today.plan().streak, null);
+
+  // Back online: Chicago's days, where the unit fell on the evening before yesterday.
+  online = true;
+  await today.resumePage(60_000);
+  await today.until(() => today.plan().streak !== null, 'Chicago\'s set days are in');
+  assert.equal(today.plan().streak, 0);
 });

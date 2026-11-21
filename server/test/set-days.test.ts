@@ -110,6 +110,15 @@ test('with a time zone 5:45 ahead of UTC, the day turns at 18:15 UTC', () => {
   assert.deepEqual(getSetDays(user, 345, now), { '2026-11-10': 1, '2026-11-11': 2 });
 });
 
+test('a review stamped past the times a Date holds counts on no day, and the rest still count', () => {
+  const user = 'set-days-out-of-range';
+  // Only a corrupted last review date stamps a review there, since none is stamped before its sentence's last.
+  storeEvent(user, 'beyond', 1e17);
+  storeEvent(user, 'kept', LATE_EVENING);
+  assert.deepEqual(getSetDays(user, 0, Date.now(), 'America/Los_Angeles'), { [utcDay(LATE_EVENING)]: 1 }, 'Intl formats no time there');
+  assert.deepEqual(getSetDays(user, 0), { [utcDay(LATE_EVENING)]: 1 }, 'nor does SQLite date any past the year 9999');
+});
+
 test("a unit's Got it counts whatever reviews came before, and so does a set's choice; an undone one, a word's, another task's or session's, another user's or an older one doesn't", () => {
   const user = 'set-days-filter';
   storeEvent(user, 'new', LATE_EVENING);
@@ -202,4 +211,12 @@ test("the route counts in the time zone the device names and names it back; a zo
   for (const tz of ['', 'Mars/Olympus', 'Etc/Unknown', ' Asia/Tokyo', 'Asia/Tokyo'.padEnd(65, '_'), 'x'.repeat(200), '+09:00']) {
     assert.deepEqual(await answer(`?tzOffset=-480&tz=${encodeURIComponent(tz)}`), { days: sameDay }, tz);
   }
+});
+
+test('a review stamped past the times a Date holds leaves the route answering in a time zone', async () => {
+  // The owner's one review is the route tests' above: 23:30 UTC ten days ago, the next morning in Tokyo.
+  storeEvent(DEV_AUTH_USER.id, 'set-days-route-beyond', 1e17);
+  const response = await app.request('/api/reviews/set-days?tzOffset=-480&tz=Asia%2FTokyo');
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { days: { [utcDay(LATE_EVENING + DAY)]: 1 }, timeZone: 'Asia/Tokyo' });
 });

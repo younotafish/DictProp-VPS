@@ -4,7 +4,7 @@ import type { ReviewEvent, ReviewHistory, ReviewTaskType } from '../../types.ts'
 import type { SetDaysResponse } from '../../server/src/shared/review.ts';
 import { loadSetDays } from '../../services/api/learningLoop.ts';
 import { localDayKey, localDayStart } from '../../services/learningLoop/standing.ts';
-import { DAILY_SET_GOAL, loopStreak, setDaysLoader, todaySetCount, withRecentSetDays } from '../../services/learningLoop/stats.ts';
+import { DAILY_SET_GOAL, loopStreak, setDaysKey, setDaysLoader, todaySetCount, withRecentSetDays } from '../../services/learningLoop/stats.ts';
 import { DAY, HOUR } from '../support/loop-fixtures.ts';
 
 const NOW = new Date(2026, 10, 18, 15, 0).getTime();
@@ -97,6 +97,14 @@ test('the recent history adds to the server\'s set days, the larger count each d
   assert.equal(withRecentSetDays({ days: kept, timeZone: ZONE }, history([]), NOW), kept, 'with nothing to add, the server\'s days as they are');
 });
 
+test('a review stamped past the times a Date can name a day for counts on no day, and the rest still count', () => {
+  // Only a corrupted last review date stamps one there, since the server never stamps a review before the last.
+  const day = (back: number) => localDayKey(localDayStart(NOW, -back));
+  const recent = [...unitFrom(localDayStart(NOW, -1) + 10 * HOUR), event('far', 1e17), event('far-back', -1e17)];
+  assert.deepEqual(withRecentSetDays({ days: {} }, history(recent), NOW), { [day(1)]: 12 }, 'under today\'s offset');
+  assert.deepEqual(withRecentSetDays({ days: {}, timeZone: ZONE }, history(recent), NOW), { [day(1)]: 12 }, 'by calendar day');
+});
+
 test('in the device\'s zone a review counts on the local day it was made, so the night clocks fall back counts once', async () => {
   await inZone(LOS_ANGELES, () => {
     // Los Angeles falls back at 2:00 on 2026-11-01. A unit done at 00:30 that night, still on daylight time, belongs to
@@ -182,6 +190,19 @@ test('the set days load once a day, offset and time zone, naming the device\'s z
     process.env.TZ = 'America/Vancouver';
     await load(now + DAY);
     assert.deepEqual(loads.slice(3), [[-480, 'America/Vancouver']]);
+  });
+});
+
+test('a set days\' answer is asked for under the day, the offset from UTC and the time zone, and only those', async () => {
+  await inZone(LOS_ANGELES, () => {
+    const now = new Date(2026, 0, 15, 15).getTime();
+    assert.equal(setDaysKey(now), `2026-01-15 -480 ${LOS_ANGELES}`);
+    assert.equal(setDaysKey(now + HOUR), setDaysKey(now), 'later the same day');
+    assert.equal(setDaysKey(now + DAY), `2026-01-16 -480 ${LOS_ANGELES}`);
+    assert.equal(setDaysKey(new Date(2026, 6, 15, 15).getTime()), `2026-07-15 -420 ${LOS_ANGELES}`, 'summer time');
+    // Vancouver keeps Los Angeles's day and offset, but counts its own days.
+    process.env.TZ = 'America/Vancouver';
+    assert.equal(setDaysKey(now), '2026-01-15 -480 America/Vancouver');
   });
 });
 

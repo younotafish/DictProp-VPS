@@ -88,14 +88,17 @@ export function applyThemeRows(themes: ReadonlyMap<string, string>, rows: Themes
 /**
  * The map brought up to date: the rows changed since `current.latestSeq`, or every row when there is no map yet, the
  * server's taxonomy changed, or its sequence went back (a database restored from a backup). The result is written to
- * the store only when it changed, and a write that fails leaves the map in memory. `current` itself comes back when
- * nothing changed, so a plan built on it stays. A failed request rejects.
+ * the store only when it changed and `isCurrent` still holds once the reply is in (the sync's refresh stops holding
+ * when the sync stops or starts again, so a reply that came back late can't overwrite a newer start's map), and a
+ * write that fails leaves the map in memory. `current` itself comes back when nothing changed, so a plan built on it
+ * stays. A failed request rejects.
  */
 export async function refreshThemes(
   userId: string,
   current: ThemeState | null,
   fetchThemes: (after: number) => Promise<ThemesResponse>,
   store: ThemeStore = idbThemeStore,
+  isCurrent: () => boolean = () => true,
 ): Promise<{ state: ThemeState; sorting: ThemeSorting }> {
   let base = current;
   let response = await fetchThemes(base?.latestSeq ?? 0);
@@ -114,6 +117,7 @@ export async function refreshThemes(
     latestSeq: response.latestSeq,
     themes: applyThemeRows(base?.themes ?? new Map(), response.rows),
   };
+  if (!isCurrent()) return { state, sorting };
   try {
     await store.write(userId, { taxonomyVersion: state.taxonomyVersion, latestSeq: state.latestSeq, map: Object.fromEntries(state.themes) });
   } catch {
@@ -161,7 +165,8 @@ export interface ThemeSync {
  * Keeps the theme map current while started: the map kept on the device first (or the one held, when started again),
  * then a refresh, and another every minute while the server still has sentences to sort, or after a failed refresh
  * (offline, say), and every five minutes otherwise. A refresh that brings no change reports the same state object, so
- * nothing built on it is redone. Only the latest start's refreshes are heard, and nothing once stopped.
+ * nothing built on it is redone. Only the latest start's refreshes are heard or kept in the store, and nothing once
+ * stopped.
  */
 export function createThemeSync({
   userId, fetchThemes, store = idbThemeStore, onUpdate, onError,
@@ -176,7 +181,7 @@ export function createThemeSync({
   const refresh = async (started: number) => {
     let delay = THEME_POLL_MS;
     try {
-      const result = await refreshThemes(userId, state, fetchThemes, store);
+      const result = await refreshThemes(userId, state, fetchThemes, store, () => started === generation);
       if (started !== generation) return;
       ({ state, sorting } = result);
       if (sorting.pending <= 0) delay = THEME_IDLE_POLL_MS;

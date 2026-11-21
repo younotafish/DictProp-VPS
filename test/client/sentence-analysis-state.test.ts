@@ -162,12 +162,17 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-/** Lets the fetches, the module load and the state updates they lead to run, until `done` holds. */
+/**
+ * Lets the fetches, the module load and the state updates they lead to run, until `done` holds. It waits up to ten
+ * seconds, not a number of turns: the first lookup loads services/sentenceEnrichment, which tsx compiles as it's asked
+ * for, and with the whole suite running at once that took longer than 2,000 turns (about a tenth of a second).
+ */
 async function settle(done: () => boolean = () => true) {
-  for (let turn = 0; turn < 2000; turn++) {
+  const giveUpAt = performance.now() + 10_000;
+  do {
     await act(() => new Promise<void>(resolve => setImmediate(resolve)));
     if (done()) return;
-  }
+  } while (performance.now() < giveUpAt);
   assert.fail(`gave up waiting for ${done.toString()}`);
 }
 

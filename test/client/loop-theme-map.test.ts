@@ -298,6 +298,45 @@ test('a new start from inside the sync\'s report of a refresh leaves only its ow
   assert.equal(timers.timers.size, 0, 'the stop clears it, and nothing is left from the first start');
 });
 
+test('a refresh that comes back after the sync stopped, or started again, keeps nothing in the store', async () => {
+  const { store, values } = memoryStore({ u: { taxonomyVersion: 1, latestSeq: 1, map: { a: 'cooking' } } });
+  const replies: ((answer: ThemesResponse) => void)[] = [];
+  const fetchThemes = () => new Promise<ThemesResponse>(resolve => { replies.push(resolve); });
+  const timers = manualTimers();
+  const updates: (ThemeState | null)[] = [];
+  const sync = createThemeSync({ userId: 'u', fetchThemes, store, ...timers, onUpdate: current => updates.push(current) });
+  sync.start();
+  await settle();
+  assert.equal(replies.length, 1);
+
+  // Today hides while the refresh is out, and shows again: the new start asks again, and its reply lands first.
+  sync.stop();
+  sync.start();
+  assert.equal(replies.length, 2);
+  replies[1](response([['b', 'chores'], ['c', 'cooking']], 3));
+  await settle();
+  const newer = { taxonomyVersion: 1, latestSeq: 3, map: { a: 'cooking', b: 'chores', c: 'cooking' } };
+  assert.deepEqual(values.get('u'), newer);
+  const writes = store.writes;
+
+  // The first start's reply comes back late, from before the newer one: neither heard nor kept.
+  const heard = updates.length;
+  replies[0](response([['b', 'chores']], 2));
+  await settle();
+  assert.deepEqual(values.get('u'), newer);
+  assert.equal(store.writes, writes);
+  assert.equal(updates.length, heard);
+
+  // Nor is a reply that comes back after the sync stopped for good.
+  timers.fire();
+  assert.equal(replies.length, 3);
+  sync.stop();
+  replies[2](response([['d', 'chores']], 4));
+  await settle();
+  assert.deepEqual(values.get('u'), newer);
+  assert.equal(store.writes, writes);
+});
+
 test('the map is kept in the library database\'s META store, per user', async () => {
   const userId = 'theme-user';
   await idbThemeStore.write(userId, { taxonomyVersion: 1, latestSeq: 4, map: { a: 'cooking' } });

@@ -118,6 +118,8 @@ const SET_DAYS_REACH = 400 * 24 * 60 * 60 * 1000;
  * quarter hour.
  */
 const QUARTER_HOUR_MS = 15 * 60_000;
+/** The furthest from 1970, either way, that a Date holds: 100 million days. */
+const LATEST_DATE_MS = 8.64e15;
 
 /**
  * The calendar day a time falls on in an IANA time zone, as 'YYYY-MM-DD', put together from the date's parts, since a
@@ -151,12 +153,16 @@ function calendarDayIn(timeZone: string): (time: number) => string {
 export function getSetDays(userId: string, tzOffsetMinutes: number, now = Date.now(), timeZone?: string): Record<string, number> {
   const since = now - SET_DAYS_REACH;
   if (timeZone === undefined) {
-    const rows = reviewStmts.setDays.all(tzOffsetMinutes * 60_000, userId, since) as Array<{ day: string; items: number }>;
-    return Object.fromEntries(rows.map(row => [row.day, row.items]));
+    const rows = reviewStmts.setDays.all(tzOffsetMinutes * 60_000, userId, since) as Array<{ day: string | null; items: number }>;
+    // SQLite dates no time past the year 9999, so a review stamped there (see below) has no day.
+    return Object.fromEntries(rows.filter(row => row.day !== null).map(row => [row.day, row.items]));
   }
   const dayOf = calendarDayIn(timeZone);
   const itemsByDay = new Map<string, Set<string>>();
   for (const row of reviewStmts.setDayRows.all(userId, since) as Array<{ reviewed_at: number; item_id: string }>) {
+    // A review stamped beyond the times a Date holds falls on no day a streak reaches, and Intl can't format it: only
+    // a corrupted last review date stamps one there, since applyReviewEvent never stamps a review before the last.
+    if (!(Math.abs(row.reviewed_at) <= LATEST_DATE_MS)) continue;
     const day = dayOf(row.reviewed_at);
     const items = itemsByDay.get(day) ?? new Set<string>();
     items.add(row.item_id);

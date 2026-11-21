@@ -28,8 +28,8 @@ import {
   writeTodayPin,
   type ActiveUnit,
 } from '../../services/learningLoop/sessionStore';
-import { isLoopEligible, localDayKey, localDayStart } from '../../services/learningLoop/standing';
-import { loopStreak, setDaysLoader, todaySetCount, withRecentSetDays } from '../../services/learningLoop/stats';
+import { isLoopEligible, localDayStart } from '../../services/learningLoop/standing';
+import { loopStreak, setDaysKey, setDaysLoader, todaySetCount, withRecentSetDays } from '../../services/learningLoop/stats';
 import { createThemeSync, sortingProgress, type ThemeSorting, type ThemeState } from '../../services/learningLoop/themeMap';
 import { warn } from '../../services/logger';
 import { needsReview } from '../../services/sentenceOrdering';
@@ -208,18 +208,19 @@ export function TodayView({
   const historyLoaded = reviewHistory.loaded !== false;
   const todayCount = useMemo(() => todaySetCount(reviewHistory, snapshot.now), [reviewHistory, snapshot.now]);
   const [getSetDays] = useState(() => setDaysLoader(loadSetDays));
-  const [setDays, setSetDays] = useState<{ day: string; response: SetDaysResponse } | null>(null);
-  const day = localDayKey(snapshot.now);
+  const [setDays, setSetDays] = useState<{ key: string; response: SetDaysResponse } | null>(null);
+  // An answer counts only under the day, offset and zone it was asked for (setDaysKey): after a trip, or past
+  // midnight, offline, the streak reads '—' until a later snapshot's load succeeds.
+  const setDaysAsked = useMemo(() => setDaysKey(snapshot.now), [snapshot.now]);
   useEffect(() => {
     let current = true;
-    // Offline the streak reads '—' until a later snapshot's load succeeds.
-    getSetDays(snapshot.now).then(response => { if (current) setSetDays({ day, response }); }, () => {});
+    getSetDays(snapshot.now).then(response => { if (current) setSetDays({ key: setDaysAsked, response }); }, () => {});
     return () => { current = false; };
-  }, [getSetDays, snapshot.now, day]);
+  }, [getSetDays, snapshot.now, setDaysAsked]);
   // The days before today count by the server and by this device's recent history, whichever saw more (withRecentSetDays).
-  const streak = useMemo(() => (historyLoaded && setDays?.day === day
+  const streak = useMemo(() => (historyLoaded && setDays?.key === setDaysAsked
     ? loopStreak(withRecentSetDays(setDays.response, reviewHistory, snapshot.now), todayCount, snapshot.now)
-    : null), [historyLoaded, setDays, day, reviewHistory, todayCount, snapshot.now]);
+    : null), [historyLoaded, setDays, setDaysAsked, reviewHistory, todayCount, snapshot.now]);
 
   // The goal and the streak follow the units other devices finish: the history loads again, once it's over a minute
   // old, as each snapshot is taken, and every two minutes while the page shows the plan or the themes browser

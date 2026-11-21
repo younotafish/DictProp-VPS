@@ -14,6 +14,11 @@ import { localDayKey, localDayStart } from './standing';
 export const DAILY_SET_GOAL = 12;
 /** How far back a streak can reach: as far as the set-days endpoint counts. */
 const STREAK_DAYS = 400;
+/**
+ * The furthest from 1970, either way, that a review's day can be named under any offset from UTC: a Date holds 100
+ * million days each way, less a day for the offset.
+ */
+const LATEST_DAY_MS = 8.64e15 - 24 * 60 * 60 * 1000;
 
 /**
  * Today's count toward the goal: the distinct sentences reviewed in a unit since local midnight. A unit's lesson records
@@ -71,7 +76,9 @@ export function withRecentSetDays(setDays: SetDaysResponse, history: ReviewHisto
     : (time: number) => new Date(time + offsetMs).toISOString().slice(0, 10);
   const perDay = new Map<string, Set<string>>();
   for (const event of history.recent) {
-    if (!countsTowardGoal(event)) continue;
+    // A review stamped beyond the times a Date can name a day for falls on no day a streak reaches: only a corrupted
+    // last review date stamps one there, since the server never stamps a review before its sentence's last.
+    if (!countsTowardGoal(event) || !(Math.abs(event.reviewedAt) <= LATEST_DAY_MS)) continue;
     const key = dayOf(event.reviewedAt);
     const met = perDay.get(key) ?? new Set<string>();
     met.add(event.itemId);
@@ -100,21 +107,28 @@ export function loopStreak(setDays: SetDaysResponse['days'], todayCount: number,
 }
 
 /**
- * The set days for the streak, loaded at most once per local day, offset from UTC and time zone (daylight saving
- * changes the offset, travel the zone too) and kept in memory; a failed load isn't kept, so the next call tries again.
- * Each load names this device's time zone, so a server that knows it counts the zone's local calendar days. `load` is
- * services/api/learningLoop.ts loadSetDays.
+ * What the set days asked for at `now` depend on: the local day, the offset from UTC and the device's time zone.
+ * Daylight saving changes the offset, travel the zone too. An answer asked for under another key is no answer for this
+ * one: a day's answer from before a trip counted in the zone left behind, and merged with the history bucketed in the
+ * new zone it would count one review on two days (TodayView shows the streak only from an answer under its key).
+ */
+export function setDaysKey(now: number): string {
+  return `${localDayKey(now)} ${-new Date(now).getTimezoneOffset()} ${deviceTimeZone() ?? ''}`;
+}
+
+/**
+ * The set days for the streak, loaded at most once per key (setDaysKey) and kept in memory; a failed load isn't kept,
+ * so the next call tries again. Each load names this device's time zone, so a server that knows it counts the zone's
+ * local calendar days. `load` is services/api/learningLoop.ts loadSetDays.
  */
 export function setDaysLoader(
   load: (tzOffsetMinutes: number, timeZone?: string) => Promise<SetDaysResponse>,
 ): (now: number) => Promise<SetDaysResponse> {
   let cached: { key: string; response: Promise<SetDaysResponse> } | null = null;
   return now => {
-    const offset = -new Date(now).getTimezoneOffset();
-    const zone = deviceTimeZone();
-    const key = `${localDayKey(now)} ${offset} ${zone ?? ''}`;
+    const key = setDaysKey(now);
     if (cached?.key === key) return cached.response;
-    const response = load(offset, zone);
+    const response = load(-new Date(now).getTimezoneOffset(), deviceTimeZone());
     const entry = { key, response };
     cached = entry;
     response.catch(() => { if (cached === entry) cached = null; });
