@@ -45,4 +45,10 @@ export const isRatingAllowedForTask = (taskType: ReviewTaskType | undefined, rat
  */
 export interface SetDaysResponse {
   days: Record<string, number>;
+  /**
+   * The IANA time zone the days are local calendar days of, when the request named one the server knows (`tz`); absent
+   * when the days are bucketed by the request's fixed offset from UTC (`tzOffset`) alone, as for an older client or
+   * server.
+   */
+  timeZone?: string;
 }
