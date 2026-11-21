@@ -185,10 +185,23 @@ test('the themes browser lists the domains and themes that hold sentences in the
   assert.deepEqual(model.domains[0].themes.map(row => row.themeId), [FIRST.id, SECOND.id]);
   assert.deepEqual(model.domains[0].themes[0], {
     themeId: FIRST.id, theme: label(FIRST), toReviewCount: 30, memorizedCount: 1, total: 31, set: { themeId: FIRST.id, itemIds: ['f1'] },
+    continues: false,
   });
   assert.equal(model.domains[0].themes[1].set, null, 'nothing to review: nothing to start');
+  assert.equal(model.domains[0].themes[1].continues, false, 'nor anything to continue');
   assert.deepEqual(model.unsorted?.set, { themeId: null, itemIds: ['u1'] });
   assert.deepEqual(model.unsorted?.theme, UNSORTED);
   assert.equal(themesBrowserModel({ themes: new Map(), unsorted: themePlan(null) }).unsorted, null);
   assert.deepEqual(themesBrowserModel({ themes: new Map(), unsorted: themePlan(null) }).domains, []);
+});
+
+test('a theme whose sentences to review are all in the unfinished unit continues it rather than starting another', () => {
+  const plan = {
+    themes: new Map([[FIRST.id, themePlan(FIRST.id, { toReviewCount: 10, memorizedCount: 5, total: 15 })]]),
+    unsorted: themePlan(null, { toReviewCount: 3, total: 3 }),
+  };
+  const model = themesBrowserModel(plan);
+  assert.equal(model.domains[0].themes[0].set, null);
+  assert.equal(model.domains[0].themes[0].continues, true);
+  assert.equal(model.unsorted?.continues, true, 'a unit from Unsorted too');
 });

@@ -43,13 +43,16 @@ export interface TodayPin {
 export interface ThemePlan {
   /** Null for Unsorted: sentences without a theme yet, or with one this build doesn't know. */
   themeId: string | null;
-  /** The sentences its units can take: those that need review, less the unfinished active unit's (PlanInput.exclude). */
+  /**
+   * Its sentences that need review: never reviewed, or due again, as the Sentences tab counts them, the unfinished
+   * active unit's included. Its units take them less the active unit's (PlanInput.exclude).
+   */
   toReviewCount: number;
   /** Its sentences that don't need review: reviewed, and not yet due again. */
   memorizedCount: number;
   /** Every one of its sentences, the active unit's included. */
   total: number;
-  /** Of the sentences to review, those saved in the last 14 days. */
+  /** Of the sentences its units can take, those saved in the last 14 days. */
   recentCount: number;
   /** The unit it would give now, in lesson order; empty without a sentence to review. */
   nextSet: string[];
@@ -296,12 +299,14 @@ export function planLoop({ items, themeOf, now, recentStarts, pin, exclude = NO_
       themes.set(themeId, theme);
     }
     theme.total++;
-    if (!needsReview(item.srs, now)) theme.memorizedCount++;
-    else if (!exclude.has(item.data.id)) {
-      theme.toReviewCount++;
-      theme.candidates.push(item);
-      if (now - (item.savedAt || 0) < RECENT_MS) theme.recentCount++;
+    if (!needsReview(item.srs, now)) {
+      theme.memorizedCount++;
+      continue;
     }
+    theme.toReviewCount++;
+    if (exclude.has(item.data.id)) continue;
+    theme.candidates.push(item);
+    if (now - (item.savedAt || 0) < RECENT_MS) theme.recentCount++;
   }
 
   const profileOf = profiles(items);

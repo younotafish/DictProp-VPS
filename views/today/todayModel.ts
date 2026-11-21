@@ -155,7 +155,11 @@ export function upNextUnits(card: PlanCardModel, plan: Pick<LoopPlan, 'today' | 
   return sets.slice(0, UP_NEXT_ROWS).map(set => ({ set, theme: themeLabel(set.themeId) }));
 }
 
-/** A theme in the themes browser: its numbers, and the unit a tap starts (null without a sentence to review). */
+/**
+ * A theme in the themes browser: its numbers, and what a tap does: start the unit `set`, or, when every one of its
+ * sentences to review is in the unfinished active unit, so no new unit can take one, continue that unit (`continues`).
+ * Neither without a sentence to review.
+ */
 export interface ThemeRow {
   themeId: string | null;
   theme: ThemeLabel;
@@ -163,6 +167,7 @@ export interface ThemeRow {
   memorizedCount: number;
   total: number;
   set: PlannedSet | null;
+  continues: boolean;
 }
 
 /** The themes browser's domains, each with its themes that hold a sentence, and Unsorted, when it has any. */
@@ -178,6 +183,9 @@ const themeRow = (plan: ThemePlan, theme: ThemeLabel): ThemeRow => ({
   memorizedCount: plan.memorizedCount,
   total: plan.total,
   set: plan.nextSet.length > 0 ? { themeId: plan.themeId, itemIds: plan.nextSet } : null,
+  // A theme with a sentence a unit can take always has a next unit (setSize), so sentences to review and no next unit
+  // mean the active unit holds them all.
+  continues: plan.nextSet.length === 0 && plan.toReviewCount > 0,
 });
 
 /**

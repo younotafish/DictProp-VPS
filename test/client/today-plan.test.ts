@@ -187,7 +187,7 @@ test('the plan holds the unit card, Up next and Card review, and nothing of v3\'
 });
 
 const row = (fields: Partial<ThemeRow> & Pick<ThemeRow, 'themeId' | 'theme'>): ThemeRow => ({
-  toReviewCount: 0, memorizedCount: 0, total: 0, set: null, ...fields,
+  toReviewCount: 0, memorizedCount: 0, total: 0, set: null, continues: false, ...fields,
 });
 
 test('the themes browser groups themes under their domains, Unsorted last without a heading; a theme to review starts a unit', () => {
@@ -200,7 +200,7 @@ test('the themes browser groups themes under their domains, Unsorted last withou
     ] },
   ];
   const unsorted = row({ themeId: null, theme: UNSORTED, toReviewCount: 2, total: 2, set: { themeId: null, itemIds: ['u1', 'u2'] } });
-  const markup = renderToStaticMarkup(createElement(ThemesBrowser, { model: { domains, unsorted }, onBack: noop, onStart: noop }));
+  const markup = renderToStaticMarkup(createElement(ThemesBrowser, { model: { domains, unsorted }, onBack: noop, onStart: noop, onContinue: noop }));
   const text = textOf(markup);
   assert.match(text, new RegExp(`^All themes ${THEME_DOMAINS[0].emoji} ${THEME_DOMAINS[0].title} ${FIRST.emoji} ${FIRST.title} 30 to review · 6 memorized ›`));
   assert.ok(text.includes(`${THEME_DOMAINS[2].emoji} ${THEME_DOMAINS[2].title} ${THIRD.emoji} ${THIRD.title} 0 to review · 4 memorized 🗂️ Unsorted`));
@@ -213,6 +213,31 @@ test('the themes browser groups themes under their domains, Unsorted last withou
   assert.match(markup, /aria-label="Back to Today"/);
   assert.doesNotMatch(text, /new|practicing|can say/);
 
-  const empty = renderToStaticMarkup(createElement(ThemesBrowser, { model: { domains: [], unsorted: null }, onBack: noop, onStart: noop }));
+  const empty = renderToStaticMarkup(createElement(ThemesBrowser, { model: { domains: [], unsorted: null }, onBack: noop, onStart: noop, onContinue: noop }));
   assert.match(textOf(empty), /No themes yet: they appear as your sentences are sorted\./);
+});
+
+test('a theme whose sentences to review are all in the unfinished unit says so, and a tap continues that unit', () => {
+  const continuing = row({ themeId: FIRST.id, theme: label(FIRST), toReviewCount: 10, memorizedCount: 5, total: 15, continues: true });
+  const domains = [{ id: THEME_DOMAINS[0].id, title: THEME_DOMAINS[0].title, emoji: THEME_DOMAINS[0].emoji, themes: [continuing] }];
+  let continued = 0;
+  const element = ThemesBrowser({ model: { domains, unsorted: null }, onBack: noop, onStart: noop, onContinue: () => { continued++; } });
+  const markup = renderToStaticMarkup(element);
+  assert.match(textOf(markup), new RegExp(`${FIRST.title} 10 to review · 5 memorized · in your unit ›`));
+  assert.match(markup, new RegExp(`<button type="button" aria-label="Continue your unit from ${FIRST.title}: 10 to review"`));
+  assert.doesNotMatch(markup, /Start a unit from/);
+  assert.doesNotMatch(markup, /opacity-70/, 'not a plain row');
+  // The row's own handler is the one ThemesBrowser was given.
+  const found: unknown[] = [];
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (!node || typeof node !== 'object') return;
+    const props = (node as { props?: Record<string, unknown> }).props;
+    if (props?.row === continuing && typeof props.onContinue === 'function') found.push(props.onContinue);
+    walk(props?.children);
+  };
+  walk(element);
+  assert.equal(found.length, 1);
+  (found[0] as () => void)();
+  assert.equal(continued, 1);
 });

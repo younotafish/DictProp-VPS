@@ -444,7 +444,7 @@ The Today tab studies your own saved sentences in units: each unit gathers the s
 
 ### 8.5 All themes
 
-Every domain's themes that hold sentences Today takes, in the taxonomy's order, with Unsorted last. Each shows its emoji and title, "N to review · M memorized" and a thin bar of the memorized share. A tap on a theme with sentences to review starts a unit from it (8.4); a theme with none is a plain row. Esc goes back to the plan.
+Every domain's themes that hold sentences Today takes, in the taxonomy's order, with Unsorted last. Each shows its emoji and title, "N to review · M memorized" and a thin bar of the memorized share. "To review" counts as the Sentences tab does, your unfinished unit's sentences included. A tap on a theme with sentences to review starts a unit from it (8.4), from those your unfinished unit doesn't hold; when it holds them all, the row adds "in your unit" and a tap continues it. A theme with none to review is a plain row. Esc goes back to the plan.
 
 ### 8.6 Today's keys
 

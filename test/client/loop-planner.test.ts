@@ -88,7 +88,7 @@ test('a unit takes only sentences that need review, never reviewed or due again;
   assert.equal(later.themes.get(A)?.memorizedCount, 1);
 });
 
-test('the unfinished active unit\'s sentences are left out of every unit the plan composes, and counted only in the total', () => {
+test('the unfinished active unit\'s sentences are left out of every unit the plan composes, and still count as to review', () => {
   const a = sentences('a', 30, 1);
   const b = sentences('b', 12, 30);
   const themeOf = { ...inTheme(a, A), ...inTheme(b, B) };
@@ -99,7 +99,8 @@ test('the unfinished active unit\'s sentences are left out of every unit the pla
 
   const result = plan([...a, ...b], themeOf, { exclude: active });
   const theme = result.themes.get(A)!;
-  assert.deepEqual([theme.toReviewCount, theme.memorizedCount, theme.total, theme.recentCount], [15, 0, 30, 15]);
+  // To review counts all 30, as the Sentences tab does; the theme's units, and its score's recent saves, take the 15 left.
+  assert.deepEqual([theme.toReviewCount, theme.memorizedCount, theme.total, theme.recentCount], [30, 0, 30, 15]);
   const composed = [result.today, ...result.upNext].flatMap(set => set?.itemIds ?? []);
   assert.ok(composed.length > 0);
   assert.ok(composed.every(id => !active.has(id)), 'no unit overlaps the active one');

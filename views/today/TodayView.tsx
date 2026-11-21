@@ -296,7 +296,15 @@ export function TodayView({
       />
     );
   } else if (screen === 'themes') {
-    content = <ThemesBrowser model={themesBrowserModel(plan)} onBack={() => setScreen('plan')} onStart={startUnit} onScroll={onScroll} />;
+    content = (
+      <ThemesBrowser
+        model={themesBrowserModel(plan)}
+        onBack={() => setScreen('plan')}
+        onStart={startUnit}
+        onContinue={continueUnit}
+        onScroll={onScroll}
+      />
+    );
   } else {
     content = (
       <TodayPlan
