@@ -18,7 +18,7 @@ test('a review event keeps its known fields and drops anything else', () => {
   assert.deepEqual(parseReviewEvent(full), expected);
 });
 
-test("Today's task types take only the ratings their buttons give, and always name one; the others take any or none", () => {
+test("the loop's task types (what Today recorded before its units) take only the ratings their buttons gave, and always name one; the others take any or none", () => {
   const allowed = { triage: ['again', 'good', 'easy'], speak: ['again', 'hard', 'good'], recall: ['again', 'hard', 'good'] };
   for (const [taskType, ratings] of Object.entries(allowed)) {
     for (const rating of ['again', 'hard', 'good', 'easy']) {

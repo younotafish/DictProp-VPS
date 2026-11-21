@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { resolveSrs } from '../src/db/item-write.js';
 
-// Today's practice membership on the server: applied inside a review's own transaction, at the time the server
-// stamps the review with, and carried whole by everything that stores a schedule.
+// The practice membership Today's loop kept before units, on the server (which still applies it to the loop's reviews
+// an older build queued): applied inside a review's own transaction, at the time the server stamps the review with, and
+// carried whole by everything that stores a schedule.
 
 process.env.DEV_AUTH_BYPASS = '1';
 
@@ -96,7 +97,7 @@ test('undoing a review restores the schedule before it, membership and all', () 
   assert.deepEqual(membership(storedSrs('undo-membership')), {});
 });
 
-test('a review pairing a task type of Today with a rating it does not take is refused, and nothing is stored', async () => {
+test('a review pairing a loop task type with a rating it does not take is refused, and nothing is stored', async () => {
   upsertItem(vocabItem('refused-pair'), USER);
   for (const fields of [
     { taskType: 'triage', rating: 'hard' }, { taskType: 'speak', rating: 'easy' }, { taskType: 'recall', rating: 'easy' },

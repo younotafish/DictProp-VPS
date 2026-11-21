@@ -11,7 +11,8 @@ const DAY = 86_400_000;
 test('where an item stands in the loop follows its membership fields alone, never its classic reviews', () => {
   assert.equal(loopStanding(undefined), 'new');
   assert.equal(loopStanding({}), 'new');
-  // Reviewed the classic way (a Got it) but never decided in Today: still new to the loop.
+  // Reviewed the classic way (a Got it, in one of Today's units or on the Sentences tab) but never decided by a triage:
+  // still new to the loop.
   assert.equal(loopStanding({ lastReviewDate: 5, stability: 9 }), 'new');
   assert.equal(loopStanding({ practiceSince: 1, practiceChangedAt: 1 }), 'practicing');
   assert.equal(loopStanding({ sayableAt: 1, practiceChangedAt: 1 }), 'sayable');

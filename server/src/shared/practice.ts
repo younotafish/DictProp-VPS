@@ -1,12 +1,16 @@
-// Today's practice membership: which items you're practicing and which you can say. It rides on the item's schedule
-// (three optional fields of srs) and changes only inside a review, so it is applied in the same step as FSRS on both
-// sides: the server's review apply (db/reviews.ts, inside its transaction) and the client's optimistic copy
-// (services/fsrsScheduler.ts). test/contracts/srs.test.ts runs the same task-typed reviews through both.
+// The practice membership Today's loop kept before units: which items were in practice and which could be said. It
+// rides on the item's schedule (three optional fields of srs) and changes only inside a review, so it is applied in the
+// same step as FSRS on both sides: the server's review apply (db/reviews.ts, inside its transaction) and the
+// client's optimistic copy (services/fsrsScheduler.ts). test/contracts/srs.test.ts runs the same task-typed reviews
+// through both. Today's units record Got it ('quick'), which leaves membership alone, and the app no longer acts on
+// it. The server still applies it because an outbox may hold the loop's reviews that an older build queued, and the
+// client's copy stays in step.
 //
 // The rules:
-// - a triage review records the learner's decision on an item met in a Today set (or with the practice pill): rated
-//   again, it joins practice; rated easy, it marks the item one you can say; rated good, it keeps the item passive. Each
-//   stamps practiceChangedAt, so an item decided once, passive included, is never offered in a set again;
+// - a triage review records the decision the loop asked for on meeting an item in one of its sets, or made with the
+//   practice pill: rated again, it joins practice; rated easy, it marks the item one you can say; rated good, it keeps
+//   the item passive. Each stamps practiceChangedAt, which is how the loop kept an item decided once, passive included,
+//   out of its sets;
 // - a practice attempt said aloud ('speak') rated good graduates the item to "can say it" once the schedule is solid:
 //   in review (not relearning), stability at least GRADUATION_STABILITY_DAYS, and at least GRADUATION_MIN_GAP_DAYS
 //   since the review before it. Nothing else graduates: a Got it, a classic Study grade or a Quiet ('recall') attempt
@@ -98,9 +102,9 @@ export function applyPracticeMembership<T extends PracticeSrs>(
 }
 
 /**
- * Where an item stands in Today's loop, from its schedule alone: practicing, one you can say, kept passive (decided in
- * Today, out of practice), or new to the loop (no decision yet, whatever classic reviews it has had: a Got it says it
- * was understood, not that it can be said, so a set still offers it).
+ * Where an item stands in the loop Today ran before units, from its schedule alone: practicing, one you can say, kept
+ * passive (decided, out of practice), or new to the loop (no decision yet, whatever classic reviews it has had).
+ * Today's units don't read it: they take a sentence while it needs review, by its dates alone.
  */
 export type LoopStanding = 'new' | 'practicing' | 'sayable' | 'passive';
 
