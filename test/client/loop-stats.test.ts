@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ReviewEvent, ReviewHistory, ReviewTaskType } from '../../types.ts';
 import { localDayKey, localDayStart } from '../../services/learningLoop/standing.ts';
-import { DAILY_SET_GOAL, loopStreak, setDaysLoader, todaySetCount } from '../../services/learningLoop/stats.ts';
+import { DAILY_SET_GOAL, loopStreak, setDaysLoader, todaySetCount, withRecentSetDays } from '../../services/learningLoop/stats.ts';
 import { DAY, HOUR } from '../support/loop-fixtures.ts';
 
 const NOW = new Date(2026, 10, 18, 15, 0).getTime();
@@ -50,6 +50,30 @@ test('the streak counts back from yesterday over days that met the goal, and tod
   assert.equal(loopStreak({ [day(0)]: 99 }, 3, NOW), 0, 'today comes from this device, which knows its unsent reviews');
   assert.equal(loopStreak({}, DAILY_SET_GOAL, NOW), 1);
   assert.equal(loopStreak({ constructor: 99 } as Record<string, number>, 0, NOW), 0);
+});
+
+test('a day the recent history shows met keeps the streak where the server\'s set days fall short of it', () => {
+  const day = (back: number) => localDayKey(localDayStart(NOW, -back));
+  const yesterday = localDayStart(NOW, -1) + 10 * HOUR;
+  const unit = Array.from({ length: DAILY_SET_GOAL }, (_, index) => event(`s${index}`, yesterday));
+  // A server rolled back to v3 counts only triage, so its set days miss yesterday's unit.
+  const rolledBack = { [day(2)]: 12 };
+  assert.equal(loopStreak(rolledBack, 0, NOW), 0);
+  const merged = withRecentSetDays(rolledBack, history(unit));
+  assert.deepEqual(merged, { [day(2)]: 12, [day(1)]: 12 });
+  assert.equal(loopStreak(merged, 0, NOW), 2);
+
+  // The larger count wins each day, and what doesn't count toward the goal adds nothing.
+  const noise = [
+    event('w', yesterday, { itemType: 'vocab' }),
+    event('x', yesterday, { sessionId: undefined }),
+    event('y', yesterday, { taskType: 'speak' }),
+    event('s0', yesterday + HOUR), // the same sentence again
+  ];
+  assert.deepEqual(withRecentSetDays({ [day(1)]: 30 }, history([...unit, ...noise])), { [day(1)]: 30 });
+  assert.deepEqual(withRecentSetDays({ [day(1)]: 3 }, history(noise)), { [day(1)]: 3 });
+  const kept = { [day(1)]: 5 };
+  assert.equal(withRecentSetDays(kept, history([])), kept, 'with nothing to add, the server\'s days as they are');
 });
 
 test('the streak walks calendar days, across a daylight-saving change too', () => {

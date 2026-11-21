@@ -1,4 +1,4 @@
-import type { ReviewHistory } from '../../types';
+import type { ReviewEvent, ReviewHistory } from '../../types';
 import type { SetDaysResponse } from '../../server/src/shared/review';
 import { localDayKey, localDayStart } from './standing';
 
@@ -25,12 +25,36 @@ export function todaySetCount(history: ReviewHistory, now: number): number {
   const until = localDayStart(now, 1);
   const met = new Set<string>();
   for (const event of history.recent) {
-    if ((event.taskType === 'quick' || event.taskType === 'triage') && event.itemType === 'sentence' &&
-      event.sessionId?.startsWith('set:') && event.reviewedAt >= from && event.reviewedAt < until) {
-      met.add(event.itemId);
-    }
+    if (countsTowardGoal(event) && event.reviewedAt >= from && event.reviewedAt < until) met.add(event.itemId);
   }
   return met.size;
+}
+
+/** Whether a review counts toward its day's goal, as the server's set days count it too: see todaySetCount. */
+function countsTowardGoal(event: ReviewEvent): boolean {
+  return (event.taskType === 'quick' || event.taskType === 'triage') && event.itemType === 'sentence' &&
+    !!event.sessionId?.startsWith('set:');
+}
+
+/**
+ * The server's set days with what the recent history shows (the last eight days, this device's unsent reviews
+ * included), the larger count on each day. So a day this device knows met the goal keeps the streak where the
+ * server's count falls short: a review still in the outbox when the set days loaded (they load once a day), or a server
+ * counting by an older rule, as during a rollback to v3, whose set days take only triage.
+ */
+export function withRecentSetDays(setDays: SetDaysResponse['days'], history: ReviewHistory): SetDaysResponse['days'] {
+  const perDay = new Map<string, Set<string>>();
+  for (const event of history.recent) {
+    if (!countsTowardGoal(event)) continue;
+    const key = localDayKey(event.reviewedAt);
+    const met = perDay.get(key) ?? new Set<string>();
+    met.add(event.itemId);
+    perDay.set(key, met);
+  }
+  if (perDay.size === 0) return setDays;
+  const merged: SetDaysResponse['days'] = { ...setDays };
+  for (const [key, met] of perDay) merged[key] = Math.max(Object.hasOwn(setDays, key) ? setDays[key] : 0, met.size);
+  return merged;
 }
 
 /**

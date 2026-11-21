@@ -433,7 +433,7 @@ The Today tab studies your own saved sentences in units: each unit gathers the s
 - **The sorting line,** "Sorting your sentences into themes… 34%", stays under the card while the server still sorts.
 - **Up next:** up to three units after the card's (with an unfinished unit on the card, the plan's next unit comes first), each with its theme, its size and ›, and each starting at a tap; then "All themes ›" (8.5).
 - **Card review · N due ›** opens Card review (8.8), or reads "Resume" when one of its sessions is kept.
-- Today always opens on the plan. The plan is a snapshot: it's taken again when Today opens or comes back into view, when a lesson closes, when themes arrive and at midnight, never while you read it. The unit card's count and bar follow your reviews live.
+- Today opens on the plan when the app starts, never straight into Card review; while you use other tabs it keeps where you were, the plan, All themes or Card review, as every tab does. The plan is a snapshot: it's taken again when Today opens or comes back into view, when a lesson closes, when themes arrive and at midnight, never while you read it. The unit card's count and bar follow your reviews live.
 
 ### 8.4 A unit
 

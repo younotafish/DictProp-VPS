@@ -26,7 +26,7 @@ import {
   type ActiveUnit,
 } from '../../services/learningLoop/sessionStore';
 import { isLoopEligible, localDayKey, localDayStart } from '../../services/learningLoop/standing';
-import { loopStreak, setDaysLoader, todaySetCount } from '../../services/learningLoop/stats';
+import { loopStreak, setDaysLoader, todaySetCount, withRecentSetDays } from '../../services/learningLoop/stats';
 import { createThemeSync, sortingProgress, type ThemeSorting, type ThemeState } from '../../services/learningLoop/themeMap';
 import { warn } from '../../services/logger';
 import { countDueSpellings } from '../../services/studyStats';
@@ -107,7 +107,8 @@ export function TodayView({
   interactionLocked = false,
   onScroll,
 }: TodayViewProps) {
-  // Today always opens on its plan; Card review offers its own Resume.
+  // Today opens on its plan when the app starts, Card review offering its own Resume there; like every tab, it keeps the
+  // screen it shows while the others are in use (TabScreen's <Activity>).
   const [screen, setScreen] = useState<TodayScreen>('plan');
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -198,7 +199,10 @@ export function TodayView({
     getSetDays(snapshot.now).then(days => { if (current) setSetDays({ day, days }); }, () => {});
     return () => { current = false; };
   }, [getSetDays, snapshot.now, day]);
-  const streak = historyLoaded && setDays?.day === day ? loopStreak(setDays.days, todayCount, snapshot.now) : null;
+  // The days before today count by the server and by this device's recent history, whichever saw more (withRecentSetDays).
+  const streak = historyLoaded && setDays?.day === day
+    ? loopStreak(withRecentSetDays(setDays.days, reviewHistory), todayCount, snapshot.now)
+    : null;
 
   // A cached map whose refresh failed may be from before the server sorted more, so with no unit in it the plan says
   // the themes load online rather than that nothing is left.
