@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { ReviewRating, ReviewTaskType } from '../src/shared/review.js';
+import type { ReviewRating, ReviewTaskType, SetDaysResponse } from '../src/shared/review.js';
 
 // GET /api/reviews/set-days: Today's streak counts the distinct sentences Got it'd in its units on each local day (a
 // 'quick' review in a 'set:' session), whatever reviews each had before, and the sentences decided in its sets before
-// units replaced them (a 'triage' review in a 'set:' session).
+// units replaced them (a 'triage' review in a 'set:' session). A day is a calendar day in the device's time zone when
+// it names one, and otherwise a date under its offset from UTC.
 
 process.env.DEV_AUTH_BYPASS = '1';
 
@@ -61,6 +62,52 @@ test("sentences Got it'd in a unit count once per local day, under the offset as
   assert.deepEqual(getSetDays(user, 0), { [utcDay(LATE_EVENING)]: 2, [utcDay(LATE_EVENING - 5 * DAY)]: 1 });
   assert.deepEqual(getSetDays(user, 60), { [utcDay(LATE_EVENING + DAY)]: 2, [utcDay(LATE_EVENING - 4 * DAY)]: 1 });
   assert.deepEqual(getSetDays(user, -600), { [utcDay(LATE_EVENING)]: 2, [utcDay(LATE_EVENING - 5 * DAY)]: 1 });
+  // A zone that keeps one offset all year counts that offset's days, whatever offset the request also gives. (Etc/GMT-1
+  // is an hour east of UTC: those names take POSIX's sign.)
+  assert.deepEqual(getSetDays(user, 60, Date.now(), 'UTC'), getSetDays(user, 0));
+  assert.deepEqual(getSetDays(user, 0, Date.now(), 'Etc/GMT-1'), getSetDays(user, 60));
+  assert.deepEqual(getSetDays(user, 0, Date.now(), 'Pacific/Honolulu'), getSetDays(user, -600));
+});
+
+test('with a time zone, a day is a calendar day there: in Los Angeles, the night the clocks fall back counts as one day', () => {
+  const user = 'set-days-fall-back';
+  // Sunday 1 November 2026: 00:30 PDT, before the clocks go back an hour at 02:00, and 23:30 PST that night.
+  storeEvent(user, 'after-midnight', Date.parse('2026-11-01T07:30:00Z'));
+  storeEvent(user, 'before-midnight', Date.parse('2026-11-02T07:30:00Z'));
+  // The last moment of that Sunday and the first of Monday, either side of 08:00 UTC.
+  storeEvent(user, 'last-moment', Date.parse('2026-11-02T07:59:59.999Z'));
+  storeEvent(user, 'first-moment', Date.parse('2026-11-02T08:00:00.000Z'));
+  const now = Date.parse('2026-11-02T20:00:00Z');
+
+  assert.deepEqual(getSetDays(user, -480, now, 'America/Los_Angeles'), { '2026-11-01': 3, '2026-11-02': 1 });
+  // Neither of the day's two offsets alone gets it right: the one after the change moves the hour after midnight to
+  // the day before, and the one before it moves the evening to the day after.
+  assert.deepEqual(getSetDays(user, -480, now), { '2026-10-31': 1, '2026-11-01': 2, '2026-11-02': 1 });
+  assert.deepEqual(getSetDays(user, -420, now), { '2026-11-01': 1, '2026-11-02': 3 });
+});
+
+test('with a time zone, the evening before the clocks spring forward stays on its own day', () => {
+  const user = 'set-days-spring-forward';
+  // Saturday 13 March 2027 at 23:30 PST; the clocks go forward at 02:00 on the Sunday.
+  storeEvent(user, 'saturday-night', Date.parse('2027-03-14T07:30:00Z'));
+  // Sunday at 23:30 PDT.
+  storeEvent(user, 'sunday-night', Date.parse('2027-03-15T06:30:00Z'));
+  const now = Date.parse('2027-03-15T20:00:00Z');
+
+  assert.deepEqual(getSetDays(user, -420, now, 'America/Los_Angeles'), { '2027-03-13': 1, '2027-03-14': 1 });
+  // The offset after the change puts Saturday's evening on the Sunday.
+  assert.deepEqual(getSetDays(user, -420, now), { '2027-03-14': 2 });
+});
+
+test('with a time zone 5:45 ahead of UTC, the day turns at 18:15 UTC', () => {
+  const user = 'set-days-kathmandu';
+  storeEvent(user, 'late', Date.parse('2026-11-10T18:14:59.999Z'));
+  storeEvent(user, 'early', Date.parse('2026-11-10T18:15:00.000Z'));
+  storeEvent(user, 'early-too', Date.parse('2026-11-10T18:29:59.999Z'));
+  const now = Date.parse('2026-11-11T12:00:00Z');
+
+  assert.deepEqual(getSetDays(user, 345, now, 'Asia/Kathmandu'), { '2026-11-10': 1, '2026-11-11': 2 });
+  assert.deepEqual(getSetDays(user, 345, now), { '2026-11-10': 1, '2026-11-11': 2 });
 });
 
 test("a unit's Got it counts whatever reviews came before, and so does a set's choice; an undone one, a word's, another task's or session's, another user's or an older one doesn't", () => {
@@ -83,7 +130,10 @@ test("a unit's Got it counts whatever reviews came before, and so does a set's c
   storeEvent('someone-else', 'theirs', LATE_EVENING);
   storeEvent(user, 'long-ago', Date.now() - 401 * DAY);
   storeEvent(user, 'just-in-reach', Date.now() - 399 * DAY);
-  assert.deepEqual(getSetDays(user, 0), { [utcDay(LATE_EVENING)]: 3, [utcDay(Date.now() - 399 * DAY)]: 1 });
+  const counted = { [utcDay(LATE_EVENING)]: 3, [utcDay(Date.now() - 399 * DAY)]: 1 };
+  assert.deepEqual(getSetDays(user, 0), counted);
+  // Counted in a time zone, the same reviews count.
+  assert.deepEqual(getSetDays(user, 0, Date.now(), 'UTC'), counted);
 });
 
 test("a unit's Got it applied through the review apply counts, whatever reviews came before; the Sentences tab's Got it and the practice pill's choice don't", () => {
@@ -123,4 +173,27 @@ test('the route answers with the set days of the signed-in owner, never cached, 
   }
   assert.deepEqual(await days('?tzOffset=-720'), { [utcDay(LATE_EVENING)]: 1 });
   assert.deepEqual(await days('?tzOffset=840'), { [utcDay(LATE_EVENING + DAY)]: 1 });
+});
+
+test("the route counts in the time zone the device names and names it back; a zone it can't use leaves the offset's days, unnamed", async () => {
+  // The owner's one review, from the test before: 23:30 UTC ten days ago.
+  const answer = async (query: string) => {
+    const response = await app.request(`/api/reviews/set-days${query}`);
+    assert.equal(response.status, 200, query);
+    assert.equal(response.headers.get('cache-control'), 'private, no-store');
+    return await response.json() as SetDaysResponse;
+  };
+  const sameDay = { [utcDay(LATE_EVENING)]: 1 };
+  const nextDay = { [utcDay(LATE_EVENING + DAY)]: 1 };
+
+  // An older client sends its offset alone, and gets just what it always got.
+  assert.deepEqual(await answer('?tzOffset=-480'), { days: sameDay });
+  // Tokyo is nine hours ahead of UTC, so it was half past eight the next morning there.
+  assert.deepEqual(await answer('?tzOffset=-480&tz=Asia%2FTokyo'), { days: nextDay, timeZone: 'Asia/Tokyo' });
+  assert.deepEqual(await answer('?tz=Asia%2FTokyo'), { days: nextDay, timeZone: 'Asia/Tokyo' });
+  assert.deepEqual(await answer('?tzOffset=540&tz=America%2FLos_Angeles'), { days: sameDay, timeZone: 'America/Los_Angeles' });
+  // Empty, unknown, padded, too long, or a bare offset, which Intl takes but which names no zone.
+  for (const tz of ['', 'Mars/Olympus', 'Etc/Unknown', ' Asia/Tokyo', 'Asia/Tokyo'.padEnd(65, '_'), 'x'.repeat(200), '+09:00']) {
+    assert.deepEqual(await answer(`?tzOffset=-480&tz=${encodeURIComponent(tz)}`), { days: sameDay }, tz);
+  }
 });

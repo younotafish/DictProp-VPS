@@ -39,9 +39,10 @@ export const isRatingAllowedForTask = (taskType: ReviewTaskType | undefined, rat
 };
 
 /**
- * GET /api/reviews/set-days: per local day ('YYYY-MM-DD' under the asked offset), the distinct sentences Got it'd in
- * Today's units: 'quick' reviews of sentences in 'set:' sessions, not undone. A 'triage' review there, a choice made in
- * a set before units, counts too, so the streak keeps the days that sets met.
+ * GET /api/reviews/set-days: per local day ('YYYY-MM-DD', a calendar day in the asked zone or a date under the asked
+ * offset), the distinct sentences Got it'd in Today's units: 'quick' reviews of sentences in 'set:' sessions, not
+ * undone. A 'triage' review there, a choice made in a set before units, counts too, so the streak keeps the days that
+ * sets met.
  */
 export interface SetDaysResponse {
   days: Record<string, number>;

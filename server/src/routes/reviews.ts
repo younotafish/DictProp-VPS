@@ -16,6 +16,25 @@ function parseTzOffset(value: string | undefined): number {
   return Number.isInteger(minutes) && Math.abs(minutes) <= MAX_TZ_OFFSET_MINUTES ? minutes : 0;
 }
 
+// IANA zone names run to about 30 characters.
+const MAX_TIME_ZONE_LENGTH = 64;
+
+/**
+ * The IANA time zone a request names, or undefined for a value that names none Intl knows. A zone's name starts with a
+ * letter: Intl also takes a bare offset such as '+05:37', which names no zone, and whose days needn't turn on the
+ * quarter hours getSetDays reads them by.
+ */
+function parseTimeZone(value: string | undefined): string | undefined {
+  if (!value || value.length > MAX_TIME_ZONE_LENGTH || !/^[A-Za-z]/.test(value)) return undefined;
+  try {
+    // A RangeError for a zone Intl doesn't know.
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+  } catch {
+    return undefined;
+  }
+  return value;
+}
+
 reviewRoutes.get('/reviews/history', (c) => {
   const userId = c.get('user').id;
   const recentSince = Number(c.req.query('recentSince'));
@@ -24,11 +43,15 @@ reviewRoutes.get('/reviews/history', (c) => {
 });
 
 // Today's streak, for the days before today: per local day, how many sentences were Got it'd in Today's units (or
-// decided in its sets, before units). A missing or impossible offset reads as UTC instead of failing, since Today can't
-// show its streak without an answer.
+// decided in its sets, before units). The days are calendar days in the device's time zone (`tz`) when the server knows
+// it, and the answer names that zone. Otherwise, as for an older client, they are dates under the device's offset from
+// UTC now (`tzOffset`), and a missing or impossible offset reads as UTC instead of failing, since Today can't show its
+// streak without an answer.
 reviewRoutes.get('/reviews/set-days', (c) => {
   const userId = c.get('user').id;
-  const body: SetDaysResponse = { days: getSetDays(userId, parseTzOffset(c.req.query('tzOffset'))) };
+  const timeZone = parseTimeZone(c.req.query('tz'));
+  const days = getSetDays(userId, parseTzOffset(c.req.query('tzOffset')), Date.now(), timeZone);
+  const body: SetDaysResponse = { days, ...(timeZone ? { timeZone } : {}) };
   c.header('Cache-Control', 'private, no-store');
   return c.json(body);
 });

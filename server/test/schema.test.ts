@@ -158,8 +158,9 @@ test('statements search the indexes that remain instead of scanning tables', () 
   assert.match(plan(userStmts.findByGoogleId.source, 'g'), /SEARCH users USING INDEX sqlite_autoindex_users_2/);
   assert.match(plan(orphanStmts.items.source, 'user'), /SEARCH items USING (COVERING )?INDEX idx_items_user_/);
   assert.match(plan(orphanStmts.images.source, 'user'), /SEARCH item_images USING (COVERING )?INDEX idx_item_images_user_versions/);
-  // Today's streak reads a year of the user's reviews by time.
+  // Today's streak reads a year of the user's reviews by time, counted per day by the offset or one by one for a zone.
   assert.match(plan(reviewStmts.setDays.source, 0, 'user', 0), /SEARCH review_events USING INDEX idx_review_events_user_time \(user_id=\? AND reviewed_at>\?\)/);
+  assert.match(plan(reviewStmts.setDayRows.source, 'user', 0), /SEARCH review_events USING INDEX idx_review_events_user_time \(user_id=\? AND reviewed_at>\?\)/);
   // The theme sweep walks the items by rowid, without sorting, and finds each theme row by its key; clients' deltas
   // read the theme rows in seq order.
   const candidates = plan(themeStmts.candidates.source, 'user', 0, 500);

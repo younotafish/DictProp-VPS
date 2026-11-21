@@ -50,6 +50,15 @@ function rowToReviewEvent(row: ReviewEventColumns): ReviewEvent {
   };
 }
 
+// The reviews Today's streak counts: a sentence Got it'd in one of Today's units, a 'quick' review in the unit's 'set:'
+// session. A 'triage' there is a choice made in a set before units replaced sets, so the days those met still count.
+// Only sentences count, as on the client (stats.ts): a word triaged while Today still took words isn't one the goal
+// asks for. Any rollback build must keep task_type IN ('quick', 'triage'), or the streak loses every unit day older
+// than the client's 8-day history.
+const SET_DAY_REVIEWS = `FROM review_events
+    WHERE user_id = ? AND reviewed_at >= ? AND task_type IN ('quick', 'triage') AND item_type = 'sentence'
+      AND session_id LIKE 'set:%' AND undone_at IS NULL`;
+
 export const reviewStmts = {
   insert: db.prepare(`INSERT OR IGNORE INTO review_events
     (id, user_id, item_id, item_type, reviewed_at, previous_step, next_step, rating, task_type, duration_ms, session_id)
@@ -60,15 +69,12 @@ export const reviewStmts = {
     WHERE user_id = ? AND reviewed_at >= ? AND reviewed_at < ? AND undone_at IS NULL ORDER BY reviewed_at`).pluck(),
   countBefore: db.prepare(`SELECT COUNT(*) FROM review_events
     WHERE user_id = ? AND reviewed_at < ? AND undone_at IS NULL`).pluck(),
-  // A sentence Got it'd in one of Today's units: a 'quick' review in the unit's 'set:' session. A 'triage' there is a
-  // choice made in a set before units replaced sets, so the days those met still count. Only sentences count, as on the
-  // client (stats.ts): a word triaged while Today still took words isn't one the goal asks for. The day is the review's
-  // date shifted by the asked offset, in milliseconds.
+  // The streak's reviews (SET_DAY_REVIEWS) per day, the day being the review's date shifted by the asked offset, in ms.
   setDays: db.prepare(`SELECT date((reviewed_at + ?) / 1000, 'unixepoch') AS day, COUNT(DISTINCT item_id) AS items
-    FROM review_events
-    WHERE user_id = ? AND reviewed_at >= ? AND task_type IN ('quick', 'triage') AND item_type = 'sentence'
-      AND session_id LIKE 'set:%' AND undone_at IS NULL
+    ${SET_DAY_REVIEWS}
     GROUP BY day`),
+  // The same reviews one by one, for days that are calendar days in a time zone, which SQLite can't tell (getSetDays).
+  setDayRows: db.prepare(`SELECT reviewed_at, item_id ${SET_DAY_REVIEWS}`),
   byId: db.prepare(`SELECT id, user_id, item_id, item_type, reviewed_at, previous_step, next_step, rating, task_type, duration_ms, session_id, undone_at
     FROM review_events WHERE id = ?`),
   insertItemSnapshot: db.prepare(`INSERT INTO review_event_items (event_id, item_id, previous_srs, applied_srs, base_revision, applied_revision)
@@ -108,13 +114,55 @@ export function getReviewHistory(userId: string, recentSince: number): ReviewHis
 const SET_DAYS_REACH = 400 * 24 * 60 * 60 * 1000;
 
 /**
- * For Today's streak: how many distinct sentences were Got it'd in Today's units (or decided in its sets, before units)
- * on each day of the last 400, as 'YYYY-MM-DD' under `tzOffsetMinutes` (minutes east of UTC, the device's own days).
- * Undone reviews don't count.
+ * Every offset from UTC that IANA zones keep in the days a streak reaches, and every time one changes, falls on a
+ * quarter hour.
  */
-export function getSetDays(userId: string, tzOffsetMinutes: number, now = Date.now()): Record<string, number> {
-  const rows = reviewStmts.setDays.all(tzOffsetMinutes * 60_000, userId, now - SET_DAYS_REACH) as Array<{ day: string; items: number }>;
-  return Object.fromEntries(rows.map(row => [row.day, row.items]));
+const QUARTER_HOUR_MS = 15 * 60_000;
+
+/**
+ * The calendar day a time falls on in an IANA time zone, as 'YYYY-MM-DD', put together from the date's parts, since a
+ * locale's formatted date orders them its own way. All of one UTC quarter hour is one day there, so each quarter hour
+ * is formatted once.
+ */
+function calendarDayIn(timeZone: string): (time: number) => string {
+  const format = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const daysByQuarterHour = new Map<number, string>();
+  return time => {
+    const quarterHour = Math.floor(time / QUARTER_HOUR_MS);
+    let day = daysByQuarterHour.get(quarterHour);
+    if (day === undefined) {
+      const parts = Object.fromEntries(format.formatToParts(time).map(part => [part.type, part.value]));
+      day = `${parts.year}-${parts.month}-${parts.day}`;
+      daysByQuarterHour.set(quarterHour, day);
+    }
+    return day;
+  };
+}
+
+/**
+ * For Today's streak: how many distinct sentences were Got it'd in Today's units (or decided in its sets, before units)
+ * on each day of the last 400, as 'YYYY-MM-DD'. Undone reviews don't count.
+ * - With `timeZone`, an IANA zone Intl knows (routes/reviews.ts parseTimeZone), a day is a calendar day in that zone:
+ *   the day the device's own clock showed, as the client counts today, whatever daylight saving did in between.
+ * - Without one, as an older client asks, a day is the date under `tzOffsetMinutes`, the device's offset east of UTC
+ *   now, so across a daylight-saving change a review made in the hour next to midnight counts on the day beside its
+ *   own.
+ */
+export function getSetDays(userId: string, tzOffsetMinutes: number, now = Date.now(), timeZone?: string): Record<string, number> {
+  const since = now - SET_DAYS_REACH;
+  if (timeZone === undefined) {
+    const rows = reviewStmts.setDays.all(tzOffsetMinutes * 60_000, userId, since) as Array<{ day: string; items: number }>;
+    return Object.fromEntries(rows.map(row => [row.day, row.items]));
+  }
+  const dayOf = calendarDayIn(timeZone);
+  const itemsByDay = new Map<string, Set<string>>();
+  for (const row of reviewStmts.setDayRows.all(userId, since) as Array<{ reviewed_at: number; item_id: string }>) {
+    const day = dayOf(row.reviewed_at);
+    const items = itemsByDay.get(day) ?? new Set<string>();
+    items.add(row.item_id);
+    itemsByDay.set(day, items);
+  }
+  return Object.fromEntries([...itemsByDay].map(([day, items]) => [day, items.size]));
 }
 
 export interface AppliedReviewResult {
