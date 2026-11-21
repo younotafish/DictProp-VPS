@@ -1,7 +1,7 @@
 /**
- * How the study dashboard's review history is loaded: how far back a load takes reviews in full, how a loaded history
- * joins what this device already holds, and when to load it again. hooks/useReviewHistory.ts imports it when it first
- * loads, so none of it is in the app's first chunk.
+ * How the review history (the study dashboard's numbers, and Today's goal and streak) is loaded: how far back a load
+ * takes reviews in full, how a loaded history joins what this device already holds, and when to load it again.
+ * hooks/useReviewHistory.ts imports it when it first loads, so none of it is in the app's first chunk.
  */
 import type { ReviewEvent, ReviewHistory } from '../types';
 
@@ -54,11 +54,12 @@ export function mergeLoadedHistory(
 }
 
 /**
- * Whether coming back online or into view should load the history again: no load has finished, the last one failed
- * (an offline start), or it's a quarter of an hour old, so the reviews made on other devices since arrive.
+ * Whether the history should load again: no load has finished, the last one failed (an offline start), or it's older
+ * than `maxAgeMs`, so the reviews made on other devices since arrive. Coming back online or into view waits a quarter of
+ * an hour; a screen that shows what other devices study asks for less (startHistoryLoads' refresh).
  */
-export function shouldReloadHistory(lastLoad: HistoryLoad | null, now: number): boolean {
-  return !lastLoad || !lastLoad.ok || now - lastLoad.at > HISTORY_RELOAD_AFTER_MS;
+export function shouldReloadHistory(lastLoad: HistoryLoad | null, now: number, maxAgeMs = HISTORY_RELOAD_AFTER_MS): boolean {
+  return !lastLoad || !lastLoad.ok || now - lastLoad.at > maxAgeMs;
 }
 
 type Listenable = Pick<EventTarget, 'addEventListener' | 'removeEventListener'>;
@@ -79,27 +80,42 @@ export interface HistoryLoadContext {
   now?: () => number;
 }
 
+/** The history's loads once started: a refresh asked for, and the stop. */
+export interface HistoryLoads {
+  /**
+   * Loads the history again if the last load failed or is older than `maxAgeMs`, and no load is under way: so a screen
+   * can ask whenever it shows, and as often as it likes, without loading the history over and over.
+   */
+  refresh(maxAgeMs: number): void;
+  /** After this no load changes the history, and nothing more loads. */
+  stop(): void;
+}
+
 /**
  * Loads the history now, and again when the page comes back online or into view once the last load failed or is a
- * quarter of an hour old. Only the latest load counts, so one a later load overtook changes nothing. Returns the stop,
- * after which no load changes the history and nothing more loads.
+ * quarter of an hour old, or when asked (refresh). Only the latest load counts, so one a later load overtook changes
+ * nothing.
  */
-export function startHistoryLoads(context: HistoryLoadContext): () => void {
+export function startHistoryLoads(context: HistoryLoadContext): HistoryLoads {
   const now = context.now ?? Date.now;
   let latest = 0;
   let stopped = false;
+  let loading = false;
   let lastLoad: HistoryLoad | null = null;
   const load = () => {
     const run = ++latest;
+    loading = true;
     const startedAt = now();
     const pending = context.pending();
     context.fetch(recentSinceFor(pending, startedAt)).then(remote => {
       if (stopped || run !== latest) return;
+      loading = false;
       lastLoad = { ok: true, at: now() };
       const pendingIds = new Set(pending.map(event => event.id));
       context.update(current => ({ ...mergeLoadedHistory(current, remote, pendingIds, startedAt), loaded: true }));
     }, error => {
       if (stopped || run !== latest) return;
+      loading = false;
       lastLoad = { ok: false, at: now() };
       context.onError(error);
     });
@@ -110,9 +126,14 @@ export function startHistoryLoads(context: HistoryLoadContext): () => void {
   load();
   context.online.addEventListener('online', reloadIfStale);
   context.page.addEventListener('visibilitychange', reloadIfShown);
-  return () => {
-    stopped = true;
-    context.online.removeEventListener('online', reloadIfStale);
-    context.page.removeEventListener('visibilitychange', reloadIfShown);
+  return {
+    refresh: maxAgeMs => {
+      if (!stopped && !loading && shouldReloadHistory(lastLoad, now(), maxAgeMs)) load();
+    },
+    stop: () => {
+      stopped = true;
+      context.online.removeEventListener('online', reloadIfStale);
+      context.page.removeEventListener('visibilitychange', reloadIfShown);
+    },
   };
 }

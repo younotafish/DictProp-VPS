@@ -26,7 +26,7 @@ export function useReviewOutbox(
   userId: string,
   { latestItemsRef, updateItems, storeItemUpdates }: Pick<Library, 'latestItemsRef' | 'updateItems' | 'storeItemUpdates'>,
 ) {
-  const { reviewHistory, recordReview, removeReview } = useReviewHistory(userId);
+  const { reviewHistory, recordReview, removeReview, refreshReviewHistory } = useReviewHistory(userId);
   const reviewFlushPromiseRef = useRef<Promise<void> | null>(null);
 
   const reconcileAppliedReview = useCallback(async (
@@ -61,7 +61,9 @@ export function useReviewOutbox(
           isRefused: isRefusedReviewMutation,
           reconcile: response => reconcileAppliedReview(response.items, response.baseRevisions),
           // The reviewed copies already hold the new schedule, so the item push delivers it. The user hears of
-          // the refusal (components/RefusedReviews): the review itself never counts on the server.
+          // the refusal (components/RefusedReviews): the review itself never counts on the server, which never stored
+          // it, so it leaves this device's history too, and Today's goal and streak and the study dashboard count
+          // what the server counts.
           recordRefusal: (mutation, error) => {
             warn('Review was refused; its schedule will sync with the item:', error);
             const reviewed = latestItemsRef.current.find(item => item.data.id === mutation.event.itemId) ?? mutation.seedItem;
@@ -72,6 +74,7 @@ export function useReviewOutbox(
               reviewedAt: mutation.event.reviewedAt,
               reason: describeRefusedReview(error),
             });
+            removeReview(mutation.event.id);
           },
           remove: eventId => removePendingReviewMutation(userId, eventId),
           markUnsynced: markItemsUnsynced,
@@ -89,7 +92,7 @@ export function useReviewOutbox(
     } finally {
       if (reviewFlushPromiseRef.current === flush) reviewFlushPromiseRef.current = null;
     }
-  }, [userId, latestItemsRef, markItemsUnsynced, reconcileAppliedReview]);
+  }, [userId, latestItemsRef, markItemsUnsynced, reconcileAppliedReview, removeReview]);
 
   /**
    * Takes back a review on the server. False, with nothing done, while the review is still in the outbox, not yet on
@@ -190,5 +193,5 @@ export function useReviewOutbox(
     return !readPendingReviewMutations(userId).some(mutation => mutation.event.id === reviewEvent.id);
   }, [userId, latestItemsRef, recordReview, updateItems, storeItemUpdates, flushPendingReviews]);
 
-  return { reviewHistory, flushPendingReviews, undoSRSReview, updateSRS };
+  return { reviewHistory, refreshReviewHistory, flushPendingReviews, undoSRSReview, updateSRS };
 }

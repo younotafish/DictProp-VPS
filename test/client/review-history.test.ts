@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ReviewEvent, ReviewHistory } from '../../types.ts';
+import { todaySetCount } from '../../services/learningLoop/stats.ts';
 import {
   HISTORY_RELOAD_AFTER_MS,
   RECENT_DAYS,
@@ -76,16 +77,37 @@ test('coming back online or into view loads the history again after a failed loa
   assert.equal(shouldReloadHistory({ ok: true, at: NOW - 15 * MINUTE }, NOW), false);
   assert.equal(shouldReloadHistory({ ok: true, at: NOW - 15 * MINUTE - 1 }, NOW), true);
   assert.equal(shouldReloadHistory({ ok: true, at: NOW + MINUTE }, NOW), false, 'a clock that went back waits');
+  // A screen showing what other devices study asks for a fresher history.
+  assert.equal(shouldReloadHistory({ ok: true, at: NOW - MINUTE }, NOW, MINUTE), false);
+  assert.equal(shouldReloadHistory({ ok: true, at: NOW - MINUTE - 1 }, NOW, MINUTE), true);
 });
 
-/** startHistoryLoads against a fake server, outbox, window and document, with a clock the test moves. */
-function startLoads(initial: LoadedReviewHistory = { recent: [], olderTimes: [], olderCount: 0, loaded: false }) {
+test('a review taken out of the history, as one the server refused, stays out when a load that saw it queued lands', () => {
+  // The load began while both reviews waited in the outbox; the server stored only 'kept'.
+  const kept = review('kept', NOW - 2 * HOUR);
+  const refused = review('refused', NOW - HOUR);
+  const pendingIds = new Set([kept.id, refused.id]);
+  const remote = history([kept]);
+  const without = (held: ReviewHistory): ReviewHistory => ({ ...held, recent: held.recent.filter(event => event.id !== refused.id) });
+  // Taken out before the load lands: the merge brings back only what the history still holds.
+  assert.deepEqual(ids(mergeLoadedHistory(without(history([kept, refused])), remote, pendingIds, NOW - 5_000)), ['kept']);
+  // Taken out after: a later load finds it neither on the server nor in the outbox.
+  const merged = without(mergeLoadedHistory(history([kept, refused]), remote, pendingIds, NOW - 5_000));
+  assert.deepEqual(ids(merged), ['kept']);
+  assert.deepEqual(ids(mergeLoadedHistory(merged, remote, new Set(), NOW)), ['kept']);
+});
+
+/**
+ * startHistoryLoads against a fake server, outbox (`pending`, as the first load reads it), window and document, with a
+ * clock the test moves.
+ */
+function startLoads(initial: LoadedReviewHistory = { recent: [], olderTimes: [], olderCount: 0, loaded: false }, pending: ReviewEvent[] = []) {
   const fetches: { recentSince: number; resolve: (remote: ReviewHistory) => void; reject: (error: unknown) => void }[] = [];
   const errors: unknown[] = [];
   const online = new EventTarget();
   const page = Object.assign(new EventTarget(), { visibilityState: 'visible' as DocumentVisibilityState });
-  const harness = { history: initial, pending: [] as ReviewEvent[], clock: NOW, fetches, errors, online, page, stop: () => {} };
-  harness.stop = startHistoryLoads({
+  const harness = { history: initial, pending, clock: NOW, fetches, errors, online, page };
+  const { refresh, stop } = startHistoryLoads({
     pending: () => harness.pending,
     fetch: recentSince => new Promise((resolve, reject) => fetches.push({ recentSince, resolve, reject })),
     update: merge => { harness.history = merge(harness.history); },
@@ -94,7 +116,7 @@ function startLoads(initial: LoadedReviewHistory = { recent: [], olderTimes: [],
     page,
     now: () => harness.clock,
   });
-  return harness;
+  return Object.assign(harness, { refresh, stop });
 }
 /** Lets the loads' promise callbacks run. */
 const settle = () => new Promise(resolve => setImmediate(resolve));
@@ -173,4 +195,63 @@ test('a load keeps the reviews in the outbox when it began, and reaches back to 
   loads.fetches[1].resolve(history([review('server', NOW - DAY)]));
   await settle();
   assert.deepEqual(ids(loads.history), ['queued', 'server']);
+});
+
+/** A Got it in another device's unit at `reviewedAt`, as the server reports it. */
+const unitGotIt = (id: string, reviewedAt: number): ReviewEvent => ({
+  id, itemId: `sentence-${id}`, itemType: 'sentence', reviewedAt, previousStep: 0, nextStep: 1, rating: 'good',
+  taskType: 'quick', sessionId: 'set:phone-unit',
+});
+
+test('a refresh loads again once the history is older than asked, so another device\'s unit counts, keeping the outbox\'s reviews', async () => {
+  const queued = review('queued', NOW - HOUR, 'hard');
+  const loads = startLoads({ recent: [queued], olderTimes: [], olderCount: 0, loaded: false }, [queued]);
+  loads.fetches[0].resolve(history([]));
+  await settle();
+  assert.equal(todaySetCount(loads.history, NOW), 0);
+
+  // A phone finishes a unit; Today, on screen here, asks for a history no more than a minute old.
+  const phone = Array.from({ length: 12 }, (_, index) => unitGotIt(`p${index}`, NOW + (index + 1) * 30_000));
+  loads.clock = NOW + MINUTE;
+  loads.refresh(MINUTE);
+  assert.equal(loads.fetches.length, 1, 'a minute old, not more: nothing loads');
+  loads.clock = NOW + 10 * MINUTE;
+  loads.refresh(MINUTE);
+  assert.equal(loads.fetches.length, 2);
+  loads.fetches[1].resolve(history(phone));
+  await settle();
+  assert.equal(todaySetCount(loads.history, loads.clock), 12, 'the phone\'s unit, as the server reports it');
+  assert.ok(ids(loads.history).includes('queued'), 'the review still in the outbox stays');
+});
+
+test('a refresh never loads while a load is under way, the latest one, and tries again at once after a failure', async () => {
+  const loads = startLoads();
+  loads.refresh(MINUTE);
+  assert.equal(loads.fetches.length, 1, 'the first load is under way: no second fetch');
+
+  // Coming back online overtakes the first load; the refresh waits for the latest, not the overtaken one.
+  loads.online.dispatchEvent(new Event('online'));
+  assert.equal(loads.fetches.length, 2);
+  loads.fetches[0].resolve(history([]));
+  await settle();
+  loads.refresh(MINUTE);
+  assert.equal(loads.fetches.length, 2, 'the latest load is still under way');
+  loads.fetches[1].reject(new Error('offline'));
+  await settle();
+
+  loads.refresh(MINUTE);
+  assert.equal(loads.fetches.length, 3, 'the last load failed: the refresh tries again at once');
+  loads.fetches[2].resolve(history([]));
+  await settle();
+  assert.equal(loads.history.loaded, true);
+});
+
+test('once stopped, a refresh loads nothing', async () => {
+  const loads = startLoads();
+  loads.fetches[0].resolve(history([]));
+  await settle();
+  loads.stop();
+  loads.clock += HOUR;
+  loads.refresh(MINUTE);
+  assert.equal(loads.fetches.length, 1);
 });
