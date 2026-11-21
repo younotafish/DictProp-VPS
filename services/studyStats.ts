@@ -50,8 +50,7 @@ const reviewsOf = (item: StoredItem) => item.srs?.totalReviews ?? 0;
  * How many distinct spellings are due: studied (not archived or deleted), reviewed before, and with their next
  * review come, the 'due' of services/sentenceReviewState.ts. A never-reviewed card waits with the new ones
  * instead, and the review session buries same-spelling senses, so a spelling counts once. The Study dashboard
- * shows this number. Card review's cards are words and phrases, which Today's loop doesn't take (it learns the
- * learner's own sentences), so their Today standing plays no part.
+ * shows this number.
  */
 export function countDueSpellings(items: readonly StoredItem[], now: number): number {
   const spellings = new Set<string>();
