@@ -9,6 +9,8 @@ process.env.DEV_AUTH_BYPASS = '1';
 const { createApp } = await import('../src/app.js');
 const { recordThemeResults } = await import('../src/db.js');
 const { DEV_AUTH_USER } = await import('../src/middleware/auth.js');
+const { createThemeSweep } = await import('../src/themes/sweep.js');
+const { answering, manualClock, provider } = await import('./support/theme-sweep.js');
 const USER = DEV_AUTH_USER.id;
 const [A, B] = THEMES.map(theme => theme.id);
 
@@ -72,7 +74,14 @@ test('an after that is no seq is refused', async () => {
   }
 });
 
-test('a save or an import that succeeds tells the sweep; a refused one, a read or a review does not', async () => {
+/** An item's first review, with the device's copy of the item as its seed when one is given. */
+const reviewBody = (itemId: string, seedItem?: unknown, itemType = 'sentence') => ({
+  event: { id: `${itemId}-review`, itemId, itemType, reviewedAt: 1, previousStep: 0, nextStep: 1 },
+  itemIds: [itemId],
+  ...(seedItem ? { seedItem } : {}),
+});
+
+test("a save, an import or a review that brings its sentence tells the sweep when it succeeds; a refused one, a read, a seedless or retried review, or a word's, does not", async () => {
   const fake = fakeSweep();
   const app = createApp({ logging: false, serveStaticFiles: false, themeSweep: fake.sweep });
   const item = {
@@ -89,12 +98,56 @@ test('a save or an import that succeeds tells the sweep; a refused one, a read o
   assert.deepEqual(fake.writes, [USER]);
   assert.equal((await send('PUT', '/api/items', [{ ...item, type: 'card' }])).status, 400);
   assert.equal((await app.request('/api/items')).status, 200);
-  assert.equal((await send('POST', '/api/reviews/apply', {
-    event: { id: 'route-write-review', itemId: 'route-write', itemType: 'sentence', reviewedAt: 1, previousStep: 0, nextStep: 1 },
-    itemIds: ['route-write'],
-  })).status, 201);
+  assert.equal((await send('POST', '/api/reviews/apply', reviewBody('route-write'))).status, 201);
   assert.deepEqual(fake.writes, [USER]);
+
+  // A sentence saved and reviewed before its first push reaches the server as its review's seed, and no push follows.
+  const seeded = { ...item, data: { id: 'route-seeded', text: 'Bring it along.', sourceWord: 'bring' }, srs: srs('route-seeded', 'sentence') };
+  assert.equal((await send('POST', '/api/reviews/apply', reviewBody('route-seeded', seeded))).status, 201);
+  assert.deepEqual(fake.writes, [USER, USER]);
+  // Its retry is answered from the stored review, and a seed that isn't the reviewed item's is refused.
+  assert.equal((await send('POST', '/api/reviews/apply', reviewBody('route-seeded', seeded))).status, 200);
+  assert.equal((await send('POST', '/api/reviews/apply', reviewBody('route-other', seeded))).status, 400);
+  // A word's seed brings nothing the sweep sorts.
+  const word = { type: 'vocab', data: { id: 'route-seeded-word', word: 'along' }, srs: srs('route-seeded-word', 'vocab'), savedAt: 1 };
+  assert.equal((await send('POST', '/api/reviews/apply', reviewBody('route-seeded-word', word, 'vocab'))).status, 201);
+  assert.deepEqual(fake.writes, [USER, USER]);
+
   const imported = { ...item, data: { id: 'route-import', text: 'Import it all.', sourceWord: 'import' }, srs: srs('route-import', 'sentence') };
   assert.equal((await send('POST', '/api/import', [imported])).status, 200);
-  assert.deepEqual(fake.writes, [USER, USER]);
+  assert.deepEqual(fake.writes, [USER, USER, USER]);
+});
+
+test('a review that brings a new sentence gets it sorted half a minute later, after a sweep that had finished, with no save', async () => {
+  const clock = manualClock();
+  const fake = provider(answering());
+  const sweep = createThemeSweep({ chat: fake.chat, model: 'test-model', now: clock.now, setTimer: clock.setTimer });
+  const app = createApp({ logging: false, serveStaticFiles: false, themeSweep: sweep });
+  const themes = async () => {
+    const response = await app.request('/api/themes');
+    assert.equal(response.status, 200);
+    return await response.json() as ThemesResponse;
+  };
+
+  // The sweep sorts what the library holds and finishes, so nothing waits and no later report starts it again.
+  await themes();
+  await sweep.idle(USER);
+  const { pending, status } = await themes();
+  assert.deepEqual({ pending, status }, { pending: 0, status: 'idle' });
+  const asked = fake.asked.length;
+
+  const id = 'route-sweep-seeded';
+  const seed = { type: 'sentence', data: { id, text: 'Sort this one out.', sourceWord: 'sort' }, srs: srs(id, 'sentence'), savedAt: 1 };
+  const response = await app.request('/api/reviews/apply', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reviewBody(id, seed)),
+  });
+  assert.equal(response.status, 201);
+  clock.advance(30_000 - 1);
+  await sweep.idle(USER);
+  assert.equal(fake.asked.length, asked, 'the sweep waits half a minute after the write');
+  clock.advance(1);
+  await sweep.idle(USER);
+  assert.deepEqual(fake.asked.slice(asked), [['Sort this one out.']]);
+  assert.deepEqual((await themes()).rows.filter(([itemId]) => itemId === id), [[id, A]]);
+  sweep.stop();
 });

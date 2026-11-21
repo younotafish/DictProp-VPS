@@ -3,9 +3,8 @@ import { applyReviewEvent, getReviewHistory, getSetDays, undoReviewEvent } from 
 import type { AppEnv } from '../middleware/auth.js';
 import { readJsonObject } from '../middleware/json-body.js';
 import type { SetDaysResponse } from '../shared/review.js';
+import type { ThemeSweep } from '../themes/sweep.js';
 import { checkStoredItem, isItemId, MAX_ID_LENGTH, parseReviewEvent, type ValidStoredItem } from '../validation.js';
-
-export const reviewRoutes = new Hono<AppEnv>();
 
 // Real UTC offsets run from 12 hours west to 14 east.
 const MAX_TZ_OFFSET_MINUTES = 14 * 60;
@@ -35,62 +34,74 @@ function parseTimeZone(value: string | undefined): string | undefined {
   return value;
 }
 
-reviewRoutes.get('/reviews/history', (c) => {
-  const userId = c.get('user').id;
-  const recentSince = Number(c.req.query('recentSince'));
-  if (!Number.isFinite(recentSince) || recentSince < 0) return c.json({ error: 'Invalid recentSince parameter' }, 400);
-  return c.json(getReviewHistory(userId, recentSince));
-});
+/** The review routes; `themeSweep` hears of a review whose seed can bring a sentence the server never held. */
+export function createReviewRoutes(themeSweep: Pick<ThemeSweep, 'noteItemWrite'>) {
+  const routes = new Hono<AppEnv>();
 
-// Today's streak, for the days before today: per local day, how many sentences were Got it'd in Today's units (or
-// decided in its sets, before units). The days are calendar days in the device's time zone (`tz`) when the server knows
-// it, and the answer names that zone. Otherwise, as for an older client, they are dates under the device's offset from
-// UTC now (`tzOffset`), and a missing or impossible offset reads as UTC instead of failing, since Today can't show its
-// streak without an answer.
-reviewRoutes.get('/reviews/set-days', (c) => {
-  const userId = c.get('user').id;
-  const timeZone = parseTimeZone(c.req.query('tz'));
-  const days = getSetDays(userId, parseTzOffset(c.req.query('tzOffset')), Date.now(), timeZone);
-  const body: SetDaysResponse = { days, ...(timeZone ? { timeZone } : {}) };
-  c.header('Cache-Control', 'private, no-store');
-  return c.json(body);
-});
+  routes.get('/reviews/history', (c) => {
+    const userId = c.get('user').id;
+    const recentSince = Number(c.req.query('recentSince'));
+    if (!Number.isFinite(recentSince) || recentSince < 0) return c.json({ error: 'Invalid recentSince parameter' }, 400);
+    return c.json(getReviewHistory(userId, recentSince));
+  });
 
-// Atomically append an idempotent review event and advance the latest server schedule.
-reviewRoutes.post('/reviews/apply', async (c) => {
-  const userId = c.get('user').id;
-  const body = await readJsonObject(c);
-  const event = parseReviewEvent(body?.event);
-  // Clients list the reviewed item here; the review applies to event.itemId alone.
-  const itemIds = body?.itemIds;
-  const seedItem = body?.seedItem;
-  if (!event || !Array.isArray(itemIds) || itemIds.length === 0 || itemIds.length > 100 || !itemIds.every(isItemId)) {
-    return c.json({ error: 'Invalid review mutation' }, 400);
-  }
-  let seed: ValidStoredItem | undefined;
-  if (seedItem !== undefined) {
-    const checked = checkStoredItem(seedItem);
-    if ('error' in checked) return c.json({ error: `Invalid review seed: ${checked.error}` }, 400);
-    seed = checked.item;
-    if (seed.data.id !== event.itemId || seed.type !== event.itemType ||
-        seed.srs.id !== event.itemId || seed.srs.totalReviews !== event.previousStep) {
-      return c.json({ error: 'Review seed does not match event' }, 400);
+  // Today's streak, for the days before today: per local day, how many sentences were Got it'd in Today's units (or
+  // decided in its sets, before units). The days are calendar days in the device's time zone (`tz`) when the server
+  // knows it, and the answer names that zone. Otherwise, as for an older client, they are dates under the device's
+  // offset from UTC now (`tzOffset`), and a missing or impossible offset reads as UTC instead of failing, since Today
+  // can't show its streak without an answer.
+  routes.get('/reviews/set-days', (c) => {
+    const userId = c.get('user').id;
+    const timeZone = parseTimeZone(c.req.query('tz'));
+    const days = getSetDays(userId, parseTzOffset(c.req.query('tzOffset')), Date.now(), timeZone);
+    const body: SetDaysResponse = { days, ...(timeZone ? { timeZone } : {}) };
+    c.header('Cache-Control', 'private, no-store');
+    return c.json(body);
+  });
+
+  // Atomically append an idempotent review event and advance the latest server schedule.
+  routes.post('/reviews/apply', async (c) => {
+    const userId = c.get('user').id;
+    const body = await readJsonObject(c);
+    const event = parseReviewEvent(body?.event);
+    // Clients list the reviewed item here; the review applies to event.itemId alone.
+    const itemIds = body?.itemIds;
+    const seedItem = body?.seedItem;
+    if (!event || !Array.isArray(itemIds) || itemIds.length === 0 || itemIds.length > 100 || !itemIds.every(isItemId)) {
+      return c.json({ error: 'Invalid review mutation' }, 400);
     }
-  }
-  // A review can reach the server before its item: an implicit catalog sentence on its first review, or an
-  // item whose first push hasn't landed. The seed is stored in the review's own transaction, so an
-  // offline/retried review cannot race the ordinary item sync or an importer, or advance the schedule twice.
-  // Existing items win, except a deleted catalog record, which a new review's seed brings back (db/reviews.ts); otherwise the seed is used only for an absent id.
-  const result = applyReviewEvent(event, itemIds, userId, seed);
-  if (!result) return c.json({ error: 'Review item not found' }, 404);
-  return c.json(result, result.applied ? 201 : 200);
-});
+    let seed: ValidStoredItem | undefined;
+    if (seedItem !== undefined) {
+      const checked = checkStoredItem(seedItem);
+      if ('error' in checked) return c.json({ error: `Invalid review seed: ${checked.error}` }, 400);
+      seed = checked.item;
+      if (seed.data.id !== event.itemId || seed.type !== event.itemType ||
+          seed.srs.id !== event.itemId || seed.srs.totalReviews !== event.previousStep) {
+        return c.json({ error: 'Review seed does not match event' }, 400);
+      }
+    }
+    // A review can reach the server before its item: an implicit catalog sentence on its first review, or an
+    // item whose first push hasn't landed. The seed is stored in the review's own transaction, so an
+    // offline/retried review cannot race the ordinary item sync or an importer, or advance the schedule twice.
+    // Existing items win, except a deleted catalog record, which a new review's seed brings back (db/reviews.ts);
+    // otherwise the seed is used only for an absent id.
+    const result = applyReviewEvent(event, itemIds, userId, seed);
+    if (!result) return c.json({ error: 'Review item not found' }, 404);
+    // A seed can store one of the learner's own sentences the server never held: one saved and reviewed before its
+    // first push, which then never comes. So the theme sweep's count goes stale as after a save. It hears once the
+    // review has committed, so its count sees the row; a retry stores nothing, and it hears nothing.
+    if (result.applied && seed?.type === 'sentence') themeSweep.noteItemWrite(userId);
+    return c.json(result, result.applied ? 201 : 200);
+  });
 
-reviewRoutes.post('/reviews/:id/undo', (c) => {
-  const userId = c.get('user').id;
-  const eventId = c.req.param('id');
-  if (!eventId || eventId.length > MAX_ID_LENGTH) return c.json({ error: 'Invalid review event id' }, 400);
-  const result = undoReviewEvent(eventId, userId);
-  if (!result) return c.json({ error: 'Review event not found' }, 404);
-  return c.json(result);
-});
+  routes.post('/reviews/:id/undo', (c) => {
+    const userId = c.get('user').id;
+    const eventId = c.req.param('id');
+    if (!eventId || eventId.length > MAX_ID_LENGTH) return c.json({ error: 'Invalid review event id' }, 400);
+    const result = undoReviewEvent(eventId, userId);
+    if (!result) return c.json({ error: 'Review event not found' }, 404);
+    return c.json(result);
+  });
+
+  return routes;
+}

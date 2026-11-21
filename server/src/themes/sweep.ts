@@ -1,8 +1,9 @@
 // The theme sweep: labels a user's own saved sentences with Today's themes, a batch at a time, one request at a time.
 // It starts on its own (a minute after the server starts, half a minute after the last item write, and when
-// GET /api/themes finds sentences waiting while it is idle); no client asks for a classification. Its count of the
-// sentences still waiting lives in memory: a sweep counts them, and an item write makes the count stale, so the sweep
-// counts again before its next batch, never-reviewed sentences first. A provider that keeps failing pauses it.
+// GET /api/themes finds sentences waiting while it is idle); no client asks for a classification. An item write is a
+// save, an import, or a review whose seed can bring a sentence the server never held. Its count of the sentences still
+// waiting lives in memory: a sweep counts them, and an item write makes the count stale, so the sweep counts again
+// before its next batch, never-reviewed sentences first. A provider that keeps failing pauses it.
 import { createChatClient, DEEPSEEK_MODEL, type AiError, type ChatJson } from '../ai-client.js';
 import {
   deleteNonSentenceThemes,
@@ -241,5 +242,8 @@ export function createThemeSweep({
   };
 }
 
-/** The server's sweep: GET /api/themes reports it and item writes nudge it (app.ts); index.ts starts and stops it. */
+/**
+ * The server's sweep: GET /api/themes reports it and item writes nudge it (app.ts, and routes/reviews.ts for a review's
+ * seed); index.ts starts and stops it.
+ */
 export const themeSweep = createThemeSweep();

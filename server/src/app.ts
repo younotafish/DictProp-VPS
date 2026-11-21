@@ -22,7 +22,7 @@ import { essaysRoutes } from './routes/essays.js';
 import { importRoutes } from './routes/import.js';
 import { itemImageRoutes } from './routes/item-images.js';
 import { itemsRoutes } from './routes/items.js';
-import { reviewRoutes } from './routes/reviews.js';
+import { createReviewRoutes } from './routes/reviews.js';
 import { sentenceEnrichmentRoutes } from './routes/sentence-enrichments.js';
 import { createThemeRoutes } from './routes/themes.js';
 import { ttsRoutes } from './routes/tts.js';
@@ -161,7 +161,8 @@ export function createApp(options: AppOptions = {}) {
   app.use('/api/import', createRateLimit(5, 60 * 60 * 1000));
   app.use('/api/import', createConcurrencyLimit(1, 'Another data import is already running. Try again shortly.'));
   // A save or an import can bring items the theme sweep hasn't labelled: its count goes stale, and it runs once the
-  // writes stop.
+  // writes stop. So can a review whose seed brings its sentence with it, which tells the sweep from its own route
+  // (routes/reviews.ts), the one place that knows the review carried a seed and was applied.
   const themeSweep = options.themeSweep ?? serverThemeSweep;
   for (const [method, path] of [['PUT', '/api/items'], ['POST', '/api/import']] as const) {
     app.use(path, async (c, next) => {
@@ -173,7 +174,7 @@ export function createApp(options: AppOptions = {}) {
   app.route('/api', itemsRoutes);
   app.route('/api', itemImageRoutes);
   app.route('/api', importRoutes);
-  app.route('/api', reviewRoutes);
+  app.route('/api', createReviewRoutes(themeSweep));
   app.route('/api', essaysRoutes);
   app.route('/api', options.aiRouter ?? aiRoutes);
   app.route('/api', ttsRoutes);
