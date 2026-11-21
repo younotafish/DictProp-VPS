@@ -239,7 +239,7 @@ const popup = (facts: Partial<PopupKeyState>): Resolve => probe => action(resolv
   typing: false, onControl: false, pageCount: 3, saved: true, ...facts,
 } as PopupKeyState));
 const today = (facts: Partial<TodayKeyState>): Resolve => probe => action(resolveTodayKey(pressOf(probe), {
-  screen: 'card', canUndo: false, undoing: false, appUndoOpen: false, isMac: true, typing: false, onControl: false, dialogOutside: false,
+  hasPrimary: true, typing: false, onControl: false, dialogOutside: false,
   ...facts,
 } as TodayKeyState));
 
@@ -274,15 +274,7 @@ const KEY_TABLES: { section: ShortcutSection['id']; contexts: Record<string, Res
   },
   {
     section: 'today', // views/today/todayKeys.ts
-    contexts: {
-      'the plan': today({ screen: 'plan', hasPrimary: true }),
-      'a cue': today({ footer: 'cue', canHint: true, canUndo: true }),
-      'meeting a sentence': today({ footer: 'meet', sayOpen: true, canUndo: true }),
-      'a practice card\'s answer': today({ footer: 'run', canUndo: true }),
-      'saying a sentence twice': today({ footer: 'encode' }),
-      'the last look': today({ footer: 'look' }),
-      'the summary of a session ended early': today({ screen: 'summary', hasPrimary: true, canResume: true, canUndo: true }),
-    },
+    contexts: { 'the plan with a unit to start or continue': today({ hasPrimary: true }) },
   },
   {
     section: 'search', // components/search/searchSheetKeys.ts
@@ -359,24 +351,13 @@ test('the cross-check sees the keys each table\'s own tests pin, and a modifier 
   assert.ok(!chords('search').has('Mod+←'));
 });
 
-test('Today\'s section lists the player\'s keys, and the cross-check sees each of them in the resolver', () => {
-  const rowsOf = section(mac, 'today').rows;
-  for (const [keys, label] of [
-    [['Space', 'Enter'], 'Show the answer; after saying a sentence twice, or a last look, the next card'],
-    [['1', '←'], 'Meeting a sentence: Practice'],
-    [['2', '↓'], 'Meeting a sentence: Passive'],
-    [['3', '→'], 'Meeting a sentence: Can say it (closed once the hint has shown)'],
-    [['1'], 'Practicing: Not yet'],
-    [['3', 'Enter'], 'Practicing: Got it'],
-    [['U'], 'Undo the last answer; meeting sentences, go back to the last choice'],
-    [['⌘', 'Z'], 'The same as U, unless the Undo pill shows: then it undoes what the pill offers'],
-  ] as const) assert.ok(hasRow(rowsOf, [...keys], label), label);
-  // Today teaches sentences, so its rows never say item or word.
-  for (const row of rowsOf) assert.doesNotMatch(row.label, /\b(item|word)s?\b/i, row.label);
-  const found = new Set(tableChords(KEY_TABLES.find(table => table.section === 'today')!.contexts).keys());
-  for (const key of ['Enter', 'Space', 'H', '1', '2', '3', '←', '↓', '→', 'P', 'U', 'Mod+Z', 'R']) assert.ok(found.has(key), key);
-  // 1-3 a session swallows are no action of its own, Esc goes through the escape stack, and Shift changes nothing.
-  // The answer is the sentence, which P says, so there is no example for E to play, and the sheet has no E row.
-  for (const key of ['4', 'Mod+1', 'Mod+R', 'Esc', 'Tab', 'Shift+H', 'Shift+Z', 'E']) assert.ok(!found.has(key), `no ${key}`);
-  assert.ok(!rowsOf.some(row => row.keys.includes('E')), 'no E row');
+test('Today\'s section lists Enter on the plan and Esc in All themes, and the cross-check sees Enter, and only Enter, in the resolver', () => {
+  // A unit's sentences open in the lesson, whose keys the Sentences section lists; Today itself has these two.
+  assert.deepEqual(section(mac, 'today').rows, [
+    { keys: ['Enter'], label: 'On the plan: Start unit, or Continue' },
+    { keys: ['Esc'], label: 'In All themes: back to the plan' },
+  ]);
+  // Esc goes through the escape stack, so the resolver holds Enter alone: Shift changes nothing, and ⌘ or Ctrl leave it
+  // to the app.
+  assert.deepEqual([...tableChords(KEY_TABLES.find(table => table.section === 'today')!.contexts).keys()], ['Enter']);
 });

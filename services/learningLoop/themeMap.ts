@@ -6,7 +6,7 @@ import type { LoopPlan } from './planner';
 // on this device in the library database's META store, so Today plans at once and offline, and each refresh asks only
 // for the rows changed since the last. Ids this build's taxonomy doesn't know stay in the map: the planner counts their
 // sentences as Unsorted. A map kept from before Today took sentences only also holds rows for words, which nothing
-// reads: the planner looks up only the sentences the loop takes. The store holds a plain object under its own key; no
+// reads: the planner looks up only the sentences Today takes. The store holds a plain object under its own key; no
 // database version change is needed.
 
 /** How often a refresh runs again while the server is still sorting sentences into themes. */
@@ -124,8 +124,8 @@ export function sortingPercent(sorted: number, pending: number): number {
 
 /**
  * How far the server's sorting has got, while it still has sentences to sort; null otherwise. What it has sorted is the
- * plan's count of the loop's sentences in a known theme, never the map's size: a map kept from before Today took
- * sentences only also holds rows for thousands of words.
+ * plan's count of Today's sentences in a known theme (each theme's total), never the map's size: a map kept from before
+ * Today took sentences only also holds rows for thousands of words.
  */
 export function sortingProgress(plan: Pick<LoopPlan, 'themes'>, sorting: Pick<ThemeSorting, 'pending'> | null): number | null {
   if (!sorting || sorting.pending <= 0) return null;

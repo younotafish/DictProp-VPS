@@ -46,28 +46,22 @@ const LAZY_ONLY = [
   'components/textAnalyzerMarks.ts',
   'components/study/sessionAudio.ts',
   'components/swipeDirection.ts',
-  // Today's loop: everything but App's wiring loads with the Study tab's screen.
-  'services/api/learningLoop.ts',
+  // The practice membership step, which the review scheduler still applies, loads with it (services/fsrsScheduler.ts).
   'server/src/shared/practice.ts',
+  // Today: everything but App's wiring loads with the Study tab's screen.
+  'services/api/learningLoop.ts',
   'server/src/shared/item-themes.ts',
   'services/learningLoop/standing.ts',
-  'services/learningLoop/cues.ts',
   'services/learningLoop/planner.ts',
-  'services/learningLoop/session.ts',
   'services/learningLoop/sessionStore.ts',
   'services/learningLoop/stats.ts',
   'services/learningLoop/themeMap.ts',
-  // Today's screens load with the Study tab's screen, and its badge with the tab bar.
+  // Today's screens load with the Study tab's screen.
   'views/today/TodayView.tsx',
   'views/today/TodayPlan.tsx',
   'views/today/ThemesBrowser.tsx',
-  'views/today/LoopPlayer.tsx',
-  'views/today/LoopCardFace.tsx',
-  'views/today/LoopSummary.tsx',
   'views/today/todayKeys.ts',
   'views/today/todayModel.ts',
-  'views/today/loopAudio.ts',
-  'views/today/practiceBadge.ts',
 ];
 
 const ENTRY = 'index.tsx';

@@ -1,116 +1,58 @@
 /**
- * Today, the Study tab (DESIGN-v2 §8): a host that shows exactly one mode — the plan, a set or practice session, the
- * themes browser, or classic Study as Card review.
+ * Today, the Study tab: a host that shows the plan, the themes browser, or classic Study as Card review. A unit's
+ * sentences open in the Sentences lesson over the tab (App's handleViewSentence), the lesson exactly as the Sentences
+ * tab has it, except that its Got its record in the unit's session ('set:<unit id>'), so the day's goal and the streak
+ * count them, and its Back says Today.
  *
- * Every step of a session (start, settle, reveal, hint, choose, answer, Next, undo) is a pure function in
- * services/learningLoop/session.ts; this component holds the session, records the reviews those steps return through
- * App's updateSRS and undoSRSReview, writes the session's record as it changes, and plays its audio. The plan is a
- * snapshot (services/learningLoop/planner.ts) taken as Today opens or shows again, after a session, when the theme map
- * changes and when the practice count changes with the clock, and never while you look at it otherwise, so it holds
- * still.
+ * The plan is a snapshot (services/learningLoop/planner.ts) taken as Today shows, as the lesson closes, when the theme
+ * map changes, when a unit starts and at local midnight, and never while you look at it otherwise, so it holds still.
+ * The active unit's progress reads the library as it is now.
  */
 
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ItemGroup, ReviewHistory, ReviewRating, StoredItem } from '../../types';
 import type { SentenceRunOptions } from '../../hooks/useDetailView';
 import { loadSetDays, loadThemes } from '../../services/api/learningLoop';
-import { loopCard, sourceFormsLookup, type LoopMode } from '../../services/learningLoop/cues';
 import { planLoop, type PlannedSet } from '../../services/learningLoop/planner';
 import {
-  answerAttempt,
-  applyMeetBack,
-  applyUndoneAttempt,
-  attemptStage,
-  chooseInMeet,
-  currentItemId,
-  finishEncoding,
-  finishLook,
-  isSessionOver,
-  meetBackTarget,
-  meetChoiceOpen,
-  MODE_TASK_TYPES,
-  practiceQueue,
-  revealAnswer,
-  runOf,
-  sessionProgress,
-  settleSession,
-  startPracticeSession,
-  startSetSession,
-  summarizePractice,
-  summarizeSet,
-  takeHint,
-  type AttemptUndo,
-  type LoopReview,
-  type LoopSession,
-  type MeetChoice,
-} from '../../services/learningLoop/session';
-import {
-  clearLoopSession,
-  readLoopMode,
-  readLoopSession,
+  forgetV3State,
+  readActiveUnit,
   readSetStarts,
   readTodayPin,
   recordSetStart,
-  writeLoopMode,
-  writeLoopSession,
+  writeActiveUnit,
   writeTodayPin,
+  type ActiveUnit,
 } from '../../services/learningLoop/sessionStore';
-import { graduationDots, localDayKey } from '../../services/learningLoop/standing';
-import { loopProgress, loopStreak, nextPracticeClockChange, setDaysLoader, sortedThisWeek, todaySetCount } from '../../services/learningLoop/stats';
+import { isLoopEligible, localDayKey, localDayStart } from '../../services/learningLoop/standing';
+import { loopStreak, setDaysLoader, todaySetCount } from '../../services/learningLoop/stats';
 import { createThemeSync, sortingProgress, type ThemeSorting, type ThemeState } from '../../services/learningLoop/themeMap';
-import { previewRatings, updateAfterRating } from '../../services/fsrsScheduler';
 import { warn } from '../../services/logger';
-import { prefetchTTS, speakNatural } from '../../services/neuralTts';
-import { isMacPlatform } from '../../services/platform';
-import { readPendingReviewMutations } from '../../services/reviewQueue';
-import { SRSAlgorithm } from '../../services/srsAlgorithm';
 import { countDueSpellings } from '../../services/studyStats';
-import { acceptFooterTap, undoFailureText, type SessionReview, type UndoFailure } from '../../services/studySession';
+import type { SessionReview } from '../../services/studySession';
 import { decodeStudySession, restoreQueue } from '../../services/studySessionRecord';
 import { readStoredStudySession } from '../../services/studySessionStore';
-import { getTtsStyle, setTtsStyle } from '../../services/ttsSettings';
 import { useEscapeLayer } from '../../components/escapeStack';
 import { isDialogOpenOutside, isKeyboardFocusedControl, isTypingTarget } from '../../components/keyboardTarget';
 import { useNow } from '../../hooks/useNow';
 import { useLatest } from '../../hooks/useStableValue';
 import { StudyEnhanced } from '../StudyEnhanced';
-import { createLoopAudio, type LoopAudioEngine } from './loopAudio';
-import { LoopPlayer } from './LoopPlayer';
-import { LoopSummary } from './LoopSummary';
 import { ThemesBrowser } from './ThemesBrowser';
 import { TodayPlan } from './TodayPlan';
-import { resolveTodayKey, type TodayKeyAction, type TodayKeyState } from './todayKeys';
+import { resolveTodayKey } from './todayKeys';
 import {
-  answerSpeech,
-  attemptLabel,
-  cardFooter,
-  itemText,
-  meetReceipt,
-  pickRestore,
+  isUnfinished,
   planCardModel,
-  practiceReturn,
-  recordNeedsWrite,
-  resumeLabel,
-  runCaptions,
-  runReceipt,
-  sessionHasProgress,
-  summaryActions,
-  summaryHeadline,
-  themeLabel,
   themesBrowserModel,
   todayHandlers,
-  todayMode,
-  upcomingSentences,
-  withLoopMode,
-  type LoopReceipt,
-  type SummaryAction,
+  unitProgress,
+  upNextUnits,
   type ThemesStatus,
   type TodayScreen,
 } from './todayModel';
 
 export interface TodayViewProps {
-  /** The signed-in user, whose session record, pin and set starts this device keeps, and whose outbox tells when a
-   *  review has reached the server. */
+  /** The signed-in user, whose active unit, pin and unit starts this device keeps. */
   userId: string;
   /** The whole library: Today plans from the learner's own sentences in it. */
   items: StoredItem[];
@@ -118,73 +60,37 @@ export interface TodayViewProps {
   studyItems: StoredItem[];
   /** The review history, and whether a load of it has succeeded yet (useReviewHistory). */
   reviewHistory: ReviewHistory & { loaded?: boolean };
-  /** Records a review (App's updateSRS). */
+  /** Card review's grades: records a review (App's updateSRS) and takes one back on the server (undoSRSReview). */
   onReview: (itemId: string, rating: ReviewRating, context: SessionReview) => Promise<boolean>;
-  /** Takes back a review on the server: false while it's still in the outbox, and a request that fails throws. */
   onUndoReview: (eventId: string) => Promise<boolean>;
   onOpenExampleSentence: (text: string, sourceWord: string, sourceSense?: string) => void;
   /** Opens the card view on `groups` (App's handleViewStoredItem), for Card review's cards. */
   onViewCards: (groups: ItemGroup[], groupIndex: number, itemIndex: number) => void;
-  /** Opens saved sentences in their lesson (App's handleViewSentence): ↗ on a session's card. */
+  /** Opens saved sentences in their lesson (App's handleViewSentence): a unit's sentences, with the unit's options. */
   onOpenSentence: (ordered: StoredItem[], index: number, options?: SentenceRunOptions) => void;
-  onLazyLoadImage: (itemId: string, imageVersion?: string) => Promise<string | null>;
-  /** The app's undo pill is up, so ⌘Z takes back what it offers rather than the session's last review. */
-  undoOffered: boolean;
-  /** Something covers the tab (the card view), which has the keys. */
+  /** Something covers the tab (the lesson, or a card view), which has the keys. As it closes, the plan is taken again. */
   interactionLocked?: boolean;
   onScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
 }
 
-/** The review the receipt line describes: the session's last, and, for a run's answer, what undoing it takes. */
-interface LastReview {
-  sessionId: string;
-  eventId: string;
-  receipt: LoopReceipt;
-  /** A run's answer; a Meet choice is taken back through meetBackTarget, which also reaches the ones before it. */
-  undo?: AttemptUndo;
-  /** Still in the review outbox, not yet on the server. */
-  waiting: boolean;
-}
-
-/** The speech engine Today's audio goes through. */
-const LOOP_AUDIO_ENGINE: LoopAudioEngine = { speakNatural, prefetchTTS, getTtsStyle, setTtsStyle };
-
-/** How long a failed undo is said in the receipt line before the receipt comes back. */
-const UNDO_ERROR_MS = 4_000;
-/** How often the receipt looks for a waiting review to have left the review outbox. */
-const OUTBOX_RECHECK_MS = 3_000;
-
 const NO_THEMES: ReadonlyMap<string, string> = new Map();
-const NO_ITEMS: ReadonlyMap<string, StoredItem> = new Map();
 
 /** Card review keeps the memo App gave classic Study when it was the tab. */
 const CardReview = React.memo(StudyEnhanced);
 
-/** Whether a review is still in the user's outbox, not yet on the server. */
-const isQueuedReview = (userId: string, eventId: string): boolean =>
-  readPendingReviewMutations(userId).some(mutation => mutation.event.id === eventId);
+/** How the lesson opens a unit's sentences: its Got its count toward the goal, and its Back says Today. */
+const unitRun = (unit: ActiveUnit): SentenceRunOptions => ({ reviewSessionId: `set:${unit.id}`, exitLabel: 'Today' });
 
 /**
- * When classic Study's kept session was saved, if Card review would take it up (StudyEnhanced's restoreSession): the
- * user's, recent, and with a card left among `studyItems` that wasn't reviewed since. Null otherwise.
+ * Whether Card review would take up classic Study's kept session (StudyEnhanced's restoreSession): the user's, recent,
+ * and with a card left among `studyItems` that wasn't reviewed since. The plan's Card review row then says Resume.
  */
-function classicSavedAt(userId: string, studyItems: readonly StoredItem[], now: number): number | null {
+function classicResumes(userId: string, studyItems: readonly StoredItem[], now: number): boolean {
   const raw = readStoredStudySession();
   const record = raw === null || studyItems.length === 0 ? null : decodeStudySession(raw, userId, now);
-  if (!record) return null;
+  if (!record) return false;
   const byId = new Map(studyItems.map(item => [item.data.id, item]));
-  const left = restoreQueue(record, id => byId.has(id), id => byId.get(id)?.srs?.lastReviewDate ?? 0);
-  return left === null ? null : record.savedAt;
-}
-
-/**
- * What Today opens on: the session this device kept for the user, or classic Study's, whichever is newer; the plan
- * offers the other with Resume.
- */
-function restoreToday(userId: string, studyItems: readonly StoredItem[], now: number): { session: LoopSession | null; screen: TodayScreen } {
-  const loop = readLoopSession(userId, now);
-  const winner = pickRestore(loop?.savedAt ?? null, classicSavedAt(userId, studyItems, now));
-  return { session: loop?.session ?? null, screen: winner === 'loop' ? 'session' : winner === 'classic' ? 'classic' : 'plan' };
+  return restoreQueue(record, id => byId.has(id), id => byId.get(id)?.srs?.lastReviewDate ?? 0) !== null;
 }
 
 export function TodayView({
@@ -197,21 +103,19 @@ export function TodayView({
   onOpenExampleSentence,
   onViewCards,
   onOpenSentence,
-  onLazyLoadImage,
-  undoOffered,
   interactionLocked = false,
   onScroll,
 }: TodayViewProps) {
-  const [initial] = useState(() => restoreToday(userId, studyItems, Date.now()));
-  const [screen, setScreen] = useState<TodayScreen>(initial.screen);
-  const [session, setSession] = useState<LoopSession | null>(initial.session);
-  const [mode, setMode] = useState<LoopMode>(readLoopMode);
-  // A session ended early shows its summary until Resume; a reload brings it back at its card.
-  const [endedId, setEndedId] = useState<string | null>(null);
-  const [lastReview, setLastReview] = useState<LastReview | null>(null);
-  const [undoingId, setUndoingId] = useState<string | null>(null);
-  const [undoError, setUndoError] = useState('');
+  // Today always opens on its plan; Card review offers its own Resume.
+  const [screen, setScreen] = useState<TodayScreen>('plan');
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // What v3 kept on the device, its loop session and its Speak or Quiet mode, goes as Today mounts. The tab's <Activity>
+  // runs this again each time Today shows, which then finds nothing to remove.
+  useEffect(() => { forgetV3State(userId); }, [userId]);
+
+  // The unit last started on this device, which a start replaces.
+  const [activeUnit, setActiveUnit] = useState<ActiveUnit | null>(() => readActiveUnit(userId));
 
   // The theme map, kept on the device and refreshed while Today shows (every minute while the server still sorts).
   const [themeState, setThemeState] = useState<ThemeState | null>(null);
@@ -237,26 +141,41 @@ export function TodayView({
     return () => themeSync.stop();
   }, [themeSync]);
 
-  // The plan's snapshot: the library and the theme map as of `now`, taken again on the triggers in the header. Items
-  // changing underneath (a review elsewhere, a sync) wait for the next one, so the plan doesn't move under the reader.
+  // The plan's snapshot: the library, the theme map and the active unit as of `now`, taken again on the triggers in the
+  // header. Items changing underneath (a review elsewhere, a sync) wait for the next one, so the plan doesn't move under
+  // the reader. The lesson closing takes it again in the same render, so the plan never shows a frame from before.
   const [planTick, setPlanTick] = useState(0);
   const replan = useCallback(() => setPlanTick(tick => tick + 1), []);
+  const [covered, setCovered] = useState(interactionLocked);
+  if (covered !== interactionLocked) {
+    setCovered(interactionLocked);
+    if (!interactionLocked) setPlanTick(tick => tick + 1);
+  }
   const now = useNow(useMemo(() => [planTick, themeState], [planTick, themeState]));
-  const [snapshot, setSnapshot] = useState(() => ({ now, items, studyItems, themes: themeState }));
-  if (snapshot.now !== now || snapshot.themes !== themeState) setSnapshot({ now, items, studyItems, themes: themeState });
+  const [snapshot, setSnapshot] = useState(() => ({ now, items, studyItems, themes: themeState, unit: activeUnit }));
+  if (snapshot.now !== now || snapshot.themes !== themeState || snapshot.unit !== activeUnit) {
+    setSnapshot({ now, items, studyItems, themes: themeState, unit: activeUnit });
+  }
 
-  const plan = useMemo(() => planLoop({
-    items: snapshot.items,
-    themeOf: snapshot.themes?.themes ?? NO_THEMES,
-    now: snapshot.now,
-    recentStarts: readSetStarts(userId, snapshot.now),
-    pin: readTodayPin(userId),
-  }), [snapshot, userId]);
-  const progress = useMemo(() => loopProgress(snapshot.items, snapshot.now), [snapshot]);
+  // While the active unit is unfinished, no unit the plan composes takes its sentences.
+  const plan = useMemo(() => {
+    const { unit } = snapshot;
+    const exclude = unit && isUnfinished(unitProgress(unit, snapshot.items, snapshot.now)) ? new Set(unit.itemIds) : undefined;
+    return planLoop({
+      items: snapshot.items,
+      themeOf: snapshot.themes?.themes ?? NO_THEMES,
+      now: snapshot.now,
+      recentStarts: readSetStarts(userId, snapshot.now),
+      pin: readTodayPin(userId),
+      exclude,
+    });
+  }, [snapshot, userId]);
+  // The active unit as the library holds it now, so its progress moves as its sentences are reviewed, here or elsewhere.
+  const unit = useMemo(() => unitProgress(snapshot.unit, items, snapshot.now), [snapshot.unit, snapshot.now, items]);
   const classicDue = useMemo(() => countDueSpellings(snapshot.studyItems, snapshot.now), [snapshot]);
-  const classicResumable = useMemo(() => classicSavedAt(userId, snapshot.studyItems, snapshot.now) !== null, [userId, snapshot]);
+  const classicResumable = useMemo(() => classicResumes(userId, snapshot.studyItems, snapshot.now), [userId, snapshot]);
 
-  // The day's pin, kept as the plan made it. Before the theme map is in, the plan has no set at all, which says nothing
+  // The day's pin, kept as the plan made it. Before the theme map is in, the plan has no unit at all, which says nothing
   // about today's pin, so it stays.
   useEffect(() => {
     if (!snapshot.themes) return;
@@ -264,18 +183,15 @@ export function TodayView({
     if (stored?.day !== plan.pin?.day || stored?.themeId !== plan.pin?.themeId) writeTodayPin(userId, plan.pin);
   }, [plan, snapshot.themes, userId]);
 
-  // The plan is taken again when the practice count changes with the clock: an item falling due, or midnight.
+  // The plan is taken again at local midnight, for the new day's goal, pin and due sentences.
   useEffect(() => {
-    // A timer holds at most 2^31 - 1 ms; a later change is picked up then.
-    const delay = Math.min(Math.max(0, nextPracticeClockChange(snapshot.items, snapshot.now) - Date.now()) + 50, 2 ** 31 - 1);
-    const timer = window.setTimeout(replan, delay);
+    const timer = window.setTimeout(replan, Math.max(0, localDayStart(snapshot.now, 1) - Date.now()) + 50);
     return () => window.clearTimeout(timer);
-  }, [snapshot, replan]);
+  }, [snapshot.now, replan]);
 
-  // Today's count, the week's sorted items and the streak follow the history as it loads and as reviews land.
+  // Today's count and the streak follow the history as it loads and as reviews land.
   const historyLoaded = reviewHistory.loaded !== false;
   const todayCount = useMemo(() => todaySetCount(reviewHistory, snapshot.now), [reviewHistory, snapshot.now]);
-  const sortedCount = useMemo(() => sortedThisWeek(reviewHistory, snapshot.now), [reviewHistory, snapshot.now]);
   const [getSetDays] = useState(() => setDaysLoader(loadSetDays));
   const [setDays, setSetDays] = useState<{ day: string; days: Record<string, number> } | null>(null);
   const day = localDayKey(snapshot.now);
@@ -287,284 +203,46 @@ export function TodayView({
   }, [getSetDays, snapshot.now, day]);
   const streak = historyLoaded && setDays?.day === day ? loopStreak(setDays.days, todayCount, snapshot.now) : null;
 
-  // The session's items as they are now: a sentence out of the loop (deleted, archived, or a word an older session
-  // kept) is passed over; in the Meet, so is one decided elsewhere (a Got it elsewhere decides nothing), and in a run,
-  // one reviewed elsewhere or no longer practicing.
-  const playing = session !== null;
-  const itemsById = useMemo(() => (playing ? new Map(items.map(item => [item.data.id, item])) : NO_ITEMS), [items, playing]);
-  const getItem = useCallback((id: string) => itemsById.get(id), [itemsById]);
-  useLayoutEffect(() => {
-    if (!session) return;
-    const settled = settleSession(session, getItem, () => crypto.randomUUID(), Date.now());
-    if (settled !== session) setSession(settled);
-  }, [session, getItem]);
+  // A cached map whose refresh failed may be from before the server sorted more, so with no unit in it the plan says
+  // the themes load online rather than that nothing is left.
+  const themesStatus: ThemesStatus = themesFailed ? 'offline' : themeState === null || sorting === null ? 'loading' : 'ready';
+  const sortingShare = sortingProgress(plan, sorting);
+  const card = planCardModel({
+    unit, todayCount, historyLoaded, next: plan.today, themes: themesStatus, sortingPercent: sortingShare, now: snapshot.now,
+  });
 
-  // The session's record, written as its place, choices, attempts or practice mode change, never as a card reveals.
-  // A restored session is already written.
-  const writtenRef = useRef<LoopSession | null>(initial.session);
-  useEffect(() => {
-    if (!session || !recordNeedsWrite(writtenRef.current, session)) return;
-    writtenRef.current = session;
-    writeLoopSession(session, userId, Date.now());
-  }, [session, userId]);
-
-  // A practice session keeps the mode it runs in; a set's round records in the current one.
-  const sessionMode: LoopMode = session?.kind === 'practice' ? session.mode : mode;
-  const currentId = session ? currentItemId(session) : undefined;
-  const currentItem = currentId === undefined ? undefined : getItem(currentId);
-  const formsOf = useMemo(() => (playing ? sourceFormsLookup(items) : null), [items, playing]);
-  // The Meet asks each sentence at level 1, however strong its classic reviews made it; a run follows cueLevel.
-  const meeting = session?.kind === 'set' && session.phase === 'meet';
-  const card = useMemo(
-    () => (currentItem && formsOf ? loopCard(currentItem, sessionMode, formsOf(currentItem), meeting ? 1 : undefined) : null),
-    [currentItem, sessionMode, formsOf, meeting],
-  );
-
-  const over = !!session && isSessionOver(session);
-  const showingSummary = over || (!!session && endedId === session.id);
-  const showingCard = screen === 'session' && !!session && !showingSummary && !!currentItem && !!card;
-  const footer = showingCard ? cardFooter(session) : null;
-  const progressInfo = session ? sessionProgress(session) : null;
-
-  // The session's own audio (loopAudio.ts): an answer, an end or an undo stops what it started, and so does leaving
-  // the tab; audio it didn't start plays on.
-  const [audio] = useState(() => createLoopAudio(LOOP_AUDIO_ENGINE));
-  useEffect(() => () => audio.stopAll(), [audio]);
-
-  // When the last reveal, choice or answer happened, on a clock that never goes back: a footer tap just after it is
-  // the second tap of a double tap, and Enter just after a reveal isn't yet Got it (acceptFooterTap).
-  const lastActionAtRef = useRef<number | undefined>(undefined);
-  const markAction = () => { lastActionAtRef.current = performance.now(); };
-  const sessionIdRef = useLatest(session?.id);
-
-  // The session is over for good: a reload brings nothing back.
-  const discardSession = useCallback(() => {
-    audio.stopAll();
-    clearLoopSession(userId);
-    writtenRef.current = null;
-    setSession(null);
-    setEndedId(null);
-    setLastReview(null);
-    setUndoError('');
-    replan();
-  }, [audio, userId, replan]);
-  // Done, Esc on a summary, or ending before anything was done: back to the plan.
-  const closeSession = useCallback(() => {
-    discardSession();
-    setScreen('plan');
-  }, [discardSession]);
-
-  // The plan is taken again as a summary shows, so its next set and tomorrow's count include what the session did.
-  useEffect(() => {
-    if (showingSummary) replan();
-  }, [showingSummary, replan]);
-  // A session that ran out having done nothing (its items met or practiced elsewhere meanwhile) just closes, back to
-  // the plan if it was on screen; one kept behind Card review goes without moving anything.
-  const emptyEnd = over && !!session && !sessionHasProgress(session);
-  const sessionOnScreen = screen === 'session';
-  useEffect(() => {
-    if (!emptyEnd) return;
-    if (sessionOnScreen) closeSession();
-    else discardSession();
-  }, [emptyEnd, sessionOnScreen, closeSession, discardSession]);
-
-  // While the last review waits in the outbox, look every few seconds for it to have reached the server.
-  const waitingEventId = lastReview?.waiting ? lastReview.eventId : undefined;
-  useEffect(() => {
-    if (!waitingEventId) return;
-    const timer = window.setInterval(() => {
-      if (isQueuedReview(userId, waitingEventId)) return;
-      setLastReview(current => (current?.eventId === waitingEventId ? { ...current, waiting: false } : current));
-    }, OUTBOX_RECHECK_MS);
-    return () => window.clearInterval(timer);
-  }, [waitingEventId, userId]);
-
-  // On a card a failed undo takes the receipt line's place for a few seconds; the summary keeps its own line.
-  useEffect(() => {
-    if (!undoError || !showingCard) return;
-    const timer = window.setTimeout(() => setUndoError(''), UNDO_ERROR_MS);
-    return () => window.clearTimeout(timer);
-  }, [undoError, showingCard]);
-
-  // The next sentences' clips are fetched as each card shows (never generated), so their answers start at once.
-  const cardKey = showingCard ? `${session.id}:${session.kind === 'set' ? session.phase : 'run'}:${progressInfo?.position}` : null;
-  const upcomingRef = useLatest({ session, getItem });
-  useEffect(() => {
-    const { session: shown, getItem: lookup } = upcomingRef.current;
-    if (cardKey === null || !shown) return;
-    audio.prefetch(upcomingSentences(shown, lookup));
-  }, [cardKey, audio, upcomingRef]);
-
-  // What Undo takes back: the run's last recorded answer, else in a set the latest Meet choice (Back), which reaches
-  // into a round that hasn't answered anything yet.
-  const runUndo = lastReview?.undo && lastReview.sessionId === session?.id ? lastReview : null;
-  const backTarget = !runUndo && session?.kind === 'set' ? meetBackTarget(session) : null;
-  const undoing = undoingId !== null;
-  const canUndo = !!runUndo || !!backTarget;
-  let receipt: LoopReceipt | null = null;
-  let waiting = false;
-  if (runUndo) {
-    receipt = runUndo.receipt;
-    waiting = runUndo.waiting;
-  } else if (backTarget && session?.kind === 'set') {
-    const backItem = getItem(backTarget.itemId);
-    receipt = meetReceipt(backItem ? itemText(backItem) : '', session.meet.choices[backTarget.itemId].choice);
-    waiting = lastReview?.eventId === backTarget.eventId && lastReview.waiting;
-  } else if (lastReview && lastReview.sessionId === session?.id) {
-    receipt = lastReview.receipt;
-  }
-
-  // A run card's captions: where Not yet and Got it lead, and whether Got it makes the item one you can say.
-  const runAttempt = session && currentItem ? runOf(session)?.attempts[currentItem.data.id] : undefined;
-  const captions = useMemo(() => {
-    const stage = attemptStage(runAttempt);
-    if (footer !== 'run' || !currentItem || (stage !== 'first' && stage !== 'second')) return null;
-    const at = Date.now();
-    const base = SRSAlgorithm.ensure(currentItem.srs, currentItem.data.id, currentItem.type);
-    const previews = previewRatings(base, at);
-    const graduates = updateAfterRating(base, 'good', at, MODE_TASK_TYPES[sessionMode]).sayableAt !== undefined;
-    const outcomes = { again: previews.again.nextReview, hard: previews.hard.nextReview, good: previews.good.nextReview };
-    return runCaptions(stage, runAttempt?.hinted ?? false, outcomes, graduates, at);
-  }, [footer, currentItem, runAttempt, sessionMode]);
-
-  /** Records a review the session's step returned, with its receipt and what undoing it takes. */
-  const record = (shown: LoopSession, review: LoopReview, shownReceipt: LoopReceipt, undo?: AttemptUndo) => {
-    const { eventId } = review.context;
-    setLastReview({ sessionId: shown.id, eventId, receipt: shownReceipt, ...(undo ? { undo } : {}), waiting: false });
-    setUndoError('');
-    void onReview(review.itemId, review.rating, review.context).then(synced => {
-      // Not on the server yet: the receipt says it's saved on this device until the outbox sends it.
-      if (synced || !isQueuedReview(userId, eventId)) return;
-      setLastReview(current => (current?.eventId === eventId ? { ...current, waiting: true } : current));
-    }).catch(error => warn('Review failed:', error));
-  };
-
-  const reveal = () => {
-    if (!session || !currentItem || !card || session.step !== 'cue' || undoing) return;
-    markAction();
-    // Inside the tap or key press, where iOS lets the system voice speak.
-    audio.sayAnswer(answerSpeech(currentItem, card));
-    setSession(current => current && revealAnswer(current));
-  };
-
-  const hint = () => {
-    if (!session || session.step !== 'cue' || session.hintShown || undoing) return;
-    setSession(current => current && takeHint(current));
-  };
-
-  const choose = (choice: MeetChoice) => {
-    if (session?.kind !== 'set' || !currentItem || undoing) return;
-    const at = Date.now();
-    const step = chooseInMeet(session, currentItem, choice, crypto.randomUUID(), at);
-    if (!step) return;
-    audio.stopAll();
-    markAction();
-    record(session, step.review, meetReceipt(itemText(currentItem), choice));
-    setSession(current => (current?.kind === 'set' ? step.advance(current) : current));
-  };
-
-  const answer = (gotIt: boolean) => {
-    if (!session || !currentItem || undoing) return;
-    const at = Date.now();
-    const tries = attemptStage(runAttempt) === 'second' ? 2 : 1;
-    const step = answerAttempt(session, currentItem, gotIt, at, mode);
-    if (!step) return;
-    audio.stopAll();
-    markAction();
-    if (step.review) {
-      // The schedule the review leaves, as updateSRS makes it: when the item comes back, or that you can say it now.
-      const base = SRSAlgorithm.ensure(currentItem.srs, currentItem.data.id, currentItem.type);
-      const after = updateAfterRating(base, step.review.rating, at, step.review.context.taskType);
-      const back = practiceReturn(after.nextReview, at);
-      const detail = after.sayableAt !== undefined ? 'Can say it now' : back === 'tomorrow' ? 'back tomorrow' : `next ${back}`;
-      record(session, step.review, runReceipt(itemText(currentItem), step.review.rating, tries, detail), step.undo);
+  // A unit from a planned set: its sentences as the library holds them now (one gone since the plan was taken is left
+  // out), kept as the active unit and noted as a start from its theme, then opened in the lesson at the first. Back from
+  // the lesson is the plan, wherever the unit was started.
+  const startUnit = (set: PlannedSet) => {
+    const ids = new Set(set.itemIds);
+    const found = new Map(items.filter(item => ids.has(item.data.id) && isLoopEligible(item)).map(item => [item.data.id, item]));
+    const sentences = set.itemIds.flatMap(id => found.get(id) ?? []);
+    if (sentences.length === 0) {
+      replan();
+      return;
     }
-    setSession(current => current && step.advance(current));
-  };
-
-  /** Next: on from saying a sentence chosen for practice twice, or from the last look at one missed twice. */
-  const goNext = () => {
-    if (!session || undoing) return;
-    audio.stopAll();
-    markAction();
     const at = Date.now();
-    setSession(current => {
-      if (!current) return current;
-      return current.kind === 'set' && current.phase === 'meet' ? finishEncoding(current, at) : finishLook(current, at);
-    });
-  };
-
-  const replay = () => {
-    if (currentItem && card) audio.replay(answerSpeech(currentItem, card));
-  };
-
-  const undo = async () => {
-    if (!session || undoing) return;
-    const undone = runUndo?.undo;
-    const back = backTarget;
-    const eventId = undone?.eventId ?? back?.eventId;
-    if (!eventId) return;
-    audio.stopAll();
-    setUndoingId(eventId);
-    setUndoError('');
-    let failure: UndoFailure;
-    try {
-      if (await onUndoReview(eventId)) {
-        // The session may have ended, or another started, while the undo was on its way; the steps then change nothing.
-        const at = Date.now();
-        if (undone) setSession(current => applyUndoneAttempt(current, undone, crypto.randomUUID(), at));
-        else if (back) setSession(current => (current?.kind === 'set' ? applyMeetBack(current, back, at) : current));
-        setLastReview(current => (current?.eventId === eventId ? null : current));
-        // An undo from the summary of a session ended early goes back to its card, as one from a finished set does.
-        setEndedId(null);
-        setUndoingId(null);
-        return;
-      }
-      failure = 'waiting';
-    } catch (error) {
-      failure = { error };
-    }
-    setUndoingId(null);
-    if (sessionIdRef.current === session.id) setUndoError(undoFailureText(failure, navigator.onLine));
-  };
-
-  const begin = (started: LoopSession) => {
-    audio.stopAll();
-    setEndedId(null);
-    setLastReview(null);
-    setUndoError('');
-    setSession(started);
-    setScreen('session');
-  };
-
-  const startSet = (set: PlannedSet) => {
-    if (set.itemIds.length === 0) return;
-    const at = Date.now();
+    const started: ActiveUnit = {
+      version: 1, userId, id: crypto.randomUUID(), themeId: set.themeId, itemIds: sentences.map(item => item.data.id), startedAt: at,
+    };
+    writeActiveUnit(started);
     recordSetStart(userId, set.themeId, at);
-    begin(startSetSession(crypto.randomUUID(), set, at));
+    setActiveUnit(started);
+    setScreen('plan');
+    replan();
+    onOpenSentence(sentences, 0, unitRun(started));
   };
 
-  // From the library as it is now: an offer the plan made may have been practiced elsewhere since, and then the plan is
-  // taken again instead.
-  const startPractice = () => {
-    const at = Date.now();
-    const { itemIds } = practiceQueue(items, at);
-    if (itemIds.length > 0) begin(startPracticeSession(crypto.randomUUID(), itemIds, mode, at, () => crypto.randomUUID()));
-    else replan();
+  // Continue: the unit's live sentences in the lesson, at the first that still needs review.
+  const continueUnit = () => {
+    if (!unit || unit.next < 0) replan();
+    else onOpenSentence(unit.items, unit.next, unitRun(unit.unit));
   };
 
-  // × or Esc on a card: the summary of what was done, or, with nothing done yet, straight back to the plan.
-  const endSession = () => {
-    if (!session) return;
-    audio.stopAll();
-    if (sessionHasProgress(session)) setEndedId(session.id);
-    else closeSession();
-  };
-
-  const changeMode = (value: LoopMode) => {
-    setMode(value);
-    writeLoopMode(value);
-    setSession(current => current && withLoopMode(current, value));
+  const pressPrimary = () => {
+    if (card.kind === 'continue') continueUnit();
+    else if (card.kind === 'start') startUnit(card.set);
   };
 
   const backToPlan = useCallback(() => {
@@ -572,90 +250,21 @@ export function TodayView({
     replan();
   }, [replan]);
 
-  // ↗: the sentence in its lesson, over the session. What is done there counts as anywhere else: a decision with its
-  // practice pill moves the Meet past the sentence, and any review moves a run past it.
-  const openItem = () => {
-    if (currentItem) onOpenSentence([currentItem], 0);
-  };
+  // Esc in the themes browser goes back to the plan. Card review registers its own.
+  const listening = todayHandlers(screen, interactionLocked);
+  useEscapeLayer(() => setScreen('plan'), 0, listening.escape);
 
-  // A cached map whose refresh failed may be from before the server sorted more, so with no set in it the plan says the
-  // themes load online rather than that none is left.
-  const themesStatus: ThemesStatus = themesFailed ? 'offline' : themeState === null || sorting === null ? 'loading' : 'ready';
-  const sortingShare = sortingProgress(plan, sorting);
-  const planCard = planCardModel({ progress, todayCount, historyLoaded, next: plan.today, themes: themesStatus, sortingPercent: sortingShare });
-  // A session ended early offers Resume first and Done, never another session, which would replace it with its place.
-  const actions: SummaryAction[] = !session || !showingSummary ? []
-    : over ? summaryActions(session.kind, progress.practiceDue, todayCount, plan.today)
-    : [{ kind: 'done' }];
-
-  const summaryAction = (action: SummaryAction) => {
-    if (action.kind === 'done') closeSession();
-    else if (action.kind === 'set') startSet(action.set);
-    else startPractice();
-  };
-  const planPrimary = () => {
-    if (planCard.action.kind === 'practice') startPractice();
-    else if (planCard.action.kind === 'set' && plan.today) startSet(plan.today);
-  };
-
-  // Esc: back from the themes browser, from a card to its session's summary, or from a summary to the plan. Card review
-  // registers its own.
-  const listening = todayHandlers(screen, playing, interactionLocked);
-  useEscapeLayer(() => {
-    if (screen === 'themes') setScreen('plan');
-    else if (showingSummary) closeSession();
-    else endSession();
-  }, 0, listening.escape);
-
-  // Today's keys (todayKeys.ts): one listener while the plan or a session shows and nothing covers the tab, reading
-  // what shows as it is now. In the capture phase it gets the keys before the window's shortcuts (1-3 switch tabs), and
-  // stops the ones it uses so no other shortcut reacts to them.
-  const keyState: Omit<TodayKeyState, 'justRevealed' | 'isMac' | 'typing' | 'onControl' | 'dialogOutside'> = screen === 'plan'
-    ? {
-      screen: 'plan',
-      canUndo: false,
-      undoing,
-      appUndoOpen: undoOffered,
-      hasPrimary: planCard.action.kind === 'practice' || (planCard.action.kind === 'set' && plan.today !== null),
-    }
-    : showingSummary
-      ? { screen: 'summary', canUndo, undoing, appUndoOpen: undoOffered, hasPrimary: actions.length > 0, canResume: !over }
-      : {
-        screen: 'card',
-        footer: footer ?? undefined,
-        canHint: !!session && session.step === 'cue' && !session.hintShown,
-        sayOpen: !!session && meetChoiceOpen(session, 'say'),
-        canUndo,
-        undoing,
-        appUndoOpen: undoOffered,
-      };
-  const runKeyAction = (action: TodayKeyAction) => {
-    switch (action.type) {
-      case 'reveal': reveal(); return;
-      case 'hint': hint(); return;
-      case 'choose': choose(action.choice); return;
-      case 'answer': answer(action.gotIt); return;
-      case 'next': goNext(); return;
-      case 'play': replay(); return;
-      case 'undo': void undo(); return;
-      case 'primary':
-        if (screen === 'plan') planPrimary();
-        else if (actions[0]) summaryAction(actions[0]);
-        return;
-      case 'resume': setEndedId(null); return;
-      case 'swallow': return;
-    }
-  };
-  const keyContext = useLatest({ keyState, runKeyAction });
+  // Enter on the plan (todayKeys.ts): one listener while the plan shows and nothing covers the tab, reading the card as
+  // it is now. In the capture phase it gets the key before the window's shortcuts, and stops it when it acts, so no
+  // other shortcut reacts to it.
+  const keyContext = useLatest({ hasPrimary: card.kind === 'continue' || card.kind === 'start', pressPrimary });
   const keysActive = listening.keys;
   useEffect(() => {
     if (!keysActive) return;
     const handleTodayKey = (event: KeyboardEvent) => {
-      const { keyState: state, runKeyAction: run } = keyContext.current;
+      const { hasPrimary, pressPrimary: press } = keyContext.current;
       const action = resolveTodayKey(event, {
-        ...state,
-        justRevealed: !acceptFooterTap(lastActionAtRef.current, performance.now()),
-        isMac: isMacPlatform(),
+        hasPrimary,
         typing: isTypingTarget(event.target),
         onControl: isKeyboardFocusedControl(event.target),
         dialogOutside: isDialogOpenOutside(rootRef.current),
@@ -663,16 +272,11 @@ export function TodayView({
       if (!action) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      run(action);
+      press();
     };
     window.addEventListener('keydown', handleTodayKey, true);
     return () => window.removeEventListener('keydown', handleTodayKey, true);
   }, [keysActive, keyContext]);
-
-  // The footer's buttons ignore a tap that is the second of a double tap; keys act at once.
-  const onFooter = <A extends unknown[]>(act: (...args: A) => void) => (...args: A) => {
-    if (acceptFooterTap(lastActionAtRef.current, performance.now())) act(...args);
-  };
 
   let content: React.ReactNode;
   if (screen === 'classic') {
@@ -691,100 +295,26 @@ export function TodayView({
       />
     );
   } else if (screen === 'themes') {
-    content = <ThemesBrowser model={themesBrowserModel(plan)} onBack={() => setScreen('plan')} onStart={startSet} onScroll={onScroll} />;
-  } else if (screen === 'session' && session && showingSummary) {
-    const practice = session.kind === 'practice' ? summarizePractice(session, getItem) : undefined;
-    content = (
-      <LoopSummary
-        theme={session.kind === 'set' ? themeLabel(session.themeId) : null}
-        headline={summaryHeadline(session, !over)}
-        set={session.kind === 'set' ? summarizeSet(session) : undefined}
-        practice={practice}
-        graduated={(practice?.graduated ?? []).flatMap(id => {
-          const item = getItem(id);
-          return item ? [itemText(item)] : [];
-        })}
-        tomorrow={progress.tomorrow}
-        todayCount={historyLoaded ? todayCount : null}
-        actions={actions}
-        canUndo={canUndo}
-        undoing={undoing}
-        undoError={undoError}
-        onUndo={() => void undo()}
-        onResume={over ? undefined : () => setEndedId(null)}
-        onAction={summaryAction}
-        onClose={closeSession}
-      />
-    );
-  } else if (showingCard && footer) {
-    const inRun = session.kind === 'practice' || session.phase !== 'meet';
-    content = (
-      <LoopPlayer
-        item={currentItem}
-        card={card}
-        step={session.step}
-        hintShown={session.hintShown}
-        mode={sessionMode}
-        attemptLabel={attemptLabel(session)}
-        dots={inRun && session.step !== 'cue' ? graduationDots(currentItem.srs?.stability) : null}
-        onOpenItem={openItem}
-        onPlaybackStart={audio.own}
-        onLazyLoadImage={onLazyLoadImage}
-        theme={session.kind === 'set' ? themeLabel(session.themeId) : null}
-        position={progressInfo?.position ?? 0}
-        total={progressInfo?.total ?? 0}
-        phase={session.kind === 'practice' ? 'practice' : session.phase === 'round' ? 'round' : 'meet'}
-        onToggleMode={() => changeMode(sessionMode === 'speak' ? 'quiet' : 'speak')}
-        footer={footer}
-        canHint={session.step === 'cue' && !session.hintShown}
-        sayOpen={meetChoiceOpen(session, 'say')}
-        captions={captions}
-        receipt={receipt}
-        undoLabel={backTarget ? 'Back' : 'Undo'}
-        canUndo={canUndo}
-        undoing={undoing}
-        waiting={waiting}
-        undoError={undoError}
-        onClose={endSession}
-        onReveal={onFooter(reveal)}
-        onHint={hint}
-        onChoose={onFooter(choose)}
-        onAnswer={onFooter(answer)}
-        onNext={onFooter(goNext)}
-        onReplay={replay}
-        onUndo={() => void undo()}
-      />
-    );
-  } else if (screen === 'session' && session) {
-    // For a frame between two cards, while the session settles past items it can no longer show.
-    content = <div className="h-full bg-slate-50" />;
+    content = <ThemesBrowser model={themesBrowserModel(plan)} onBack={() => setScreen('plan')} onStart={startUnit} onScroll={onScroll} />;
   } else {
-    const kept = session && progressInfo ? resumeLabel(session, progressInfo.position, progressInfo.total) : null;
     content = (
       <TodayPlan
         now={snapshot.now}
-        card={planCard}
-        next={plan.today}
-        mode={mode}
-        onModeChange={changeMode}
+        card={card}
         todayCount={historyLoaded ? todayCount : null}
         streak={streak}
-        upNext={plan.upNext.map(set => ({ set, theme: themeLabel(set.themeId) }))}
+        upNext={upNextUnits(card, plan)}
         hasThemes={plan.themes.size > 0 || plan.unsorted.total > 0}
-        progress={progress}
-        sortedThisWeek={historyLoaded ? sortedCount : null}
         sorting={sortingShare === null ? null : { percent: sortingShare, ...(sorting?.lastError ? { error: sorting.lastError } : {}) }}
         classicDue={classicDue}
         classicResumable={classicResumable}
-        resumeLabel={kept}
-        onPractice={startPractice}
-        onStartSet={startSet}
-        onResume={() => setScreen('session')}
+        onContinue={continueUnit}
+        onStartUnit={startUnit}
         onThemes={() => setScreen('themes')}
         onClassic={() => setScreen('classic')}
         onScroll={onScroll}
       />
     );
   }
-  return <div ref={rootRef} className="h-full" data-today-mode={todayMode(screen, session)}>{content}</div>;
+  return <div ref={rootRef} className="h-full" data-today-mode={screen}>{content}</div>;
 }

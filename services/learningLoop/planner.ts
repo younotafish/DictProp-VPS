@@ -1,89 +1,92 @@
 import { getItemSpelling, type SentenceData, type StoredItem } from '../../types';
 import { isThemeId } from '../../server/src/shared/item-themes';
+import { needsReview } from '../sentenceOrdering';
 import { sentenceSourceResolver } from '../sentenceSource';
-import { isLoopEligible, isOwnSentence, itemStanding, localDayKey, sentenceTranslation } from './standing';
+import { isLoopEligible, localDayKey } from './standing';
 import { DAILY_SET_GOAL } from './stats';
 
-// Today's planner: which theme today's set comes from, what the set holds and in what order, the sets up next, and the
-// numbers the themes browser shows, all over the learner's own sentences (standing.ts isLoopEligible). Pure and
-// deterministic: the same library, theme map, clock and device state give the same plan. It runs over the whole
-// library (about 17k items, some 3k of them sentences the loop takes) as Today opens and after each set, so it is one
-// pass over the items plus sorting; sentences are compared with each other only while a set is filled, and only with
-// the set.
+// Today's planner: which theme today's unit comes from, what each unit holds and in what order, the units up next, and
+// the numbers the themes browser shows, all over the learner's own sentences (standing.ts isLoopEligible). A unit (a
+// planned set) takes only sentences that need review, never reviewed or due again, as the Sentences tab counts them
+// (services/sentenceOrdering.ts needsReview). Pure and deterministic: the same library, theme map, clock and device
+// state give the same plan. It runs over the whole library (about 17k items, some 3k of them the learner's sentences)
+// as Today shows and as a lesson closes, so it is one pass over the items plus sorting; sentences are compared with
+// each other only while a unit is filled, and only with the unit.
 
 const DAY_MS = 86_400_000;
 
 /** Sentences saved this recently count toward their theme's score. */
 const RECENT_MS = 14 * DAY_MS;
-/** A theme a set was started from on this device within this time is held back, so the days vary. */
+/** A theme a unit was started from on this device within this time is held back, so the days vary. */
 export const SET_START_PENALTY_MS = 2 * DAY_MS;
-/** A theme with up to this many new sentences gives them all in one set; a bigger one is split into sets of 12 to 23. */
+/** A theme with up to this many sentences to review gives them all in one unit; a bigger one is split into units of 12
+ *  to 23. */
 const MAX_SET_SIZE = 20;
-/** The size a big theme's sets aim at; none is smaller than the day's goal (DAILY_SET_GOAL). */
+/** The size a big theme's units aim at; none is smaller than the day's goal (DAILY_SET_GOAL). */
 const TARGET_SET_SIZE = 15;
-/** How many sets the plan simulates after today's. */
+/** How many units the plan simulates after today's. */
 const UP_NEXT_COUNT = 3;
 
-/** The set Today offers, or a themes-browser row starts: its theme (null: Unsorted) and its sentences in the order met. */
+/** A unit Today offers, or a themes-browser row starts: its theme (null: Unsorted) and its sentences in lesson order. */
 export interface PlannedSet {
   themeId: string | null;
   itemIds: string[];
 }
 
-/** Today's theme on this device for one local day ('YYYY-MM-DD'), so the set doesn't change while it's looked at. */
+/** Today's theme on this device for one local day ('YYYY-MM-DD'), so the unit doesn't change while it's looked at. */
 export interface TodayPin {
   day: string;
   themeId: string;
 }
 
-/** A theme's numbers in the themes browser, over the sentences the loop takes, and the set starting it now would hold. */
+/** A theme's numbers in the themes browser, over the learner's sentences, and the unit starting it now would hold. */
 export interface ThemePlan {
   /** Null for Unsorted: sentences without a theme yet, or with one this build doesn't know. */
   themeId: string | null;
-  /** Not yet decided in Today, whatever their classic reviews (a Got it'd sentence included): what its sets take. */
-  newCount: number;
-  practicingCount: number;
-  sayableCount: number;
-  /** Every one of its sentences the loop takes, those kept passive included. */
+  /** The sentences its units can take: those that need review, less the unfinished active unit's (PlanInput.exclude). */
+  toReviewCount: number;
+  /** Its sentences that don't need review: reviewed, and not yet due again. */
+  memorizedCount: number;
+  /** Every one of its sentences, the active unit's included. */
   total: number;
-  /** New sentences saved in the last 14 days. */
+  /** Of the sentences to review, those saved in the last 14 days. */
   recentCount: number;
-  /** The set it would give now, in the order met; empty without a new sentence. */
+  /** The unit it would give now, in lesson order; empty without a sentence to review. */
   nextSet: string[];
 }
 
 export interface LoopPlan {
-  /** Each theme of the taxonomy that holds a sentence the loop takes, by id. */
+  /** Each theme of the taxonomy that holds one of the learner's sentences, by id. */
   themes: Map<string, ThemePlan>;
   /** The sentences in no known theme. Never picked on its own; the themes browser lists it last when it has any. */
   unsorted: ThemePlan;
-  /** Today's set: the pinned theme's next set, or the best theme's once the day or the pinned theme's new sentences ran
-   *  out. Null while no theme has a new sentence. */
+  /** Today's unit: the pinned theme's next unit, or the best theme's once the day or the pinned theme's sentences to
+   *  review ran out. Null while no theme has a sentence to review. */
   today: PlannedSet | null;
-  /** The pin to keep: `today`'s theme for today, or null with no set. */
+  /** The pin to keep: `today`'s theme for today, or null with no unit. */
   pin: TodayPin | null;
-  /** Up to three sets after today's, as if each were started in turn. */
+  /** Up to three units after today's, as if each were started in turn. */
   upNext: PlannedSet[];
-  /** The learner's own new sentences that wait for a translation before the loop can take them. */
-  awaitingTranslation: number;
 }
 
 export interface PlanInput {
   items: readonly StoredItem[];
   /** Each classified item's theme id (services/learningLoop/themeMap.ts); ids this build doesn't know count as none, and
-   *  rows for items the loop doesn't take (the words an older build's sweep sorted) are never looked up. */
+   *  rows for items Today doesn't take (the words an older build's sweep sorted) are never looked up. */
   themeOf: ReadonlyMap<string, string>;
   now: number;
-  /** When a set was last started from each theme on this device (services/learningLoop/sessionStore.ts). */
+  /** When a unit was last started from each theme on this device (services/learningLoop/sessionStore.ts). */
   recentStarts: Readonly<Record<string, number>>;
   /** Today's pin as stored, if any. */
   pin: TodayPin | null;
+  /** The unfinished active unit's sentences, which no unit the plan composes takes, so units never overlap. */
+  exclude?: ReadonlySet<string>;
 }
 
 /**
- * How many sentences a set takes from a theme with `size` new ones: all of them up to 20; beyond that the theme is split
- * into m sets of equal size, ceil(size / m) each, as near 15 as keeps every set at the day's goal of 12 or more:
- * m = min(round(size / 15), floor(size / 12)). So 21 to 23 sentences stay one set, and one set always meets the goal.
+ * How many sentences a unit takes from a theme with `size` to review: all of them up to 20; beyond that the theme is
+ * split into m units of equal size, ceil(size / m) each, as near 15 as keeps every unit at the day's goal of 12 or more:
+ * m = min(round(size / 15), floor(size / 12)). So 21 to 23 sentences stay one unit, and one unit always meets the goal.
  */
 export function setSize(size: number): number {
   if (size <= MAX_SET_SIZE) return Math.max(0, size);
@@ -92,9 +95,9 @@ export function setSize(size: number): number {
 }
 
 /**
- * How strongly a theme asks to be today's: 3 points per new sentence saved in the last two weeks (up to 20) plus a
- * quarter point per new sentence (up to 60), less 100 when a set was started from it on this device in the last two
- * days and less 30 when it has fewer new sentences than the day's goal, so its set alone wouldn't meet it.
+ * How strongly a theme asks to be today's: 3 points per sentence to review saved in the last two weeks (up to 20) plus a
+ * quarter point per sentence to review (up to 60), less 100 when a unit was started from it on this device in the last
+ * two days and less 30 when it has fewer sentences to review than the day's goal, so its unit alone wouldn't meet it.
  */
 export function themeScore(
   theme: { themeId: string; size: number; recentCount: number },
@@ -108,7 +111,7 @@ export function themeScore(
   return score;
 }
 
-/** What a set compares a sentence with the set's others by. */
+/** What a unit compares a sentence with the unit's others by. */
 interface SetProfile {
   /** The words it asks for: its source word as asked, and the spelling of the card it came from (sentenceSource.ts). */
   targets: string[];
@@ -152,12 +155,12 @@ function wordKeys(candidates: readonly StoredItem[], profileOf: ProfileOf): (ite
 }
 
 /**
- * A set from a theme's new sentences, `candidates` newest saved first: two thirds of it from the newest end, then the
- * rest from the oldest, so the backlog shrinks too, one sentence per word (wordKeys), so a set covers as many
- * expressions as it can and a word's other sentences come back on later days. Only when that can't fill the set does it
- * take more, in rounds: each round adds at most one more sentence of each word, newest first, so no word gets a third
- * sentence before every word has had its second. A set is always setSize's size, so one set meets the day's goal: half
- * the learner's sentences share their word with another. spreadSiblings then orders it.
+ * A unit from a theme's sentences to review, `candidates` newest saved first: two thirds of it from the newest end, then
+ * the rest from the oldest, so the backlog shrinks too, one sentence per word (wordKeys), so a unit covers as many
+ * expressions as it can and a word's other sentences come back on later days. Only when that can't fill the unit does
+ * it take more, in rounds: each round adds at most one more sentence of each word, newest first, so no word gets a third
+ * sentence before every word has had its second. A unit is always setSize's size, so one unit meets the day's goal:
+ * half the learner's sentences share their word with another. spreadSiblings then orders it.
  */
 function composeSet(candidates: readonly StoredItem[], profileOf: ProfileOf): StoredItem[] {
   const size = setSize(candidates.length);
@@ -193,9 +196,9 @@ function composeSet(candidates: readonly StoredItem[], profileOf: ProfileOf): St
 }
 
 /**
- * A set in the order it is met, so the same word is never asked for twice in a row where the set allows it: each place
- * takes the word with the most sentences left that isn't the last place's (a word holding more than half the set can't
- * be kept apart everywhere), ties to the sentence filling took first. A set of different words keeps filling's order.
+ * A unit in lesson order, so the same word never comes twice in a row where the unit allows it: each place takes the
+ * word with the most sentences left that isn't the last place's (a word holding more than half the unit can't be kept
+ * apart everywhere), ties to the sentence filling took first. A unit of different words keeps filling's order.
  */
 function spreadSiblings(set: readonly StoredItem[], keyOf: (item: StoredItem) => string): StoredItem[] {
   const groups = new Map<string, StoredItem[]>();
@@ -231,7 +234,7 @@ function spreadSiblings(set: readonly StoredItem[], keyOf: (item: StoredItem) =>
   return order;
 }
 
-/** The profiles of the library's sentences, each made once, the first time a set looks at it. */
+/** The profiles of the library's sentences, each made once, the first time a unit looks at it. */
 function profiles(items: readonly StoredItem[]): ProfileOf {
   let sourceOf: ReturnType<typeof sentenceSourceResolver> | undefined;
   const made = new Map<string, SetProfile>();
@@ -252,10 +255,12 @@ const byNewestSaved = (a: StoredItem, b: StoredItem) =>
   (b.savedAt || 0) - (a.savedAt || 0) || (a.data.id < b.data.id ? -1 : a.data.id > b.data.id ? 1 : 0);
 
 const emptyTheme = (themeId: string | null): ThemePlan & { candidates: StoredItem[] } => ({
-  themeId, newCount: 0, practicingCount: 0, sayableCount: 0, total: 0, recentCount: 0, nextSet: [], candidates: [],
+  themeId, toReviewCount: 0, memorizedCount: 0, total: 0, recentCount: 0, nextSet: [], candidates: [],
 });
 
-/** The theme with the highest score among those with new sentences, ties to the lower id; null when none has any. */
+const NO_IDS: ReadonlySet<string> = new Set();
+
+/** The theme with the highest score among those with sentences to review, ties to the lower id; null when none has any. */
 function bestTheme(
   pools: ReadonlyMap<string, readonly StoredItem[]>,
   recentCounts: ReadonlyMap<string, number>,
@@ -277,18 +282,13 @@ function bestTheme(
 
 /**
  * The plan for Today from the library, the theme map and this device's state. Unsorted sentences are never picked; their
- * set is offered only from the themes browser (`unsorted.nextSet`).
+ * unit is offered only from the themes browser (`unsorted.nextSet`).
  */
-export function planLoop({ items, themeOf, now, recentStarts, pin }: PlanInput): LoopPlan {
+export function planLoop({ items, themeOf, now, recentStarts, pin, exclude = NO_IDS }: PlanInput): LoopPlan {
   const themes = new Map<string, ThemePlan & { candidates: StoredItem[] }>();
   const unsorted = emptyTheme(null);
-  let awaitingTranslation = 0;
   for (const item of items) {
-    if (!isLoopEligible(item)) {
-      if (!item.isDeleted && !item.isArchived && isOwnSentence(item) && itemStanding(item) === 'new' &&
-        sentenceTranslation(item.data) === '' && item.data.text?.trim()) awaitingTranslation++;
-      continue;
-    }
+    if (!isLoopEligible(item)) continue;
     const themeId = themeOf.get(item.data.id);
     let theme = unsorted;
     if (themeId !== undefined && isThemeId(themeId)) {
@@ -296,11 +296,9 @@ export function planLoop({ items, themeOf, now, recentStarts, pin }: PlanInput):
       themes.set(themeId, theme);
     }
     theme.total++;
-    const standing = itemStanding(item);
-    if (standing === 'practicing') theme.practicingCount++;
-    else if (standing === 'sayable') theme.sayableCount++;
-    else if (standing === 'new') {
-      theme.newCount++;
+    if (!needsReview(item.srs, now)) theme.memorizedCount++;
+    else if (!exclude.has(item.data.id)) {
+      theme.toReviewCount++;
       theme.candidates.push(item);
       if (now - (item.savedAt || 0) < RECENT_MS) theme.recentCount++;
     }
@@ -321,14 +319,14 @@ export function planLoop({ items, themeOf, now, recentStarts, pin }: PlanInput):
   }
   const { candidates: _unsortedCandidates, ...unsortedPlan } = unsorted;
 
-  // Today's theme: the pin while it is today's and its theme still has new sentences, else the best theme now.
+  // Today's theme: the pin while it is today's and its theme still has sentences to review, else the best theme now.
   const day = localDayKey(now);
   const pinned = pin && pin.day === day && (pools.get(pin.themeId)?.length ?? 0) > 0 ? pin.themeId : null;
   const todayTheme = pinned ?? bestTheme(pools, recentCounts, recentStarts, now);
-  if (todayTheme === null) return { themes: plans, unsorted: unsortedPlan, today: null, pin: null, upNext: [], awaitingTranslation };
+  if (todayTheme === null) return { themes: plans, unsorted: unsortedPlan, today: null, pin: null, upNext: [] };
   const today: PlannedSet = { themeId: todayTheme, itemIds: plans.get(todayTheme)?.nextSet ?? [] };
 
-  // Up next: each set as if the ones before it were started now, its sentences gone from its pool and its theme held
+  // Up next: each unit as if the ones before it were started now, its sentences gone from its pool and its theme held
   // back.
   const upNext: PlannedSet[] = [];
   const starts: Record<string, number> = { ...recentStarts, [todayTheme]: now };
@@ -353,6 +351,5 @@ export function planLoop({ items, themeOf, now, recentStarts, pin }: PlanInput):
     today,
     pin: { day, themeId: todayTheme },
     upNext,
-    awaitingTranslation,
   };
 }

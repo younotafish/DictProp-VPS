@@ -4,22 +4,22 @@ import type { PlannedSet } from '../../services/learningLoop/planner';
 import { Chevron } from './TodayPlan';
 import type { ThemeRow, ThemesBrowserModel } from './todayModel';
 
-/** One theme: its emoji and title, where its sentences stand, and a thin bar of the share you can say. A theme with new
- *  sentences is a button that starts its next set; one without is a plain row. */
+/** One theme: its emoji and title, how many of its sentences are to review and memorized, and a thin bar of the share
+ *  memorized. A theme with sentences to review is a button that starts a unit from it; one without is a plain row. */
 function ThemeRowView({ row, onStart }: { row: ThemeRow; onStart: (set: PlannedSet) => void }) {
-  const share = row.total > 0 ? Math.round((row.sayableCount / row.total) * 100) : 0;
+  const share = row.total > 0 ? Math.round((row.memorizedCount / row.total) * 100) : 0;
   const body = (
     <>
       <span className="text-2xl" aria-hidden="true">{row.theme.emoji}</span>
       <span className="min-w-0 flex-1">
         <span className="block truncate font-medium text-slate-800">{row.theme.title}</span>
         <span className="block text-xs tabular-nums text-slate-500">
-          {row.newCount} new · {row.practicingCount} practicing · {row.sayableCount} can say
+          {row.toReviewCount} to review · {row.memorizedCount} memorized
         </span>
         <span
           className="mt-1.5 block h-1 overflow-hidden rounded-full bg-slate-100"
           role="progressbar"
-          aria-label={`${row.theme.title}: you can say ${row.sayableCount} of ${row.total}`}
+          aria-label={`${row.theme.title}: ${row.memorizedCount} of ${row.total} memorized`}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={share}
@@ -35,7 +35,7 @@ function ThemeRowView({ row, onStart }: { row: ThemeRow; onStart: (set: PlannedS
     <button
       type="button"
       onClick={() => onStart(set)}
-      aria-label={`Start a set from ${row.theme.title}: ${set.itemIds.length} of ${row.newCount} new`}
+      aria-label={`Start a unit from ${row.theme.title}: ${set.itemIds.length} of ${row.toReviewCount} to review`}
       className="flex min-h-16 w-full items-center gap-3 px-4 py-3 text-left hover:bg-slate-50"
     >
       {body}
@@ -52,8 +52,8 @@ export interface ThemesBrowserProps {
 }
 
 /**
- * All themes (DESIGN-v2 §8): each domain with the themes that hold a sentence, in the taxonomy's order, then Unsorted.
- * A tap on a theme with new sentences starts its next set; Back, or Esc, returns to the plan.
+ * All themes: each domain with the themes that hold one of Today's sentences, in the taxonomy's order, then Unsorted.
+ * A tap on a theme with sentences to review starts a unit from it; Back, or Esc, returns to the plan.
  */
 export function ThemesBrowser({ model, onBack, onStart, onScroll }: ThemesBrowserProps) {
   // Unsorted needs no heading of its own: its row says what it is.

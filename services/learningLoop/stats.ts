@@ -1,35 +1,32 @@
-import type { ReviewHistory, StoredItem } from '../../types';
+import type { ReviewHistory } from '../../types';
 import type { SetDaysResponse } from '../../server/src/shared/review';
-import { PRACTICE_SESSION_CAP } from './session';
-import { isLoopEligible, isOwnSentence, isPracticeDue, itemStanding, localDayKey, localDayStart } from './standing';
+import { localDayKey, localDayStart } from './standing';
 
-// Today's numbers: the day's goal and the streak of days that met it, the progress line under the plan, and what the
-// plan's one primary button offers. Pure; the Today screen passes the library, the review history (the server's recent
-// reviews merged with this device's outbox, as useReviewHistory holds it) and the set days the server counted.
+// Today's numbers: the day's goal and the streak of days that met it. Pure; the Today screen passes the review history
+// (the server's recent reviews merged with this device's outbox, as useReviewHistory holds it) and the set days the
+// server counted.
 
 /**
- * New sentences to meet in sets each day: one set. The owner's minimum is a set a day, and the planner never splits a
- * theme into sets smaller than this (planner.ts setSize), so any one of its sets meets the goal.
+ * Sentences to Got it in units each day: one unit's worth. The planner never makes a unit smaller than this (planner.ts
+ * setSize), so finishing any one unit meets the goal.
  */
 export const DAILY_SET_GOAL = 12;
-/** From this many practice sentences due, the plan puts practice first and the set row says so (the load governor). */
-export const PRACTICE_FIRST_AT = 40;
 /** How far back a streak can reach: as far as the set-days endpoint counts. */
 const STREAK_DAYS = 400;
 
 /**
- * Today's count toward the goal: the distinct sentences decided in a set since local midnight, from the triage reviews
- * of set sessions, whatever reviews each had before (a sentence Got it'd in the Sentences tab counts as one never
- * reviewed does). Only sentences count: a word triaged while Today still took words, or by a tab still running that
- * build, isn't one the goal asks for. A choice taken back with Back left the history, so it doesn't count.
+ * Today's count toward the goal: the distinct sentences reviewed in a unit since local midnight. A unit's lesson records
+ * each Got it as a 'quick' review in the unit's session ('set:<unit id>'); a 'triage' in a set's session is what a v3
+ * set recorded, and counts too. Only sentences count, never a word, and neither does a review outside a unit, a Got it
+ * on the Sentences tab included. A review taken back left the history, so it doesn't count.
  */
 export function todaySetCount(history: ReviewHistory, now: number): number {
   const from = localDayStart(now);
   const until = localDayStart(now, 1);
   const met = new Set<string>();
   for (const event of history.recent) {
-    if (event.taskType === 'triage' && event.itemType === 'sentence' && event.sessionId?.startsWith('set:') &&
-      event.reviewedAt >= from && event.reviewedAt < until) {
+    if ((event.taskType === 'quick' || event.taskType === 'triage') && event.itemType === 'sentence' &&
+      event.sessionId?.startsWith('set:') && event.reviewedAt >= from && event.reviewedAt < until) {
       met.add(event.itemId);
     }
   }
@@ -69,91 +66,4 @@ export function setDaysLoader(load: (tzOffsetMinutes: number) => Promise<SetDays
     days.catch(() => { if (cached === entry) cached = null; });
     return days;
   };
-}
-
-/** The progress line's numbers and today's practice load, from one pass over the library. */
-export interface LoopProgress {
-  /** Sentences you can say. */
-  sayable: number;
-  /** Of them, marked or graduated this week (today and the six days before). */
-  sayableThisWeek: number;
-  practicing: number;
-  /** Practice sentences due today (standing.ts isPracticeDue). */
-  practiceDue: number;
-  /** Practice sentences due by the end of tomorrow: tomorrow's practice, if today's is done. */
-  tomorrow: number;
-  /** The learner's own sentences saved this week, those still waiting for a translation included. */
-  savedThisWeek: number;
-}
-
-export function loopProgress(items: readonly StoredItem[], now: number): LoopProgress {
-  const todayStart = localDayStart(now);
-  const weekStart = localDayStart(now, -6);
-  const tomorrowEnd = localDayStart(now, 2);
-  const progress: LoopProgress = { sayable: 0, sayableThisWeek: 0, practicing: 0, practiceDue: 0, tomorrow: 0, savedThisWeek: 0 };
-  for (const item of items) {
-    if (!item.isDeleted && !item.isArchived && isOwnSentence(item) && (item.savedAt || 0) >= weekStart) {
-      progress.savedThisWeek++;
-    }
-    if (!isLoopEligible(item)) continue;
-    const standing = itemStanding(item);
-    if (standing === 'sayable') {
-      progress.sayable++;
-      if ((item.srs.sayableAt ?? 0) >= weekStart) progress.sayableThisWeek++;
-    } else if (standing === 'practicing') {
-      progress.practicing++;
-      if (isPracticeDue(item, now, todayStart)) progress.practiceDue++;
-      if ((item.srs?.nextReview ?? 0) < tomorrowEnd) progress.tomorrow++;
-    }
-  }
-  return progress;
-}
-
-/**
- * When today's practice count next changes with the clock alone: when the first practice sentence not reviewed today
- * falls due, or at the next local midnight, when those reviewed today wait no longer. Today re-plans then, and the
- * tab's badge counts again.
- */
-export function nextPracticeClockChange(items: readonly StoredItem[], now: number): number {
-  const todayStart = localDayStart(now);
-  let next = localDayStart(now, 1);
-  for (const item of items) {
-    const srs = item.srs;
-    if (!srs || srs.nextReview <= now || srs.nextReview >= next || (srs.lastReviewDate ?? 0) >= todayStart) continue;
-    if (isLoopEligible(item) && itemStanding(item) === 'practicing') next = srs.nextReview;
-  }
-  return next;
-}
-
-/**
- * "Sorted" this week: the distinct sentences decided by a triage choice, in a set or with the practice pill, over today
- * and the six days before, whatever reviews each had before.
- */
-export function sortedThisWeek(history: ReviewHistory, now: number): number {
-  const weekStart = localDayStart(now, -6);
-  const sorted = new Set<string>();
-  for (const event of history.recent) {
-    if (event.taskType === 'triage' && event.itemType === 'sentence' && event.reviewedAt >= weekStart) sorted.add(event.itemId);
-  }
-  return sorted.size;
-}
-
-/** Done for today: the goal met and no practice due. */
-export const isDoneForToday = (todayCount: number, practiceDue: number): boolean =>
-  todayCount >= DAILY_SET_GOAL && practiceDue === 0;
-
-/** The load governor: so much practice is due that the plan offers practice before any set. */
-export const isPracticeFirst = (practiceDue: number): boolean => practiceDue >= PRACTICE_FIRST_AT;
-
-/**
- * What the plan's one primary button offers next: practice while any is due (a session of at most 30), then a set
- * until the goal is met, then done. 'no-set' when the goal isn't met and no set can be offered: the themes are still
- * being sorted, or no theme has a new sentence left.
- */
-export type TodayAction = { kind: 'practice'; count: number } | { kind: 'set' } | { kind: 'no-set' } | { kind: 'done' };
-
-export function todayAction(practiceDue: number, todayCount: number, hasSet: boolean): TodayAction {
-  if (practiceDue > 0) return { kind: 'practice', count: Math.min(practiceDue, PRACTICE_SESSION_CAP) };
-  if (todayCount >= DAILY_SET_GOAL) return { kind: 'done' };
-  return hasSet ? { kind: 'set' } : { kind: 'no-set' };
 }

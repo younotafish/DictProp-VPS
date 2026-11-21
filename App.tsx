@@ -394,8 +394,6 @@ function SignedInApp({ user }: { user: AuthUser }) {
             onOpenExampleSentence={handleOpenStudyExample}
             onViewCards={handleViewStoredItem}
             onOpenSentence={handleViewSentence}
-            onLazyLoadImage={lazyLoadImage}
-            undoOffered={!!undoMessage}
             interactionLocked={!!detailContext}
             onScroll={handleScroll}
           />
@@ -465,7 +463,6 @@ function SignedInApp({ user }: { user: AuthUser }) {
           currentView={currentView}
           onNavigate={navigate}
           sentenceDueCount={sentenceDueCount}
-          items={library.savedItems}
           onKeyboardHelp={openKeyboardHelp}
           covered={overlayOpen}
           onFocus={revealNav}

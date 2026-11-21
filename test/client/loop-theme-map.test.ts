@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { IDBKeyRange, indexedDB } from 'fake-indexeddb';
 import { THEMES, type ThemesResponse } from '../../server/src/shared/item-themes.ts';
-import { sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
+import { memorized, sentenceItem, vocabItem } from '../support/loop-fixtures.ts';
 
 Object.assign(globalThis, { indexedDB, IDBKeyRange });
 
@@ -117,22 +117,25 @@ test('sorting progress is the share of sentences sorted among those sorted or pe
   assert.equal(sortingPercent(0, 0), 100);
 });
 
-test('sorting progress counts the loop\'s sentences in a known theme, never the rows a kept map holds for words', () => {
+test('sorting progress counts Today\'s sentences in a known theme, never the rows a kept map holds for words', () => {
   const [first, second] = THEMES.map(theme => theme.id);
   const words = Array.from({ length: 60 }, (_, i) => vocabItem(`w${i}`, `word${i}`));
   const items = [
-    sentenceItem('sorted-1', 'One.'), sentenceItem('sorted-2', 'Two.'), sentenceItem('waiting', 'Not sorted yet.'),
-    sentenceItem('retired', 'In a theme this build doesn\'t know.'), sentenceItem('untranslated', 'No translation.', { translation: null }),
+    sentenceItem('sorted-1', 'One.'), sentenceItem('sorted-2', 'Two.', { srs: memorized(Date.UTC(2026, 10, 17)) }),
+    sentenceItem('waiting', 'Not sorted yet.'), sentenceItem('retired', 'In a theme this build doesn\'t know.'),
+    sentenceItem('untranslated', 'No translation, which Today doesn\'t need.', { translation: null }),
+    sentenceItem('archived', 'Archived.', { isArchived: true }),
     ...words,
   ];
   // The map an older build kept: the words its sweep sorted beside the sentences sorted so far.
   const themeOf = new Map<string, string>([
-    ['sorted-1', first], ['sorted-2', second], ['retired', 'a-retired-theme'], ['untranslated', first],
+    ['sorted-1', first], ['sorted-2', second], ['retired', 'a-retired-theme'], ['untranslated', first], ['archived', second],
     ...words.map(word => [word.data.id, first] as [string, string]),
   ]);
   const plan = planLoop({ items, themeOf, now: Date.UTC(2026, 10, 18), recentStarts: {}, pin: null });
-  assert.equal(sortingProgress(plan, { pending: 2 }), 50, 'two sentences sorted, two waiting; the map\'s size would say 96%');
-  assert.equal(sortingProgress(plan, { pending: 6 }), 25);
+  // Three sentences sorted, a memorized one among them, and two waiting; the map's size would say 97%.
+  assert.equal(sortingProgress(plan, { pending: 2 }), 60);
+  assert.equal(sortingProgress(plan, { pending: 6 }), 33);
   assert.equal(sortingProgress(plan, { pending: 0 }), null, 'nothing left to sort');
   assert.equal(sortingProgress(plan, null), null, 'no refresh yet');
 });
