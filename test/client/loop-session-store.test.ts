@@ -11,6 +11,7 @@ import {
   recordSetStart,
   setStartsKey,
   todayPinKey,
+  unitSessionId,
   writeActiveUnit,
   writeTodayPin,
   type ActiveUnit,
@@ -38,6 +39,7 @@ test('the active unit lives under the user\'s key and reads back as it was writt
   assert.deepEqual(JSON.parse(storage.getItem(activeUnitKey(USER))!), UNIT);
   assert.deepEqual(readActiveUnit(USER, storage), UNIT);
   assert.equal(readActiveUnit('another', storage), null);
+  assert.equal(unitSessionId(UNIT), 'set:unit-1', 'the session its lesson records its reviews in');
 
   // A unit from Unsorted has no theme; the next start replaces the unit before it.
   const next: ActiveUnit = { ...UNIT, id: 'unit-2', themeId: null, itemIds: ['u1'], startedAt: T0 + DAY };
@@ -55,7 +57,9 @@ test('an active unit that is damaged, foreign or oversized reads as none', () =>
     ['another user\'s', raw({ userId: 'someone-else' })],
     ['no user', raw({ userId: undefined })],
     ['an empty id', raw({ id: '' })],
-    ['an id too long', raw({ id: 'x'.repeat(201) })],
+    // The server takes a review's session id, 'set:' and the unit's id, up to 200 characters, and refuses the review
+    // beyond that.
+    ['an id too long for its session id', raw({ id: 'x'.repeat(197) })],
     ['a theme that is neither an id nor null', raw({ themeId: 7 })],
     ['an empty theme', raw({ themeId: '' })],
     ['no sentences', raw({ itemIds: [] })],
@@ -71,6 +75,10 @@ test('an active unit that is damaged, foreign or oversized reads as none', () =>
   // A hundred sentences, and fields it doesn't know, still read: only the record's own fields come back.
   const hundred = Array.from({ length: 100 }, (_, i) => `s${i}`);
   assert.deepEqual(decodeActiveUnit(raw({ itemIds: hundred, note: 'from a later build' }), USER), { ...UNIT, itemIds: hundred });
+  // So does the longest id whose session id fits, at 200 characters.
+  const longest = decodeActiveUnit(raw({ id: 'x'.repeat(196) }), USER);
+  assert.ok(longest);
+  assert.equal(unitSessionId(longest).length, 200);
 });
 
 test('reading and writing the active unit never throw when storage is missing or refuses', () => {

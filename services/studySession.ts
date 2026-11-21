@@ -31,7 +31,7 @@ export interface StudyContent {
   ipa?: string;
 }
 
-/** Study's four prompts: the other task types belong to Got it ('quick') and Today's loop. */
+/** Study's four prompts: the other task types are Got it ('quick') and the three Today recorded before its units. */
 export type StudyTaskType = Extract<ReviewTaskType, 'meaning' | 'production' | 'cloze' | 'listening'>;
 
 /**
@@ -97,7 +97,7 @@ export function listeningPrompt(item: StoredItem): string | null {
 /**
  * A session's cards: up to `dueLimit` due cards, the most overdue first, then up to `newLimit` never-reviewed ones, the
  * oldest saved first, one meaning per spelling. Card review takes words and phrases (useLibraryViews' studyItems), which
- * Today's loop never takes, so it introduces new cards itself.
+ * Today never takes, so it introduces new cards itself.
  */
 export function buildReviewQueue(items: readonly StoredItem[], now = Date.now(), dueLimit = 40, newLimit = 10): StoredItem[] {
   const due = items

@@ -20,6 +20,7 @@ import {
   readSetStarts,
   readTodayPin,
   recordSetStart,
+  unitSessionId,
   writeActiveUnit,
   writeTodayPin,
   type ActiveUnit,
@@ -41,10 +42,10 @@ import { ThemesBrowser } from './ThemesBrowser';
 import { TodayPlan } from './TodayPlan';
 import { resolveTodayKey } from './todayKeys';
 import {
-  isUnfinished,
   planCardModel,
   themesBrowserModel,
   todayHandlers,
+  unitExclude,
   unitProgress,
   upNextUnits,
   type ThemesStatus,
@@ -79,7 +80,7 @@ const NO_THEMES: ReadonlyMap<string, string> = new Map();
 const CardReview = React.memo(StudyEnhanced);
 
 /** How the lesson opens a unit's sentences: its Got its count toward the goal, and its Back says Today. */
-const unitRun = (unit: ActiveUnit): SentenceRunOptions => ({ reviewSessionId: `set:${unit.id}`, exitLabel: 'Today' });
+const unitRun = (unit: ActiveUnit): SentenceRunOptions => ({ reviewSessionId: unitSessionId(unit), exitLabel: 'Today' });
 
 /**
  * Whether Card review would take up classic Study's kept session (StudyEnhanced's restoreSession): the user's, recent,
@@ -158,18 +159,14 @@ export function TodayView({
   }
 
   // While the active unit is unfinished, no unit the plan composes takes its sentences.
-  const plan = useMemo(() => {
-    const { unit } = snapshot;
-    const exclude = unit && isUnfinished(unitProgress(unit, snapshot.items, snapshot.now)) ? new Set(unit.itemIds) : undefined;
-    return planLoop({
-      items: snapshot.items,
-      themeOf: snapshot.themes?.themes ?? NO_THEMES,
-      now: snapshot.now,
-      recentStarts: readSetStarts(userId, snapshot.now),
-      pin: readTodayPin(userId),
-      exclude,
-    });
-  }, [snapshot, userId]);
+  const plan = useMemo(() => planLoop({
+    items: snapshot.items,
+    themeOf: snapshot.themes?.themes ?? NO_THEMES,
+    now: snapshot.now,
+    recentStarts: readSetStarts(userId, snapshot.now),
+    pin: readTodayPin(userId),
+    exclude: unitExclude(snapshot.unit, snapshot.items, snapshot.now),
+  }), [snapshot, userId]);
   // The active unit as the library holds it now, so its progress moves as its sentences are reviewed, here or elsewhere.
   const unit = useMemo(() => unitProgress(snapshot.unit, items, snapshot.now), [snapshot.unit, snapshot.now, items]);
   const classicDue = useMemo(() => countDueSpellings(snapshot.studyItems, snapshot.now), [snapshot]);

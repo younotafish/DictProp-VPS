@@ -15,6 +15,7 @@ import {
   themeLabel,
   themesBrowserModel,
   todayHandlers,
+  unitExclude,
   unitProgress,
   upNextUnits,
   type PlanCardInput,
@@ -83,6 +84,24 @@ test('the active unit holds its live sentences in lesson order, counts the memor
   assert.equal(isUnfinished(null), false);
   // Two days on, a memorized sentence rests no longer, and the done unit is unfinished again.
   assert.equal(unitProgress(unitOf(['done-1', 'done-2']), items, NOW + 2 * DAY)?.next, 0);
+});
+
+test('the plan leaves the active unit\'s sentences out of every other unit while it is unfinished, and nothing once it is done', () => {
+  const items: StoredItem[] = [
+    sentenceItem('done', 'Got it in the unit.', { srs: memorized(NOW - HOUR) }),
+    sentenceItem('fresh', 'Never reviewed.'),
+    sentenceItem('gone', 'Deleted since.', { isDeleted: true }),
+  ];
+  // Unfinished, whatever day it started: all of its sentences, so no other unit takes the one still to review.
+  const all = ['done', 'fresh', 'gone', 'missing'];
+  assert.deepEqual(unitExclude(unitOf(all), items, NOW), new Set(all));
+  assert.deepEqual(unitExclude(unitOf(['fresh'], localDayStart(NOW, -1) + HOUR), items, NOW), new Set(['fresh']), 'started yesterday');
+  // Done, or with no live sentence left, or none at all: nothing is left out.
+  assert.equal(unitExclude(unitOf(['done', 'gone']), items, NOW), undefined);
+  assert.equal(unitExclude(unitOf(['gone', 'missing']), items, NOW), undefined);
+  assert.equal(unitExclude(null, items, NOW), undefined);
+  // Two days on, its memorized sentence is due again: the unit is unfinished, and keeps it from other units again.
+  assert.deepEqual(unitExclude(unitOf(['done', 'gone']), items, NOW + 2 * DAY), new Set(['done', 'gone']));
 });
 
 const NEXT: PlannedSet = { themeId: SECOND.id, itemIds: Array.from({ length: DAILY_SET_GOAL }, (_, i) => `n${i}`) };

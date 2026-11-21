@@ -19,7 +19,7 @@ const V3_MODE_KEY = 'today_mode_v1';
 const MAX_SET_STARTS = 50;
 /** The most sentences a stored unit may hold (the planner makes units of at most 23). */
 const MAX_UNIT_ITEMS = 100;
-/** The longest id kept, as the server allows for ids. */
+/** The longest id kept, as the server allows for ids, and for a review's session id. */
 const MAX_ID_LENGTH = 200;
 
 /** The unit last started on this device: Today offers it as Continue while any of its sentences needs review. */
@@ -35,16 +35,27 @@ export interface ActiveUnit {
   startedAt: number;
 }
 
+/**
+ * The session a unit's lesson records its reviews in, by which the day's goal and the streak count them (stats.ts
+ * todaySetCount, and the server's set days).
+ */
+export const unitSessionId = (unit: Pick<ActiveUnit, 'id'>): string => `set:${unit.id}`;
+
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const isId = (value: unknown): value is string => typeof value === 'string' && value !== '' && value.length <= MAX_ID_LENGTH;
+/** A unit id whose session id is one the server takes, so the reviews made in the unit aren't refused. */
+const isUnitId = (value: unknown): value is string => isId(value) && unitSessionId({ id: value }).length <= MAX_ID_LENGTH;
 const isTime = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 
-/** The unit `raw` holds when it is `userId`'s and well formed: one to 100 distinct sentence ids. Null otherwise. */
+/**
+ * The unit `raw` holds when it is `userId`'s and well formed: an id short enough for its session id, and one to 100
+ * distinct sentence ids. Null otherwise.
+ */
 export function decodeActiveUnit(raw: string | null, userId: string): ActiveUnit | null {
   const value = parseJson(raw);
   if (!isRecord(value) || value.version !== 1 || value.userId !== userId) return null;
   const { id, themeId, itemIds, startedAt } = value;
-  if (!isId(id) || (themeId !== null && !isId(themeId)) || !isTime(startedAt)) return null;
+  if (!isUnitId(id) || (themeId !== null && !isId(themeId)) || !isTime(startedAt)) return null;
   if (!Array.isArray(itemIds) || itemIds.length === 0 || itemIds.length > MAX_UNIT_ITEMS || !itemIds.every(isId)) return null;
   if (new Set(itemIds).size !== itemIds.length) return null;
   return { version: 1, userId, id, themeId, itemIds, startedAt };

@@ -141,7 +141,7 @@ test('an unfinished unit kept on the device is offered as Continue, from yesterd
   keepUnit(['m1', 'a', 'gone', 'm2', 'missing', 'b'], localDayStart(NOW, -1) + 20 * HOUR);
   const text = textOf(render());
   assert.match(text, new RegExp(`Unit ${THEME.emoji} ${THEME.title} 4 sentences · 2 memorized Continue`));
-  // Its sentences go to no other unit: none is offered while the theme map loads, but the plan excludes them.
+  // Continue is the card's one offer: no Start unit beside it, and no Done for today with the goal not met.
   assert.doesNotMatch(text, /Start unit|Done for today/);
 });
 
@@ -198,8 +198,9 @@ test('Continue opens the unit\'s live sentences in the lesson at the first still
   assert.equal(readActiveUnit(USER)?.startedAt, NOW - HOUR, 'the unit stays as it was');
 });
 
-/** App.tsx's source, parsed. */
-const app = ts.createSourceFile('App.tsx', readRepoFile('App.tsx'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+/** A file's source, parsed. */
+const parse = (path: string) => ts.createSourceFile(path, readRepoFile(path), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const app = parse('App.tsx');
 
 /** The attributes of the one JSX element named `tag` in App, as written. */
 function attributesOf(tag: string): { element: ts.JsxSelfClosingElement; props: Record<string, string> } {
@@ -252,6 +253,30 @@ test('the tab bar badges only the Sentences tab, which keeps its violet count; T
   assert.match(markup, /rounded-full bg-violet-500 px-1 text-\[9px\] font-bold leading-none text-white">4<\/span>/);
   assert.equal(markup.match(/rounded-full bg-/g)?.length, 1, 'one badge');
   assert.doesNotMatch(markup, /bg-orange-500|to practice/);
+});
+
+test('the plan is planned from its snapshot, and leaves out the sentences of the active unit while it is unfinished', () => {
+  // No static render loads a theme map, so no rendered plan offers a unit that could show what it leaves out: the call
+  // is read from the source, and todayModel's unitExclude is tested on its own.
+  const calls: ts.CallExpression[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && node.expression.getText() === 'planLoop') calls.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(parse('views/today/TodayView.tsx'));
+  assert.equal(calls.length, 1, 'Today plans in one place');
+  const [input] = calls[0].arguments;
+  assert.ok(input && ts.isObjectLiteralExpression(input));
+  const fields = Object.fromEntries(input.properties.map(property =>
+    [property.name?.getText(), ts.isPropertyAssignment(property) ? property.initializer.getText() : property.getText()]));
+  assert.deepEqual(fields, {
+    items: 'snapshot.items',
+    themeOf: 'snapshot.themes?.themes ?? NO_THEMES',
+    now: 'snapshot.now',
+    recentStarts: 'readSetStarts(userId, snapshot.now)',
+    pin: 'readTodayPin(userId)',
+    exclude: 'unitExclude(snapshot.unit, snapshot.items, snapshot.now)',
+  });
 });
 
 test('Today\'s Esc and Enter follow todayHandlers, so they never listen over Card review or under the lesson', () => {

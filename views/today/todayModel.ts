@@ -75,6 +75,14 @@ export function unitProgress(unit: ActiveUnit | null, items: readonly StoredItem
 /** Whether the unit is unfinished: Continue offers it, and no other unit takes its sentences. */
 export const isUnfinished = (progress: UnitProgress | null): boolean => !!progress && progress.next >= 0;
 
+/**
+ * What the plan leaves out of every unit it composes (PlanInput.exclude): the active unit's sentences while it is
+ * unfinished at `now`, so no other unit takes them. Nothing once it is done, or with no unit.
+ */
+export function unitExclude(unit: ActiveUnit | null, items: readonly StoredItem[], now: number): ReadonlySet<string> | undefined {
+  return unit && isUnfinished(unitProgress(unit, items, now)) ? new Set(unit.itemIds) : undefined;
+}
+
 /** Where the theme map stands, for a plan with no unit: still loading, unreachable with nothing kept, or in hand. */
 export type ThemesStatus = 'loading' | 'offline' | 'ready';
 

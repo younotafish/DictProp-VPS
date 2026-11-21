@@ -108,8 +108,3 @@ export const practicing = (since: number, srs: Partial<SRSData> = {}): Partial<S
 export const sayable = (at: number, srs: Partial<SRSData> = {}): Partial<SRSData> => ({
   totalReviews: 1, lastReviewDate: at, sayableAt: at, practiceChangedAt: at, fsrsState: 2, ...srs,
 });
-
-/** A schedule v3's Meet kept passive at `at` (a triage rated good). */
-export const passive = (at: number, srs: Partial<SRSData> = {}): Partial<SRSData> => ({
-  totalReviews: 1, lastReviewDate: at, practiceChangedAt: at, fsrsState: 2, ...srs,
-});
