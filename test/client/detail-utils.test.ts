@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createElement } from 'react';
+import { act, createElement } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { formatNextReview, mergePreparedSentence } from '../../views/detail/detailUtils.ts';
-import { rememberedIntervalDays } from '../../views/detail/useRememberToast.ts';
+import { useRememberToast } from '../../views/detail/useRememberToast.ts';
 import { RememberToast } from '../../views/detail/RememberToast.tsx';
 import { updateAfterRating } from '../../services/fsrsScheduler.ts';
 import { reviewIntervalDays } from '../../services/reviewTime.ts';
@@ -22,32 +23,49 @@ test('the Remembered toast says tomorrow, then days, then months to the half', (
   assert.equal(formatNextReview(200), 'in ~6.5 months');
 });
 
-test('the Remembered toast names no date for a sentence Today owns, which a Got it leaves Today\'s; any other card gets its interval', () => {
+// Just enough of a browser for React to mount a hook that draws nothing, as in library-views.test.ts.
+const page = Object.assign(new EventTarget(), {
+  nodeType: 9, visibilityState: 'visible' as DocumentVisibilityState, activeElement: null, defaultView: null as unknown,
+});
+const browser = { document: page, event: undefined, HTMLIFrameElement: class {} };
+page.defaultView = browser;
+const globals = globalThis as Record<string, unknown>;
+
+test('Got it on a sentence carrying membership from Today\'s v3 loop confirms with its next review, as on any card', async (t) => {
   const NOW = Date.UTC(2026, 10, 16, 9);
   const DAY = 86_400_000;
-  // Met in a set three weeks ago: Practice (a triage Again), Passive (Good) or Can say it (Easy).
-  const met = (type: 'vocab' | 'sentence', rating: 'again' | 'good' | 'easy') =>
-    updateAfterRating(SRSAlgorithm.createNew(`${type}-${rating}`, type, NOW - 22 * DAY), rating, NOW - 21 * DAY, 'triage');
-  // Got it is a classic review: it schedules the sentence and leaves it practicing, or one you can say.
-  for (const rating of ['again', 'easy'] as const) {
-    const gotIt = updateAfterRating(met('sentence', rating), 'good', NOW);
-    assert.ok(gotIt.practiceSince !== undefined || gotIt.sayableAt !== undefined, `still Today's after ${rating}`);
-    assert.equal(rememberedIntervalDays(gotIt, NOW), null, rating);
+  // The confirmation's timer, so none outlives the test.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  Object.assign(globals, { window: browser, document: page, IS_REACT_ACT_ENVIRONMENT: true });
+  try {
+    let remember: ReturnType<typeof useRememberToast> | undefined;
+    const Probe = () => { remember = useRememberToast(); return null; };
+    const container = Object.assign(new EventTarget(), {
+      nodeType: 1, nodeName: 'DIV', tagName: 'DIV', namespaceURI: 'http://www.w3.org/1999/xhtml', ownerDocument: page, textContent: '',
+    });
+    const root = createRoot(container as unknown as Element);
+    await act(() => root.render(createElement(Probe)));
+    // Met in a set three weeks ago: Practice (a triage Again), Passive (Good) or Can say it (Easy). Got it schedules
+    // the sentence and leaves what the set decided on it.
+    for (const rating of ['again', 'good', 'easy'] as const) {
+      const id = `sentence-${rating}`;
+      const fresh = SRSAlgorithm.createNew(id, 'sentence', NOW - 22 * DAY);
+      const met = updateAfterRating(fresh, rating, NOW - 21 * DAY, 'triage');
+      const gotIt = updateAfterRating(met, 'good', NOW);
+      assert.equal(gotIt.practiceChangedAt, met.practiceChangedAt, `${rating}: the membership stays`);
+      await act(() => remember!.showRemembered(gotIt, NOW, id));
+      assert.deepEqual(remember!.toast, { id, intervalDays: reviewIntervalDays(gotIt.nextReview, NOW) }, rating);
+    }
+    await act(() => root.unmount());
+  } finally {
+    delete globals.window;
+    delete globals.document;
+    delete globals.IS_REACT_ACT_ENVIRONMENT;
   }
-  // A sentence kept passive, one never met in Today, and a word with membership left from when Today took words.
-  const others = [
-    updateAfterRating(met('sentence', 'good'), 'good', NOW),
-    updateAfterRating(SRSAlgorithm.createNew('fresh', 'sentence', NOW - DAY), 'good', NOW),
-    updateAfterRating(met('vocab', 'easy'), 'good', NOW),
-  ];
-  for (const next of others) {
-    assert.equal(rememberedIntervalDays(next, NOW), reviewIntervalDays(next.nextReview, NOW));
-  }
-  // Without a date the toast says only Remembered!.
+  // The toast says it; without an interval it would say only Remembered!.
   const toast = (intervalDays: number | null) => renderToStaticMarkup(createElement(RememberToast, { intervalDays }));
-  assert.match(toast(null), /Remembered!/);
+  assert.match(toast(4), /Remembered!.*Next review (?:<!-- -->)?in 4 days/);
   assert.doesNotMatch(toast(null), /Next review/);
-  assert.match(toast(4), /Next review (?:<!-- -->)?in 4 days/);
 });
 
 const srs = (id: string, totalReviews: number) => ({

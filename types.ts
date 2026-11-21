@@ -127,7 +127,10 @@ export interface SRSData {
   learningSteps?: number;
   scheduledDays?: number;
 
-  // Today's practice membership (server/src/shared/practice.ts), changed only by reviews. Absent keys mean "no".
+  // Today's practice membership from its v3 loop (server/src/shared/practice.ts), changed only by reviews of the loop's
+  // task types, which the server still applies for the reviews a v3 tab queued. A Got it leaves it as it is, and the
+  // app reads it nowhere but in the scheduler's shared step: a sentence is to review by its reviews and dates alone.
+  // Absent keys mean "no".
   /** In practice since this time. */
   practiceSince?: number;
   /** One you can say since this time. */

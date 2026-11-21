@@ -11,8 +11,6 @@ import { lessonReviewPill, memorizedCount, sentenceRowState } from '../../views/
 import { resolveSentenceUnderReview } from '../../views/detail/sentenceUnderReview.ts';
 import { SentenceActionsRow } from '../../views/detail/SentenceActionsRow.tsx';
 import { SentenceHeaderRow } from '../../views/detail/SentenceHeaderRow.tsx';
-import { PracticePill } from '../../views/detail/PracticePill.tsx';
-import { WordCardHeader } from '../../views/detail/WordCardHeader.tsx';
 import { readRepoFile } from '../support/paths.ts';
 
 // Sentence review's bottom row (views/detail/sentenceRowState.ts and SentenceActionsRow.tsx): it goes by the
@@ -111,22 +109,6 @@ test('an unsaved example offers Save sentence at the right end, at Got it\'s siz
   assert.equal(rightButtons(rowFor('example', true, 0, { onSaveSentence: undefined })).length, 0, 'nothing without a way to save');
 });
 
-test('from 640 px up the practice pill sits between Delete and Got it, which keeps its size and place; a phone\'s row has none', () => {
-  const practicePill = createElement(PracticePill, {
-    toggle: { itemId: 's1', practicing: false, name: 'She came clean.' }, onPress: () => {},
-  });
-  for (const reviews of [0, 3]) {
-    const html = rowFor('saved', false, reviews, { practicePill });
-    assert.deepEqual(rightButtons(html), [
-      ...(reviews > 0 ? ['Reset memory (Shift+R)'] : []), 'Delete sentence (D)', 'Add “She came clean.” to practice (B)', 'Remember (R)',
-    ]);
-    // Hidden below sm, where the lesson's speaker row shows it instead (SentenceHero), so the phone's row never changes.
-    assert.match(html, /<div class="mx-1 hidden sm:flex"><button type="button" aria-label="Add “She came clean.” to practice"/);
-    assert.equal(buttonClasses(html, 'Got it'), GOT_IT);
-  }
-  assert.doesNotMatch(rowFor('saved', false, 3), /to practice/, 'nothing where the view passes no pill');
-});
-
 const NOW = Date.UTC(2026, 10, 16, 9);
 const DAY = 86_400_000;
 /** A sentence of the run: never reviewed, or reviewed with its next review `dueIn` from NOW. */
@@ -172,72 +154,63 @@ test('the memorized count is the run\'s sentences reviewed and not due, whatever
   assert.equal(memorizedCount(run, NOW + 2 * DAY), 0);
 });
 
-test('a run\'s sentences that Today practises or is done with are never to review, so they count as memorized', () => {
-  // Overdue by their classic schedule, but Today's: one in practice, one marked as one you can say.
-  const owned = (id: string, membership: Partial<StoredItem['srs']>): StoredItem => {
-    const item = line(id, { dueIn: -DAY });
+// Today's v3 loop left membership on some sentences' schedules, which a Got it keeps: the lesson reads none of it.
+
+test('a run\'s sentences carrying membership from Today\'s v3 loop count by their dates, so overdue ones are to review', () => {
+  // What a v3 set left: practice, Can say it, or kept passive (practiceChangedAt alone).
+  const carrying = (id: string, dueIn: number, membership: Partial<SRSData>): StoredItem => {
+    const item = line(id, { dueIn });
     return { ...item, srs: { ...item.srs, practiceChangedAt: NOW - 2 * DAY, ...membership } };
   };
-  const run = [line('new'), line('due', { dueIn: -DAY }), owned('practicing', { practiceSince: NOW - 2 * DAY }), owned('sayable', { sayableAt: NOW - 2 * DAY })];
-  assert.deepEqual(lessonReviewPill(run, NOW), { count: 2, label: '2 to review', tone: 'amber' });
-  assert.equal(memorizedCount(run, NOW), 2);
-  assert.deepEqual(lessonReviewPill(run.slice(2), NOW + 30 * DAY), { count: 0, label: 'All reviewed', tone: 'emerald' }, 'whatever the date');
+  const run = [
+    line('new'),
+    carrying('practicing', -DAY, { practiceSince: NOW - 2 * DAY }),
+    carrying('sayable', -DAY, { sayableAt: NOW - 2 * DAY }),
+    carrying('passive', DAY, {}),
+  ];
+  assert.deepEqual(lessonReviewPill(run, NOW), { count: 3, label: '3 to review', tone: 'amber' });
+  assert.equal(memorizedCount(run, NOW), 1);
+  // Once the passive one's date has passed too, the whole run is to review.
+  assert.deepEqual(lessonReviewPill(run, NOW + 2 * DAY), { count: 4, label: '4 to review', tone: 'amber' });
+  assert.equal(memorizedCount(run, NOW + 2 * DAY), 0);
 });
 
-test('Can say it in a set, then the sentence\'s lesson after its date: All reviewed and no due; a word marked so in v2 still reads due', t => {
-  // A triage Easy, as a set's Can say it records it, and as v2 recorded it for a word too.
-  const marked = (id: string, type: 'vocab' | 'sentence') =>
-    updateAfterRating(SRSAlgorithm.createNew(id, type, NOW - DAY), 'easy', NOW, 'triage');
-  const sentence = marked('s1', 'sentence');
-  const word = marked('w1', 'vocab');
-  assert.ok(sentence.sayableAt !== undefined && word.sayableAt !== undefined, 'both marked as ones you can say');
-  const later = Math.max(sentence.nextReview, word.nextReview) + DAY;
+test('a sentence a v3 set marked Can say it comes back after its date: its lesson counts it to review and its row says due', t => {
+  // A triage Easy, as a set's Can say it recorded it.
+  const marked = updateAfterRating(SRSAlgorithm.createNew('s1', 'sentence', NOW - DAY), 'easy', NOW, 'triage');
+  assert.ok(marked.sayableAt !== undefined, 'marked as one you can say');
+  const later = marked.nextReview + DAY;
   t.mock.method(Date, 'now', () => later);
 
-  const run = [{ ...line('s1'), srs: sentence }];
-  assert.deepEqual(lessonReviewPill(run, later), { count: 0, label: 'All reviewed', tone: 'emerald' });
-  const sentenceMastery = SRSAlgorithm.getMasteryLevel(sentence);
-  const lessonRow = renderToStaticMarkup(createElement(SentenceActionsRow, {
-    srs: sentence, mastery: sentenceMastery, masteryColors: getMasteryColors(sentenceMastery.color),
-    memorizedCount: memorizedCount(run, later), preview: false, catalog: false, catalogKind: undefined, onRemember: () => {},
-    onReset: () => {}, onDelete: () => {},
+  const run = [{ ...line('s1'), srs: marked }];
+  assert.deepEqual(lessonReviewPill(run, later), { count: 1, label: '1 to review', tone: 'amber' });
+  const mastery = SRSAlgorithm.getMasteryLevel(marked);
+  const row = renderToStaticMarkup(createElement(SentenceActionsRow, {
+    srs: marked, mastery, masteryColors: getMasteryColors(mastery.color), memorizedCount: memorizedCount(run, later),
+    preview: false, catalog: false, catalogKind: undefined, onRemember: () => {}, onReset: () => {}, onDelete: () => {},
   }));
-  assert.match(lessonRow, /aria-label="1 memorized in this list"/);
-  assert.doesNotMatch(lessonRow, />due</);
-
-  const wordMastery = SRSAlgorithm.getMasteryLevel(word);
-  const header = renderToStaticMarkup(createElement(WordCardHeader, {
-    showHeader: true, onClose: () => {}, itemCount: 1, itemIndex: 0, onRefresh: () => {}, isSaved: true, onDelete: () => {},
-    onSave: () => {}, onRemember: () => {}, onUnarchive: () => {}, moreActionsRef: { current: null }, showActionMenu: false,
-    onToggleActionMenu: () => {}, stats: { srs: word, mastery: wordMastery, colors: getMasteryColors(wordMastery.color) },
-    savedItems: [],
-  }));
-  assert.match(header, /<span class="text-slate-500">due<\/span>/);
+  assert.match(row, /aria-label="0 memorized in this list"/);
+  assert.match(row, /0<\/span><span class="text-slate-500 whitespace-nowrap">due<\/span><div class="ml-auto/);
 });
 
-test('the lesson row of a sentence Today owns names no date: Can say it from 640 px up, and a practicing one leaves it to its pill', t => {
+test('the lesson\'s row has no practice pill and names the next review, whatever membership a v3 set left', t => {
   t.mock.method(Date, 'now', () => NOW);
-  // Two weeks overdue by their classic schedules.
-  const overdue = (membership: Partial<SRSData>): SRSData => ({
-    ...schedule(3), nextReview: NOW - 14 * DAY, practiceChangedAt: NOW - 30 * DAY, ...membership,
+  const carrying = (nextReview: number, membership: Partial<SRSData>): SRSData => ({
+    ...schedule(3), nextReview, practiceChangedAt: NOW - 30 * DAY, ...membership,
   });
-  const pill = (practicing: boolean) => createElement(PracticePill, {
-    toggle: { itemId: 's1', practicing, name: 'She came clean.' }, onPress: () => {},
-  });
-
-  const sayable = rowFor('saved', false, 3, { srs: overdue({ sayableAt: NOW - 30 * DAY }), practicePill: pill(false) });
-  assert.doesNotMatch(sayable, />due</);
-  // In the date's place, after the memorized count, and hidden below 640 px, where the phone's row keeps its room.
-  assert.match(sayable, /2<\/span><span class="hidden sm:inline text-slate-500 whitespace-nowrap">Can say it<\/span><div class="ml-auto/);
-
-  const practicing = rowFor('saved', false, 3, { srs: overdue({ practiceSince: NOW - 30 * DAY }), practicePill: pill(true) });
-  assert.doesNotMatch(practicing, />due<|Can say it/);
-  assert.match(practicing, /<\/svg>Practicing<\/button>/, 'its pill says where it stands');
-
-  // Kept passive, a sentence is back on its schedule: its row says it is due, and nothing of Today.
-  const passive = rowFor('saved', false, 3, { srs: overdue({}), practicePill: pill(false) });
-  assert.match(passive, /2<\/span><span class="text-slate-500 whitespace-nowrap">due<\/span><div class="ml-auto/);
-  assert.doesNotMatch(passive, /Can say it/);
+  for (const membership of [{ practiceSince: NOW - 30 * DAY }, { sayableAt: NOW - 30 * DAY }, {}]) {
+    const overdue = rowFor('saved', false, 3, { srs: carrying(NOW - 14 * DAY, membership) });
+    const resting = rowFor('saved', false, 3, { srs: carrying(NOW + 3 * DAY, membership) });
+    // After the memorized count, on a phone too.
+    assert.match(overdue, /2<\/span><span class="text-slate-500 whitespace-nowrap">due<\/span><div class="ml-auto/);
+    assert.match(resting, /2<\/span><span class="text-slate-500 whitespace-nowrap">3d<\/span><div class="ml-auto/);
+    for (const html of [overdue, resting]) {
+      // Reset, Delete and Got it, at its size, at the right end: nothing comes between Delete and Got it.
+      assert.deepEqual(rightButtons(html), ['Reset memory (Shift+R)', 'Delete sentence (D)', 'Remember (R)']);
+      assert.equal(buttonClasses(html, 'Got it'), GOT_IT);
+      assert.doesNotMatch(html, /practic|can say it/i);
+    }
+  }
 });
 
 test('the memorized count says what it counts, and the header shows the pill in its tone', () => {

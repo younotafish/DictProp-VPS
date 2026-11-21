@@ -82,30 +82,26 @@ test('without a schedule the row reads no reviews and due', t => {
   assert.match(markup, /<span class="text-slate-400 whitespace-nowrap">0×<\/span><span class="text-slate-500 whitespace-nowrap">due<\/span>$/);
 });
 
-test('a sentence Today owns shows no next review, due or not; a word or phrase with the same fields still shows its own', t => {
+test('membership from Today\'s v3 loop leaves the next review in place: a sentence shows its own, due or not, as a word does', t => {
   t.mock.method(Date, 'now', () => NOW);
   const colors = getMasteryColors('amber');
-  const practicing = { practiceSince: NOW - 9 * DAY, practiceChangedAt: NOW - 9 * DAY };
-  const sayable = { sayableAt: NOW - 9 * DAY, practiceChangedAt: NOW - 9 * DAY };
-  for (const membership of [practicing, sayable]) {
-    for (const nextReview of [NOW - DAY, NOW, NOW + 3 * DAY]) {
-      // The sentence lesson's brief row, and the other layouts alike: the streak ends the memory.
-      for (const layout of [{ compact: true, brief: true }, { compact: true }, {}]) {
-        const markup = render({ srs: srs({ type: 'sentence', nextReview, ...membership }), mastery: learning, colors, ...layout });
-        assert.doesNotMatch(markup, /text-slate-500/, `no next review, ${nextReview - NOW} ms`);
-        assert.match(markup, /<\/svg>3<\/span>$/);
+  // In practice, marked as one you can say, or kept passive (practiceChangedAt alone).
+  const memberships = [
+    { practiceSince: NOW - 9 * DAY, practiceChangedAt: NOW - 9 * DAY },
+    { sayableAt: NOW - 9 * DAY, practiceChangedAt: NOW - 9 * DAY },
+    { practiceChangedAt: NOW - 9 * DAY },
+  ];
+  for (const type of ['sentence', 'vocab', 'phrase'] as const) {
+    for (const membership of memberships) {
+      for (const [nextReview, shown] of [[NOW - DAY, 'due'], [NOW, 'due'], [NOW + 3 * DAY, '3d']] as const) {
+        const props = { srs: srs({ type, nextReview, ...membership }), mastery: learning, colors };
+        const ending = (classes: string) => new RegExp(`<span class="${classes}">${shown}</span>$`);
+        const at = `${type}, ${nextReview - NOW} ms`;
+        // The sentence lesson's brief row, the review popup's compact row and the word card's header.
+        assert.match(render({ ...props, compact: true, brief: true }), ending('text-slate-500 whitespace-nowrap'), at);
+        assert.match(render({ ...props, compact: true }), ending('text-slate-500 whitespace-nowrap'), at);
+        assert.match(render(props), ending('text-slate-500'), at);
       }
-    }
-  }
-  // Kept passive, a sentence is back on its schedule.
-  const passive = srs({ type: 'sentence', nextReview: NOW - DAY, practiceChangedAt: NOW - 9 * DAY });
-  assert.match(render({ srs: passive, mastery: learning, colors, compact: true, brief: true }), /<span class="text-slate-500 whitespace-nowrap">due<\/span>$/);
-  // Membership left on a word or phrase from when Today took words: the word card's header and the review popup.
-  for (const type of ['vocab', 'phrase'] as const) {
-    for (const membership of [practicing, sayable]) {
-      const schedule = srs({ type, nextReview: NOW - DAY, ...membership });
-      assert.match(render({ srs: schedule, mastery: learning, colors }), /<span class="text-slate-500">due<\/span>$/, type);
-      assert.match(render({ srs: schedule, mastery: learning, colors, compact: true }), /<span class="text-slate-500 whitespace-nowrap">due<\/span>$/, type);
     }
   }
 });

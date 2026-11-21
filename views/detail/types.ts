@@ -1,6 +1,4 @@
-import type {
-  ItemGroup, ReviewRating, ReviewTaskType, SentenceData, StoredComparison, StoredItem, VocabCard,
-} from '../../types';
+import type { ItemGroup, ReviewRating, SentenceData, StoredComparison, StoredItem, VocabCard } from '../../types';
 
 export interface DetailViewProps {
   groups?: ItemGroup[];
@@ -39,8 +37,8 @@ export interface DetailViewProps {
   onUpdateSRS?: (
     itemId: string,
     rating?: ReviewRating,
-    context?: { seedItem?: StoredItem; taskType?: ReviewTaskType; eventId?: string; sessionId?: string },
-  ) => void | Promise<boolean>; // Direct SRS update (triggers "remember"; the practice pill records a triage)
+    context?: { seedItem?: StoredItem; sessionId?: string },
+  ) => void | Promise<boolean>; // Direct SRS update (triggers "remember")
   /**
    * Sentence review opened as one of Today's units: Got it records its review in this session ('set:<unit id>'), so the
    * day's goal and the streak count it. Any other run records none.
@@ -48,13 +46,6 @@ export interface DetailViewProps {
   reviewSessionId?: string;
   /** What Back says in sentence review, in place of the one its sentences imply: 'Today' for a unit. */
   sentenceExitLabel?: 'Today';
-  /**
-   * Takes back the review `eventId` (useReviewOutbox's undoSRSReview): false, with nothing done, while the review is
-   * still in the outbox, and a request that fails throws. The practice pill's undo uses it.
-   */
-  onUndoReview?: (eventId: string) => Promise<boolean>;
-  /** Offers the undo pill for a change to no saved item (useUndoOffer's offerUndoAction); its Undo calls `undo`. */
-  onOfferUndo?: (message: string, undo: () => void) => void;
   onCompare?: (words: string[]) => void;
   comparisons?: StoredComparison[];          // saved comparisons (surfaced when they involve this word)
   onOpenComparison?: (words: string[]) => void;

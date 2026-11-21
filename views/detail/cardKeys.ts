@@ -25,17 +25,15 @@ export interface SentenceKeyHandlers {
   handleRemember: () => void;
   handleResetSRS: () => void;
   handleDeleteItem: () => void;
-  /** B: the practice pill's press (usePracticeToggle), which does nothing where no pill shows. */
-  togglePractice: () => void;
   /** Space: auto-play's pause while it runs, else the play rule, else start auto-play (useSentencePlayback's handleSpace). */
   onSpace: () => void;
 }
 
-/** Sentence review's keys: P, E, R and Shift+R, B, D, Space, and Cmd/Ctrl+1–4. */
+/** Sentence review's keys: P, E, R and Shift+R, D, Space, and Cmd/Ctrl+1–4. */
 export function handleSentenceKey(e: CardKeyEvent, handlers: SentenceKeyHandlers): void {
   const {
     title, speakSentenceAt, readCurrentSentence, isSentencePreview, catalogSentencePreview, handleRemember,
-    handleResetSRS, handleDeleteItem, togglePractice, onSpace,
+    handleResetSRS, handleDeleteItem, onSpace,
   } = handlers;
   if (!acceptKeyRepeat(e)) return;
 
@@ -71,13 +69,6 @@ export function handleSentenceKey(e: CardKeyEvent, handlers: SentenceKeyHandlers
       e.preventDefault();
       handleRemember();
     }
-  }
-
-  // B: Today's practice: add the saved sentence, or take it out as one you can say (a preview, a catalog line or a
-  // sentence not yet translated shows no pill, and its press does nothing)
-  if (e.key === 'b' || e.key === 'B') {
-    e.preventDefault();
-    togglePractice();
   }
 
   // D: Delete the sentence directly (a preview has nothing to delete, and a catalog lesson's lines aren't the

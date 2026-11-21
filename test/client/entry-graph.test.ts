@@ -57,10 +57,6 @@ const LAZY_ONLY = [
   'services/learningLoop/sessionStore.ts',
   'services/learningLoop/stats.ts',
   'services/learningLoop/themeMap.ts',
-  // The practice pill loads with the card view.
-  'views/detail/practiceToggle.ts',
-  'views/detail/usePracticeToggle.ts',
-  'views/detail/PracticePill.tsx',
   // Today's screens load with the Study tab's screen, and its badge with the tab bar.
   'views/today/TodayView.tsx',
   'views/today/TodayPlan.tsx',

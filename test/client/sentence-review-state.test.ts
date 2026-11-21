@@ -3,11 +3,8 @@ import test from 'node:test';
 import {
   matchesReviewFilter,
   needsReview,
-  ownedByToday,
   sentenceReviewState,
   summarizeReviewStates,
-  TODAY_STANDING_LABELS,
-  todayStanding,
 } from '../../services/sentenceReviewState.ts';
 import { SRSAlgorithm } from '../../services/srsAlgorithm.ts';
 import { isDueForReview } from '../../services/studySession.ts';
@@ -80,64 +77,40 @@ test('a summary counts each state and averages strength over every sentence', ()
   });
 });
 
-// Today's loop owns the learner's own sentences it practises and the ones it is done with (DESIGN-v3 D8): the Sentences
-// tab, its badge and a lesson's counters never ask to review those. Words and phrases share the rule through classic
-// Study, which reviews them whatever membership they carry.
+// Today's v3 loop left membership on some schedules (practiceSince, sayableAt, practiceChangedAt), and a Got it leaves
+// it there. No count reads it: a sentence is new, due or memorized by its reviews and dates alone, so the Sentences
+// tab, its badge, a lesson's counters and Today's units agree, and words and phrases go by the same rule.
 
-/** One of the learner's own sentences in Today's practice since a day ago, and one marked then as one you can say. */
-const practicingSentence = (srs: Partial<SRSData> = {}): SRSData =>
-  ({ ...schedule(1, NOW - 60_000), practiceSince: NOW - DAY, practiceChangedAt: NOW - DAY, ...srs });
-const sayableSentence = (srs: Partial<SRSData> = {}): SRSData =>
-  ({ ...schedule(3, NOW - 60_000), sayableAt: NOW - DAY, practiceChangedAt: NOW - DAY, ...srs });
+/** The membership a v3 set left a day ago: in practice, marked as one you can say, or kept passive. */
+const MEMBERSHIP = {
+  practicing: { practiceSince: NOW - DAY, practiceChangedAt: NOW - DAY },
+  sayable: { sayableAt: NOW - DAY, practiceChangedAt: NOW - DAY },
+  passive: { practiceChangedAt: NOW - DAY },
+} satisfies Record<string, Partial<SRSData>>;
 
-test('an own sentence Today practises, or one you can say, rests whatever its schedule says: never New or Due', () => {
-  for (const srs of [practicingSentence(), sayableSentence(), practicingSentence({ nextReview: NOW + DAY })]) {
-    assert.equal(ownedByToday(srs), true);
-    assert.equal(sentenceReviewState(srs, NOW), 'memorized');
-    assert.equal(needsReview(srs, NOW), false, 'not to review, so no orange row, Reviewed or badge count');
-    assert.equal(matchesReviewFilter(srs, 'memorized', NOW), true);
-    assert.equal(matchesReviewFilter(srs, 'due', NOW), false);
-    assert.equal(matchesReviewFilter(srs, 'unreviewed', NOW), false);
+test('a sentence carrying membership from Today\'s v3 loop is new, due or memorized by its reviews and dates alone', () => {
+  for (const [kind, membership] of Object.entries(MEMBERSHIP)) {
+    const fresh = { ...schedule(0, NOW + DAY), ...membership };
+    const due = { ...schedule(3, NOW - 60_000), ...membership };
+    const resting = { ...schedule(3, NOW + DAY), ...membership };
+    const schedules = [fresh, due, resting];
+    assert.deepEqual(schedules.map(srs => sentenceReviewState(srs, NOW)), ['unreviewed', 'due', 'memorized'], kind);
+    // To review, so an orange row with Reviewed on the Sentences tab, a badge count and a place in a unit.
+    assert.deepEqual(schedules.map(srs => needsReview(srs, NOW)), [true, true, false], kind);
+    assert.equal(matchesReviewFilter(due, 'due', NOW), true, kind);
+    assert.equal(matchesReviewFilter(resting, 'memorized', NOW), true, kind);
   }
-  // Today's membership comes from a review, so an owned record always has one; one that somehow doesn't still rests.
-  assert.equal(sentenceReviewState(practicingSentence({ totalReviews: 0 }), NOW), 'memorized');
 });
 
-test('how Today owns a sentence: practicing or one you can say, practice first; never a passive sentence, a word or a phrase', () => {
-  assert.equal(todayStanding(practicingSentence()), 'practicing');
-  assert.equal(todayStanding(sayableSentence()), 'sayable');
-  // practiceFieldsValid never lets both stand at once; were they to, practice comes first, as in loopStanding.
-  assert.equal(todayStanding(practicingSentence({ sayableAt: NOW - DAY })), 'practicing');
-  assert.equal(todayStanding({ ...schedule(2, NOW - 1), practiceChangedAt: NOW - DAY }), undefined);
-  assert.equal(todayStanding(schedule(4, NOW - 1)), undefined);
-  assert.equal(todayStanding(undefined), undefined);
-  for (const type of ['vocab', 'phrase'] as const) {
-    for (const membership of [{ practiceSince: NOW - DAY }, { sayableAt: NOW - DAY }]) {
-      assert.equal(todayStanding({ ...SRSAlgorithm.createNew('w-1', type), practiceChangedAt: NOW - DAY, ...membership }), undefined, type);
-    }
-  }
-  // What a sentence Today owns says in a date's place: its row on the Sentences tab, and its lesson for Can say it.
-  assert.deepEqual(TODAY_STANDING_LABELS, { practicing: 'Practicing in Today', sayable: 'Can say it' });
-});
-
-test('a sentence kept passive, or never decided in Today, is the Sentences tab\'s to review as before', () => {
-  const kept = { ...schedule(2, NOW - 1), practiceChangedAt: NOW - DAY };
-  assert.equal(ownedByToday(kept), false);
-  assert.equal(sentenceReviewState(kept, NOW), 'due');
-  assert.equal(sentenceReviewState({ ...kept, nextReview: NOW + 1 }, NOW), 'memorized');
-  assert.equal(ownedByToday(schedule(4, NOW - 1)), false);
-  assert.equal(ownedByToday(undefined), false);
-});
-
-test('a summary counts the sentences Today owns as memorized, never among those to review', () => {
+test('a summary counts the sentences carrying membership by their dates, as it counts any other', () => {
   const summary = summarizeReviewStates([
     schedule(0, NOW),
-    schedule(2, NOW - 1, 30),
-    practicingSentence({ memoryStrength: 20 }),
-    sayableSentence({ memoryStrength: 60 }),
+    { ...schedule(2, NOW - 1, 30), ...MEMBERSHIP.practicing },
+    { ...schedule(3, NOW - 1, 20), ...MEMBERSHIP.sayable },
+    { ...schedule(3, NOW + DAY, 60), ...MEMBERSHIP.sayable },
   ], NOW);
   assert.deepEqual(summary, {
-    total: 4, reviewed: 3, unreviewed: 1, due: 1, memorized: 2, toReview: 2, masteryScore: 28,
+    total: 4, reviewed: 3, unreviewed: 1, due: 2, memorized: 1, toReview: 3, masteryScore: 28,
   });
 });
 
@@ -145,7 +118,6 @@ test('a word or phrase with membership left from when Today took words stays due
   for (const type of ['vocab', 'phrase'] as const) {
     for (const membership of [{ practiceSince: NOW - DAY }, { sayableAt: NOW - DAY }]) {
       const srs = { ...SRSAlgorithm.createNew('w-1', type), totalReviews: 2, nextReview: NOW - 1, practiceChangedAt: NOW - DAY, ...membership };
-      assert.equal(ownedByToday(srs), false, type);
       assert.equal(sentenceReviewState(srs, NOW), 'due', type);
     }
   }

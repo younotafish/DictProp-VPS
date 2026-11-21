@@ -301,8 +301,6 @@ function SignedInApp({ user }: { user: AuthUser }) {
               onRefresh={handleRefreshViaGlobal}
               onLazyLoadImage={lazyLoadImage}
               onUpdateSRS={updateSRS}
-              onUndoReview={undoSRSReview}
-              onOfferUndo={undo.offerUndoAction}
               onCompare={handleCompare}
               comparisons={comparisons}
               onOpenComparison={handleCompare}

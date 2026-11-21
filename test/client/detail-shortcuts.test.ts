@@ -31,7 +31,6 @@ const sentenceOnScreen = (sentence: string, done: string[], flags: Partial<Sente
   handleRemember: () => done.push(`remember ${sentence}`),
   handleResetSRS: () => done.push(`reset ${sentence}`),
   handleDeleteItem: () => done.push(`delete ${sentence}`),
-  togglePractice: () => done.push(`practice ${sentence}`),
   onSpace: () => done.push(`space on ${sentence}`),
   ...flags,
 });
@@ -170,40 +169,22 @@ test('the word card\'s H, R, S, E, Space and + keys', () => {
   ]);
 });
 
-test('B presses the practice pill of the sentence on screen, read as the key is pressed, with or without Shift', () => {
+test('B does nothing in the sentence lesson or on a word card: both leave it to the browser, with or without Shift', () => {
+  // The practice pill B pressed is gone: a Today unit's sentences are remembered with Got it, as on the Sentences tab.
   const done: string[] = [];
-  const onScreen = { current: sentenceOnScreen('A', done) };
-  const listener = (e: CardKeyEvent) => handleSentenceKey(e, onScreen.current);
-  const keys = [press('b')];
-  keys.forEach(listener);
-  // ↓ to B: the listener added for A reads B's press. Shift, or Caps Lock, types a capital B.
-  onScreen.current = sentenceOnScreen('B', done);
-  keys.push(press('B', { shiftKey: true }), press('B'));
-  keys.slice(1).forEach(listener);
-  assert.ok(keys.every(key => key.prevented), 'B is the view\'s key');
-  assert.deepEqual(done, ['practice A', 'practice B', 'practice B']);
-});
-
-test('B goes to the press wherever the pill is hidden too, which does nothing there, and Cmd, Ctrl or Alt leave it to the browser', () => {
-  // The press decides where the pill shows (views/detail/usePracticeToggle.ts), so the key table needn't know.
-  const done: string[] = [];
-  handleSentenceKey(press('b'), sentenceOnScreen('preview', done, { isSentencePreview: true }));
-  handleSentenceKey(press('b'), sentenceOnScreen('catalog line', done, { catalogSentencePreview: true }));
-  assert.deepEqual(done, ['practice preview', 'practice catalog line']);
-
-  done.length = 0;
-  const modified = [press('b', { metaKey: true }), press('b', { ctrlKey: true }), press('b', { altKey: true })];
-  for (const key of modified) handleSentenceKey(key, sentenceOnScreen('A', done));
-  assert.deepEqual(modified.map(key => key.prevented), [false, false, false]);
-  assert.deepEqual(done, []);
-});
-
-test('the word card has no practice pill, so it leaves B to the browser, saved or not', () => {
-  // Today's loop takes the learner's own sentences, never words: a word is Card review's.
-  const done: string[] = [];
-  const keys = [press('b'), press('B', { shiftKey: true }), press('B')];
-  for (const isSaved of [true, false]) for (const key of keys) handleWordKey(key, wordOnScreen('apple', done, { isSaved }));
-  assert.deepEqual(keys.map(key => key.prevented), [false, false, false]);
+  const tables = [
+    sentenceOnScreen('A', done),
+    sentenceOnScreen('preview', done, { isSentencePreview: true }),
+    sentenceOnScreen('catalog line', done, { catalogSentencePreview: true }),
+  ].map(handlers => (key: CardKeyEvent) => handleSentenceKey(key, handlers)).concat(
+    [true, false].map(isSaved => (key: CardKeyEvent) => handleWordKey(key, wordOnScreen('apple', done, { isSaved }))),
+  );
+  for (const table of tables) {
+    // Shift, or Caps Lock, types a capital B.
+    const keys = [press('b'), press('B', { shiftKey: true }), press('B')];
+    keys.forEach(table);
+    assert.deepEqual(keys.map(key => key.prevented), [false, false, false]);
+  }
   assert.deepEqual(done, []);
 });
 
@@ -220,7 +201,7 @@ test('S saves the card as Cmd/Ctrl+S does, on a saved card too, where saving doe
 test('a held key acts once: letters and Enter do nothing more while held, and a held arrow keeps stepping', () => {
   const done: string[] = [];
   const held = (key: string, modifiers: Modifiers = {}) => press(key, { ...modifiers, repeat: true });
-  for (const key of ['d', 'e', 'r', 'b', ' ']) handleSentenceKey(held(key), sentenceOnScreen('A', done));
+  for (const key of ['d', 'e', 'r', ' ']) handleSentenceKey(held(key), sentenceOnScreen('A', done));
   handleSentenceKey(held('R', { shiftKey: true }), sentenceOnScreen('A', done));
   handleSentenceKey(held('2', { metaKey: true }), sentenceOnScreen('A', done));
   for (const key of ['h', 'e', 'r', 's', 'd', 'a', ' ', '+']) handleWordKey(held(key), wordOnScreen('apple', done, { isSaved: true }));

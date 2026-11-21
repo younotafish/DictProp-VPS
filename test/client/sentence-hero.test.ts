@@ -3,7 +3,6 @@ import test from 'node:test';
 import { createElement, type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { SentenceHero } from '../../views/detail/SentenceHero.tsx';
-import { PracticePill } from '../../views/detail/PracticePill.tsx';
 
 // The sentence lesson's hero (views/detail/SentenceHero.tsx), rendered to markup: the sentence, the connected-speech IPA
 // under it when the analysis has one, then the speaker row.
@@ -55,16 +54,14 @@ test('without the IPA nothing renders in its place, so the speaker row sits wher
   }
 });
 
-test('on a phone the practice pill ends the speaker row, after Copy; from 640 px up the lesson row has it instead', () => {
-  const practicePill = createElement(PracticePill, {
-    toggle: { itemId: 's1', practicing: true, name: 'She finally came clean.' }, onPress: () => {},
-  });
+test('the speaker row holds the speaker and Copy, then on a Mac the ⌘ hint, and nothing else, in either layout', () => {
+  const MAC_HINT = 'Command-click a word to look it up';
   for (const layout of ['centered', 'split'] as const) {
-    const { row } = parts(render({ layout, practicePill }));
-    // The Mac's ⌘ hint may come between, but it shows only from 640 px up, where the pill doesn't.
-    const pill = row.match(/<div class="flex sm:hidden"><button type="button" aria-label="Stop practicing[^>]*>.*?Practicing<\/button><\/div><\/div>$/);
-    assert.ok(pill, `${layout}: the pill ends the row, on phones only`);
-    assert.ok(row.indexOf('title="Copy sentence (to paste into Meta AI)"') < pill.index!, `${layout}: after Copy`);
-    assert.doesNotMatch(parts(render({ layout })).row, /Practicing|to practice/, `${layout}: nothing without a pill`);
+    const { row } = parts(render({ layout }));
+    // The hint shows on a Mac only, so what the row holds is read without it on any machine the tests run on.
+    const controls = [...row.matchAll(/<(?:button|span) [^>]*title="([^"]*)"/g)]
+      .map(match => match[1])
+      .filter(title => title !== MAC_HINT);
+    assert.deepEqual(controls, ['Listen to this sentence', 'Copy sentence (to paste into Meta AI)'], layout);
   }
 });

@@ -1,9 +1,7 @@
-import type { ReactNode } from 'react';
 import { Bookmark, CheckCircle2, RotateCcw, Trash2 } from 'lucide-react';
 import type { SRSData } from '../../types';
 import type { MasteryClasses } from '../../components/mastery';
 import { SrsStats } from '../../components/review/SrsStats';
-import { TODAY_STANDING_LABELS, todayStanding } from '../../services/sentenceReviewState';
 import { sentenceRowState } from './sentenceRowState';
 
 interface SentenceActionsRowProps {
@@ -12,8 +10,8 @@ interface SentenceActionsRowProps {
   mastery: { label: string; color: string; percentage: number } | null;
   masteryColors: MasteryClasses | null;
   /**
-   * Sentences in this list memorized: reviewed and not due again yet, or owned by Today (memorizedCount). Null in an
-   * example's preview (SentenceUnderReview's examplePreview), which has no list to count, as its header has no pill.
+   * Sentences in this list memorized: reviewed, and not due again yet (memorizedCount). Null in an example's preview
+   * (SentenceUnderReview's examplePreview), which has no list to count, as its header has no pill.
    */
   memorizedCount: number | null;
   /** Nothing in the library backs the sentence yet. */
@@ -27,11 +25,6 @@ interface SentenceActionsRowProps {
   /** Offered once the sentence has been reviewed (sentenceRowState); without it the row has no Reset. */
   onReset?: () => void;
   onDelete: () => void;
-  /**
-   * The practice pill (PracticePill), beside Got it from 640 px up. A phone's row is full already (the memory, Reset,
-   * Delete and Got it), so there the hero's speaker row shows it instead (SentenceHero).
-   */
-  practicePill?: ReactNode;
 }
 
 // The button at the right end keeps one size in every state: its negative margins hold the row at 28 px, so neither
@@ -40,19 +33,13 @@ const PRIMARY_BUTTON = '-my-1 flex min-h-9 items-center gap-1 rounded-lg px-4 te
 
 /**
  * Sentence review's bottom row: once the sentence has been reviewed, its memory on the left; on the right Reset (once
- * reviewed) and, outside the catalog lessons, Delete, then on wider screens the practice pill, and Got it at the right
- * end, or Save for an unsaved example.
+ * reviewed) and, outside the catalog lessons, Delete, then Got it at the right end, or Save for an unsaved example.
  */
 export function SentenceActionsRow({
   srs, mastery, masteryColors, memorizedCount, preview, catalog, catalogKind, onRemember, onSaveSentence, onReset, onDelete,
-  practicePill,
 }: SentenceActionsRowProps) {
   const { showDelete, primary } = sentenceRowState({ catalog, preview, totalReviews: srs?.totalReviews ?? 0 });
   const memorizedLabel = memorizedCount === null ? null : `${memorizedCount} memorized in this list`;
-  // A sentence Today owns has no next review in its memory (SrsStats). From 640 px up, one marked as one you can say
-  // says so in its place, as its row on the Sentences tab does, since its pill reads '+ Practice'; a phone's row has
-  // no room (see SrsStats' brief). A practicing one's pill already says Practicing.
-  const canSayIt = todayStanding(srs) === 'sayable';
   return (
     <div className="mt-2 flex items-center gap-2 text-xs">
       {mastery && masteryColors && (
@@ -62,7 +49,6 @@ export function SentenceActionsRow({
               <CheckCircle2 size={12} />{memorizedCount}
             </span>
           )}
-          {canSayIt && <span className="hidden sm:inline text-slate-500 whitespace-nowrap">{TODAY_STANDING_LABELS.sayable}</span>}
         </SrsStats>
       )}
       <div className="ml-auto flex items-center gap-1">
@@ -76,8 +62,6 @@ export function SentenceActionsRow({
             <Trash2 size={15} />
           </button>
         )}
-        {/* Outlined, it needs a little more room than the borderless icons beside it. */}
-        {practicePill && <div className="mx-1 hidden sm:flex">{practicePill}</div>}
         {primary === 'got-it' ? (
           <button
             type="button"

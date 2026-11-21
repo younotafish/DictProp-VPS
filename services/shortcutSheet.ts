@@ -145,7 +145,6 @@ const SECTIONS: readonly ShortcutSection[] = [
       { keys: ['P'], label: 'Pronounce its word' },
       { keys: ['Mod', '1–4'], label: 'Read example 1–4 of its word' },
       { keys: ['R'], label: 'Got it (the sentence stays on screen)' },
-      { keys: ['B'], label: 'Add a saved sentence to practice; press again to mark it as one you can say' },
       { keys: ['Shift', 'R'], label: 'Reset memory strength' },
       { keys: ['D'], label: 'Delete a saved sentence (Real Life and essay lines stay)' },
       { keys: ['Esc'], label: 'Close a panel or the analysis page, then the sentence' },

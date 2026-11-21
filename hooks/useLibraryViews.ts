@@ -5,7 +5,7 @@ import { isLiveWordOrPhrase, sameItemContent } from '../services/items';
 import { buildVariantIndex, matchBaseWords } from '../services/wordMatch';
 import { buildSavedVocabByBase, pickSavedItem, savedCardsForBases } from '../services/notebook/libraryLookups';
 import { catalogProgressKind, type CatalogKind } from '../services/catalogProgressIdentity';
-import { needsReview, ownedByToday } from '../services/sentenceOrdering';
+import { needsReview } from '../services/sentenceOrdering';
 import { useStableArray } from './useStableValue';
 
 /** The lists the screens show, derived from the library, and the lookups that tell what's saved. */
@@ -53,8 +53,8 @@ export function useLibraryViews(savedItems: StoredItem[]) {
     [allSentenceItems],
   );
   // The badge counts the sentences to review now, by the rule the Sentences header counts with (needsReview: never
-  // reviewed, or due again, and not owned by Today). It counts again when the next one falls due, and when the page
-  // comes back after sleeping through some; the clock only says when, and the count reads the time itself.
+  // reviewed, or due again). It counts again when the next one falls due, and when the page comes back after sleeping
+  // through some; the clock only says when, and the count reads the time itself.
   const [sentenceDueClock, setSentenceDueClock] = useState(0);
   const sentenceDueCount = useMemo(() => {
     const now = Date.now();
@@ -66,9 +66,7 @@ export function useLibraryViews(savedItems: StoredItem[]) {
     let nextDue = Infinity;
     for (const s of sentenceItems) {
       const due = s.srs?.nextReview ?? 0;
-      // A sentence Today owns rests whatever its date says, so it never falls due here; a timer set for its date, often
-      // past already, would fire at once and set itself again, over and over.
-      if (!s.isArchived && !needsReview(s.srs, now) && !ownedByToday(s.srs) && due < nextDue) nextDue = due;
+      if (!s.isArchived && !needsReview(s.srs, now) && due < nextDue) nextDue = due;
     }
     const recount = () => setSentenceDueClock(Date.now());
     const onVisible = () => { if (document.visibilityState === 'visible') recount(); };

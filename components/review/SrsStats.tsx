@@ -3,7 +3,6 @@ import { Flame } from 'lucide-react';
 import type { SRSData } from '../../types';
 import { MasteryBadge, masteryText, type MasteryClasses } from '../mastery';
 import { formatTimeUntil } from '../../services/reviewTime';
-import { ownedByToday } from '../../services/sentenceOrdering';
 
 interface SrsStatsProps {
   srs: SRSData | undefined;
@@ -18,16 +17,11 @@ interface SrsStatsProps {
    * beside the stats, and on a 390 px phone a streak would push Got it past the screen's edge.
    */
   brief?: boolean;
-  /** Shown after the streak, before the next review where there is one. */
+  /** Shown between the streak and the next review. */
   children?: React.ReactNode;
 }
 
-/**
- * A card's memory at a glance: mastery badge and bar, reviews, streak, and when it's due. Lays out in its parent's row.
- * A sentence Today owns shows no next review: the Sentences tab rests it whatever its date says (ownedByToday), so a
- * date, and 'due' once it passed, would ask for a review nothing brings. A word's or phrase's schedule never counts as
- * owned, so the word card's header and the review popup always show theirs.
- */
+/** A card's memory at a glance: mastery badge and bar, reviews, streak, and when it's due. Lays out in its parent's row. */
 export function SrsStats({ srs, mastery, colors, compact = false, brief = false, children }: SrsStatsProps) {
   const nextReview = srs?.nextReview ?? 0;
   const now = Date.now();
@@ -46,11 +40,9 @@ export function SrsStats({ srs, mastery, colors, compact = false, brief = false,
         <span className={`text-orange-500 ${brief ? 'hidden sm:flex' : 'flex'} items-center gap-0.5`}><Flame size={12} />{srs?.correctStreak}</span>
       )}
       {children}
-      {!ownedByToday(srs) && (
-        <span className={`text-slate-500${compact ? ' whitespace-nowrap' : ''}`}>
-          {nextReview <= now ? 'due' : formatTimeUntil(nextReview, now)}
-        </span>
-      )}
+      <span className={`text-slate-500${compact ? ' whitespace-nowrap' : ''}`}>
+        {nextReview <= now ? 'due' : formatTimeUntil(nextReview, now)}
+      </span>
     </>
   );
 }

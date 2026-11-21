@@ -1,13 +1,9 @@
 import type { SRSData } from '../types';
-import { sentenceReviewState, type SentenceReviewFilter, type TodayStanding } from './sentenceOrdering';
+import { sentenceReviewState, type SentenceReviewFilter } from './sentenceOrdering';
 
-// The rule itself, a sentence's review state, the filter chips over it, whether it is to review and whether and how
-// Today owns it, is written once, in sentenceOrdering.ts; this module passes it on beside what is built from it: the
-// summaries, and what the chips and a sentence Today owns say.
-export {
-  matchesReviewFilter, needsReview, ownedByToday, sentenceReviewState, todayStanding, type SentenceReviewState,
-  type TodayStanding,
-} from './sentenceOrdering';
+// The rule itself, a sentence's review state, the filter chips over it and whether it is to review, is written once,
+// in sentenceOrdering.ts; this module passes it on beside what is built from it: the summaries, and what the chips say.
+export { matchesReviewFilter, needsReview, sentenceReviewState, type SentenceReviewState } from './sentenceOrdering';
 
 /** How a list of sentences stands in review. */
 export interface ReviewSummary {
@@ -22,10 +18,7 @@ export interface ReviewSummary {
   masteryScore: number;
 }
 
-/**
- * Counts each review state over the sentences' schedules (undefined for a sentence with no record yet). A sentence
- * Today owns counts as memorized, never to review (sentenceReviewState).
- */
+/** Counts each review state over the sentences' schedules (undefined for a sentence with no record yet). */
 export function summarizeReviewStates(schedules: readonly (SRSData | undefined)[], now: number): ReviewSummary {
   let reviewed = 0;
   let due = 0;
@@ -63,13 +56,4 @@ export const REVIEW_FILTER_LABELS: Readonly<Record<SentenceReviewFilter, string>
   unreviewed: 'New',
   due: 'Due',
   memorized: 'Memorized',
-};
-
-/**
- * What a sentence Today owns says where another would say when it comes due (todayStanding), since no date brings it
- * back here: its row on the Sentences tab says either, and its lesson's memory says Can say it.
- */
-export const TODAY_STANDING_LABELS: Readonly<Record<TodayStanding, string>> = {
-  practicing: 'Practicing in Today',
-  sayable: 'Can say it',
 };

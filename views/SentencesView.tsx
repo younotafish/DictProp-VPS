@@ -10,9 +10,7 @@ import {
   orderSentencesForReview,
   type SentenceReviewFilter,
 } from '../services/sentenceOrdering';
-import {
-  needsReview, REVIEW_FILTER_LABELS, summarizeReviewStates, TODAY_STANDING_LABELS, todayStanding,
-} from '../services/sentenceReviewState';
+import { needsReview, REVIEW_FILTER_LABELS, summarizeReviewStates } from '../services/sentenceReviewState';
 import { acceptListReview } from '../services/actionGuards';
 import { Virtuoso } from 'react-virtuoso';
 import { useLatest } from '../hooks/useStableValue';
@@ -28,25 +26,16 @@ const sentenceKey = (_index: number, item: StoredItem) => item.data.id;
 type SentenceItem = StoredItem & { type: 'sentence'; data: SentenceData };
 const listComponents = { Footer: () => <div className="h-[calc(5rem+env(safe-area-inset-bottom))]" /> };
 
-/**
- * What a row not to review says beside its word: where a sentence Today owns stands there ('Practicing in Today', 'Can
- * say it': TODAY_STANDING_LABELS), since no date brings it back to review here; otherwise when it comes due
- * ('tomorrow', 'in 3d').
- */
+/** What a row not to review says beside its word: when it comes due ('tomorrow', 'in 3d'). */
 export function restingLabelFor(srs: SRSData | undefined, now: number): string | undefined {
-  const standing = todayStanding(srs);
-  if (standing) return TODAY_STANDING_LABELS[standing];
   return srs?.nextReview ? formatDueLabel(srs.nextReview, now) : undefined;
 }
 
 interface SentenceRowProps {
   item: SentenceItem;
-  /**
-   * Never reviewed, or due again, and not owned by Today (needsReview): the orange row with Reviewed, one of the
-   * header's 'to review'.
-   */
+  /** Never reviewed, or due again (needsReview): the orange row with Reviewed, one of the header's 'to review'. */
   toReview: boolean;
-  /** What a sentence not to review says beside its word (restingLabelFor), read from the same clock as toReview. */
+  /** When a sentence not to review comes due (restingLabelFor), read from the same clock as toReview. */
   restingLabel?: string;
   confirmingDelete: boolean;
   onOpen: (item: StoredItem) => void;
@@ -244,7 +233,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   const renderSentence = useCallback((_index: number, item: StoredItem) => {
     if (!isSentenceItem(item)) return null;
     // The header's rule: a sentence never reviewed is to review whatever its schedule says, even one saved after the
-    // list took its time, or on a device whose clock runs ahead, and one Today owns never is.
+    // list took its time, or on a device whose clock runs ahead.
     const toReview = needsReview(item.srs, now);
     return (
       <SentenceRow

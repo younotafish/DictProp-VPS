@@ -156,40 +156,44 @@ test('a Real Life row: the studied phrase is plain, and Reviewed ignores a doubl
   assert.deepEqual(reviewed, [line.id]);
 });
 
-/** A saved sentence Today owns (`membership`), reviewed twice, its classic schedule a day overdue. */
-const owned = (id: string, membership: Partial<SRSData>): typeof never => ({
+/** A saved sentence reviewed twice, its next review `dueIn` from NOW, carrying the membership a v3 set left. */
+const carrying = (id: string, dueIn: number, membership: Partial<SRSData>): typeof never => ({
   ...never,
   data: { ...never.data, id, text: `The ${id} sentence.` },
   srs: {
-    ...SRSAlgorithm.createNew(id, 'sentence', NOW - 3 * DAY), totalReviews: 2, nextReview: NOW - DAY,
+    ...SRSAlgorithm.createNew(id, 'sentence', NOW - 3 * DAY), totalReviews: 2, nextReview: NOW + dueIn,
     practiceChangedAt: NOW - 2 * DAY, ...membership,
   },
 });
 
-test('a sentence Today owns rests on the Sentences tab: a white row with no Reviewed, saying where it stands in Today', (t) => {
+test('membership from Today\'s v3 loop changes nothing on the Sentences tab: a row is to review, or says its date, by its schedule', (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: NOW });
-  const practicing = owned('practicing', { practiceSince: NOW - 2 * DAY });
-  const sayable = owned('sayable', { sayableAt: NOW - 2 * DAY });
-  assert.equal(restingLabelFor(practicing.srs, NOW), 'Practicing in Today');
-  assert.equal(restingLabelFor(sayable.srs, NOW), 'Can say it');
-  // Kept passive, it is back on its schedule, and the row says when that comes due.
-  const { practiceSince: _left, ...kept } = practicing.srs;
-  assert.equal(restingLabelFor({ ...kept, nextReview: NOW + 3 * DAY }, NOW), 'in 3d');
+  // A day overdue in v3's practice, and marked as one you can say with its next review three days off.
+  const practicing = carrying('practicing', -DAY, { practiceSince: NOW - 2 * DAY });
+  const sayable = carrying('sayable', 3 * DAY, { sayableAt: NOW - 2 * DAY });
+  assert.equal(needsReview(practicing.srs, NOW), true);
+  assert.equal(needsReview(sayable.srs, NOW), false);
+  assert.equal(restingLabelFor(sayable.srs, NOW), 'in 3d');
 
-  const row = renderToStaticMarkup(createElement(SentenceRow, rowProps({
-    item: practicing, toReview: needsReview(practicing.srs, NOW), restingLabel: restingLabelFor(practicing.srs, NOW),
+  const due = renderToStaticMarkup(createElement(SentenceRow, rowProps({
+    item: practicing, toReview: needsReview(practicing.srs, NOW),
   })));
-  assert.ok(row.includes('hover:shadow-sm border-slate-100 bg-white"'), 'not the orange row');
-  assert.ok(!row.includes('title="Mark as reviewed"'));
-  assert.ok(row.includes('<span class="text-xs text-slate-400">Practicing in Today</span>'), 'never "due"');
+  assert.ok(due.includes('hover:shadow-sm border-orange-200 bg-orange-50/30"'), 'the orange row');
+  assert.ok(due.includes('title="Mark as reviewed"'));
+  const resting = renderToStaticMarkup(createElement(SentenceRow, rowProps({
+    item: sayable, toReview: false, restingLabel: restingLabelFor(sayable.srs, NOW),
+  })));
+  assert.ok(resting.includes('hover:shadow-sm border-slate-100 bg-white"'));
+  assert.ok(resting.includes('<span class="text-xs text-slate-400">in 3d</span>'));
+  assert.doesNotMatch(due + resting, /Practicing in Today|Can say it/);
 
-  // The header and the chips count by the same rule: the new sentence is to review, the two Today owns are memorized.
+  // The header and the chips count by the same rule: the new sentence and the overdue one are to review.
   const view = renderToStaticMarkup(createElement(SentencesView, {
     items: [never, practicing, sayable], onUpdateSRS: async () => true, onDelete: noop, onSearch: noop, onScroll: noop,
     onOpenSentence: noop,
   }));
-  assert.match(view, />1 to review</);
+  assert.match(view, />2 to review</);
   const chips = [...view.matchAll(/aria-pressed="(?:true|false)" title="[^"]*" class="[^"]*">([^<]+)(?:<span class="[^"]*">(\d+)<\/span>)?<\/button>/g)]
     .map(([, label, count]) => `${label} ${count ?? 0}`);
-  assert.deepEqual(chips, ['All 3', 'New 1', 'Due 0', 'Memorized 2']);
+  assert.deepEqual(chips, ['All 3', 'New 1', 'Due 1', 'Memorized 1']);
 });

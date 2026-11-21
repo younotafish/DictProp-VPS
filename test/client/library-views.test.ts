@@ -37,11 +37,10 @@ const browser = {
 page.defaultView = browser;
 const globals = globalThis as Record<string, unknown>;
 
-/** Mounts a component that reads the badge for `library`, noting each render; `t` mocks Date and setTimeout first. */
+/** Mounts a component that reads the badge for `library`, noting what it reads; `t` mocks Date and setTimeout first. */
 async function mountBadge(library: StoredItem[]) {
-  const seen = { badge: -1, renders: 0 };
+  const seen = { badge: -1 };
   const Probe = () => {
-    seen.renders += 1;
     seen.badge = useLibraryViews(library).sentenceDueCount;
     return null;
   };
@@ -89,30 +88,25 @@ test('the Sentences badge counts the saved sentences to review by the header\'s 
   }
 });
 
-test('the badge leaves out the saved sentences Today practises or is done with, and never waits on their dates', async (t) => {
+test('the badge counts saved sentences carrying membership from Today\'s v3 loop by their dates, and wakes as each falls due', async (t) => {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: NOW });
   Object.assign(globals, { window: browser, document: page, IS_REACT_ACT_ENVIRONMENT: true });
   try {
     const saved = [
       sentence('new'),
-      // In Today's practice, its date a day past; and one you can say, its date an hour off.
+      // In v3's practice, its date a day past; marked as one you can say, its date an hour off; and kept passive, two.
       sentence('practicing', { totalReviews: 1, nextReview: NOW - DAY, practiceSince: NOW - 2 * DAY, practiceChangedAt: NOW - 2 * DAY }),
       sentence('sayable', { totalReviews: 3, nextReview: NOW + HOUR, sayableAt: NOW - DAY, practiceChangedAt: NOW - DAY }),
-      // Kept passive: decided in Today, but the Sentences tab's to review again once it falls due.
       sentence('passive', { totalReviews: 1, nextReview: NOW + 2 * HOUR, practiceChangedAt: NOW - DAY }),
     ];
     const { seen, unmount } = await mountBadge(saved);
-    assert.equal(seen.badge, 1, 'only the new one');
+    assert.equal(seen.badge, 2, 'the new one and the overdue one');
     assert.equal(seen.badge, summarizeReviewStates(saved.map(item => item.srs), NOW).toReview, 'the header\'s "to review"');
 
-    // No timer is set for the owned sentences' dates, past or to come, so time passing them counts nothing again.
-    const settled = seen.renders;
-    for (let step = 0; step < 3; step += 1) await act(() => { t.mock.timers.tick(HOUR / 2); });
-    assert.equal(seen.badge, 1);
-    assert.equal(seen.renders, settled, 'no recount: the sayable one\'s date passed, and the practicing one\'s long ago');
-    // The passive one falls due at its date, and only that wakes the badge.
-    await act(() => { t.mock.timers.tick(HOUR / 2 + 1_000); });
-    assert.equal(seen.badge, 2);
+    await act(() => { t.mock.timers.tick(HOUR + 1_000); });
+    assert.equal(seen.badge, 3, 'the one marked as one you can say, at its date');
+    await act(() => { t.mock.timers.tick(HOUR); });
+    assert.equal(seen.badge, 4, 'then the passive one');
     await unmount();
   } finally {
     delete globals.window;
