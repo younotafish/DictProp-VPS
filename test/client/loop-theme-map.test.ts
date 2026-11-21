@@ -7,7 +7,8 @@ import { memorized, sentenceItem, vocabItem } from '../support/loop-fixtures.ts'
 Object.assign(globalThis, { indexedDB, IDBKeyRange });
 
 const {
-  applyThemeRows, createThemeSync, idbThemeStore, loadCachedThemes, refreshThemes, sortingPercent, sortingProgress, THEME_POLL_MS,
+  applyThemeRows, createThemeSync, idbThemeStore, loadCachedThemes, refreshThemes, sortingPercent, sortingProgress, THEME_IDLE_POLL_MS,
+  THEME_POLL_MS,
 } = await import('../../services/learningLoop/themeMap.ts');
 const { planLoop } = await import('../../services/learningLoop/planner.ts');
 type ThemeStore = import('../../services/learningLoop/themeMap.ts').ThemeStore;
@@ -158,7 +159,7 @@ function manualTimers() {
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 
-test('the sync reports the kept map, refreshes, and polls every minute while items are pending, then stops polling', async () => {
+test('the sync reports the kept map, refreshes, and polls every minute while items are pending, then every five minutes', async () => {
   const { store } = memoryStore({ u: { taxonomyVersion: 1, latestSeq: 1, map: { a: 'cooking' } } });
   const remote = server({
     1: response([['b', 'chores']], 2, { pending: 5, status: 'running' }),
@@ -178,7 +179,46 @@ test('the sync reports the kept map, refreshes, and polls every minute while ite
   await settle();
   assert.deepEqual(remote.asked, [1, 2]);
   assert.deepEqual(updates.at(-1), [3, 0]);
-  assert.equal(timers.timers.size, 0, 'nothing pending: no more polls');
+  assert.equal(THEME_IDLE_POLL_MS, 5 * 60_000);
+  assert.deepEqual([...timers.timers.values()].map(timer => timer.ms), [THEME_IDLE_POLL_MS], 'nothing pending: the idle poll');
+  sync.stop();
+});
+
+test('the idle poll brings a sentence sorted since, reports an unchanged map as the same state, and stops with the sync', async () => {
+  const { store } = memoryStore({ u: { taxonomyVersion: 1, latestSeq: 3, map: { a: 'cooking' } } });
+  const answers: Record<number, ThemesResponse> = { 3: response([], 3) };
+  const remote = server(answers);
+  const timers = manualTimers();
+  const updates: (ThemeState | null)[] = [];
+  const sync = createThemeSync({ userId: 'u', fetchThemes: remote.fetch, store, ...timers, onUpdate: current => updates.push(current) });
+  sync.start();
+  await settle();
+  const quiet = updates.at(-1);
+  assert.equal(quiet, updates.at(-2), 'the kept map, unchanged by the refresh');
+  assert.deepEqual([...timers.timers.values()].map(timer => timer.ms), [THEME_IDLE_POLL_MS]);
+
+  // A sentence saved since, here or on another device, is sorted on the server.
+  answers[3] = response([['b', 'chores']], 4);
+  answers[4] = response([], 4);
+  timers.fire();
+  await settle();
+  const sorted = updates.at(-1);
+  assert.equal(sorted?.themes.get('b'), 'chores');
+  assert.deepEqual([...timers.timers.values()].map(timer => timer.ms), [THEME_IDLE_POLL_MS]);
+
+  // Nothing new: the same state object, so Today doesn't take its plan again.
+  timers.fire();
+  await settle();
+  assert.equal(updates.at(-1), sorted);
+  assert.deepEqual(remote.asked, [3, 3, 4]);
+
+  // Sentences waiting again (a burst of saves): back to polling every minute; stopping clears the poll.
+  answers[4] = response([], 4, { pending: 6, status: 'running' });
+  timers.fire();
+  await settle();
+  assert.deepEqual([...timers.timers.values()].map(timer => timer.ms), [THEME_POLL_MS]);
+  sync.stop();
+  assert.equal(timers.timers.size, 0);
 });
 
 test('a failed refresh is heard and tried again in a minute; once stopped nothing more is heard, and a new start reports the map held', async () => {

@@ -9,8 +9,13 @@ import type { LoopPlan } from './planner';
 // reads: the planner looks up only the sentences Today takes. The store holds a plain object under its own key; no
 // database version change is needed.
 
-/** How often a refresh runs again while the server is still sorting sentences into themes. */
+/** How often a refresh runs again while the server is still sorting sentences into themes, or after one failed. */
 export const THEME_POLL_MS = 60_000;
+/**
+ * How often a refresh runs while the server has nothing waiting to sort, so a sentence saved since, here or on another
+ * device, gets its theme: the server sorts it half a minute after the save reaches it.
+ */
+export const THEME_IDLE_POLL_MS = 5 * 60_000;
 
 /** The map in memory: item id to theme id, and where the server's change sequence stood. */
 export interface ThemeState {
@@ -155,7 +160,8 @@ export interface ThemeSync {
 /**
  * Keeps the theme map current while started: the map kept on the device first (or the one held, when started again),
  * then a refresh, and another every minute while the server still has sentences to sort, or after a failed refresh
- * (offline, say). Only the latest start's refreshes are heard, and nothing once stopped.
+ * (offline, say), and every five minutes otherwise. A refresh that brings no change reports the same state object, so
+ * nothing built on it is redone. Only the latest start's refreshes are heard, and nothing once stopped.
  */
 export function createThemeSync({
   userId, fetchThemes, store = idbThemeStore, onUpdate, onError,
@@ -168,19 +174,19 @@ export function createThemeSync({
   let timer: unknown;
 
   const refresh = async (started: number) => {
-    let again: boolean;
+    let delay = THEME_POLL_MS;
     try {
       const result = await refreshThemes(userId, state, fetchThemes, store);
       if (started !== generation) return;
       ({ state, sorting } = result);
-      again = sorting.pending > 0;
+      if (sorting.pending <= 0) delay = THEME_IDLE_POLL_MS;
       onUpdate(state, sorting);
     } catch (error) {
       if (started !== generation) return;
-      again = true;
       onError?.(error);
     }
-    if (again) timer = setTimer(() => void refresh(started), THEME_POLL_MS);
+    // Only the latest start polls: a stop or a new start while this refresh was reported leaves no timer behind.
+    if (started === generation) timer = setTimer(() => void refresh(started), delay);
   };
 
   return {
