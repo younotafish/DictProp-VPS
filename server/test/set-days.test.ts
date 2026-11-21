@@ -214,9 +214,13 @@ test("the route counts in the time zone the device names and names it back; a zo
 });
 
 test('a review stamped past the times a Date holds leaves the route answering in a time zone', async () => {
-  // The owner's one review is the route tests' above: 23:30 UTC ten days ago, the next morning in Tokyo.
+  // A Got it at 23:30 UTC ten days ago, the next morning in Tokyo (the route tests above leave the owner one there
+  // too), and one a corrupted last review date stamped.
+  storeEvent(DEV_AUTH_USER.id, 'set-days-route-kept', LATE_EVENING);
   storeEvent(DEV_AUTH_USER.id, 'set-days-route-beyond', 1e17);
   const response = await app.request('/api/reviews/set-days?tzOffset=-480&tz=Asia%2FTokyo');
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { days: { [utcDay(LATE_EVENING + DAY)]: 1 }, timeZone: 'Asia/Tokyo' });
+  const answer = await response.json() as SetDaysResponse;
+  assert.equal(answer.timeZone, 'Asia/Tokyo');
+  assert.deepEqual(Object.keys(answer.days), [utcDay(LATE_EVENING + DAY)]);
 });

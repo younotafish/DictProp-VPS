@@ -5,8 +5,8 @@
  * count them, and its Back says Today.
  *
  * The plan is a snapshot (services/learningLoop/planner.ts) taken as Today shows, as the lesson closes, when the theme
- * map changes, when a unit starts, at local midnight and when the library first arrives on a device that held none,
- * and never while you look at it otherwise, so it holds still. Each snapshot takes up a unit another window of the app
+ * map changes, when a unit starts, at local midnight, when the device's time zone changes and when the library first
+ * arrives on a device that held none, and never while you look at it otherwise, so it holds still. Each snapshot takes up a unit another window of the app
  * has started since. The active unit's progress reads the library as it is now.
  */
 
@@ -168,12 +168,17 @@ export function TodayView({
     if (!interactionLocked) setPlanTick(tick => tick + 1);
   }
   const now = useNow(useMemo(() => [planTick, themeState], [planTick, themeState]));
-  const [snapshot, setSnapshot] = useState(() => ({ now, items, studyItems, themes: themeState, unit: activeUnit }));
+  // The device's day, offset from UTC and time zone at `now` (setDaysKey), read on every render: a zone the device moves
+  // to with Today on screen (a trip, or the clock's zone changed) takes the snapshot again, so the plan, the goal and
+  // the streak all count in the zone the device is in.
+  const calendar = setDaysKey(now);
+  const [snapshot, setSnapshot] = useState(() => ({ now, calendar, items, studyItems, themes: themeState, unit: activeUnit }));
   const libraryArrived = snapshot.items.length === 0 && items.length > 0;
-  if (libraryArrived || snapshot.now !== now || snapshot.themes !== themeState || snapshot.unit !== activeUnit) {
+  if (libraryArrived || snapshot.now !== now || snapshot.calendar !== calendar || snapshot.themes !== themeState ||
+    snapshot.unit !== activeUnit) {
     const unit = snapshot.now === now ? activeUnit : newerActiveUnit(activeUnit, readActiveUnit(userId));
     if (unit !== activeUnit) setActiveUnit(unit);
-    setSnapshot({ now, items, studyItems, themes: themeState, unit });
+    setSnapshot({ now, calendar, items, studyItems, themes: themeState, unit });
   }
 
   // While the active unit is unfinished, no unit the plan composes takes its sentences.
@@ -198,39 +203,55 @@ export function TodayView({
     if (stored?.day !== plan.pin?.day || stored?.themeId !== plan.pin?.themeId) writeTodayPin(userId, plan.pin);
   }, [plan, snapshot.themes, snapshot.items, userId]);
 
-  // The plan is taken again at local midnight, for the new day's goal, pin and due sentences.
+  // The plan is taken again at local midnight, for the new day's goal, pin and due sentences: the midnight of the zone
+  // the device is in, so a new zone sets the timer again.
   useEffect(() => {
     const timer = window.setTimeout(replan, Math.max(0, localDayStart(snapshot.now, 1) - Date.now()) + 50);
     return () => window.clearTimeout(timer);
-  }, [snapshot.now, replan]);
+  }, [snapshot.now, snapshot.calendar, replan]);
 
   // Today's count and the streak follow the history as it loads and as reviews land.
   const historyLoaded = reviewHistory.loaded !== false;
-  const todayCount = useMemo(() => todaySetCount(reviewHistory, snapshot.now), [reviewHistory, snapshot.now]);
+  const todayCount = useMemo(() => todaySetCount(reviewHistory, snapshot.now), [reviewHistory, snapshot]);
   const [getSetDays] = useState(() => setDaysLoader(loadSetDays));
   const [setDays, setSetDays] = useState<{ key: string; response: SetDaysResponse } | null>(null);
-  // An answer counts only under the day, offset and zone it was asked for (setDaysKey): after a trip, or past
-  // midnight, offline, the streak reads '—' until a later snapshot's load succeeds.
-  const setDaysAsked = useMemo(() => setDaysKey(snapshot.now), [snapshot.now]);
+  // An answer counts only under the day, offset and zone it was asked for, the snapshot's calendar: after a trip, or
+  // past midnight, offline, the streak reads '—' until a load succeeds. A load that failed is tried again as the
+  // connection returns and with each history refresh below, not only with the next snapshot; one that succeeded is
+  // kept (setDaysLoader), so trying again asks nothing.
+  const retrySetDays = useRef(() => {});
   useEffect(() => {
     let current = true;
-    getSetDays(snapshot.now).then(response => { if (current) setSetDays({ key: setDaysAsked, response }); }, () => {});
-    return () => { current = false; };
-  }, [getSetDays, snapshot.now, setDaysAsked]);
+    const load = () => {
+      const key = setDaysKey(snapshot.now);
+      getSetDays(snapshot.now).then(response => {
+        if (current) setSetDays(shown => (shown?.key === key && shown.response === response ? shown : { key, response }));
+      }, () => {});
+    };
+    load();
+    retrySetDays.current = load;
+    window.addEventListener('online', load);
+    return () => {
+      current = false;
+      window.removeEventListener('online', load);
+    };
+  }, [getSetDays, snapshot.now, snapshot.calendar]);
   // The days before today count by the server and by this device's recent history, whichever saw more (withRecentSetDays).
-  const streak = useMemo(() => (historyLoaded && setDays?.key === setDaysAsked
+  const streak = useMemo(() => (historyLoaded && setDays?.key === snapshot.calendar
     ? loopStreak(withRecentSetDays(setDays.response, reviewHistory, snapshot.now), todayCount, snapshot.now)
-    : null), [historyLoaded, setDays, setDaysAsked, reviewHistory, todayCount, snapshot.now]);
+    : null), [historyLoaded, setDays, reviewHistory, todayCount, snapshot]);
 
   // The goal and the streak follow the units other devices finish: the history loads again, once it's over a minute
   // old, as each snapshot is taken, and every two minutes while the page shows the plan or the themes browser
-  // uncovered. Card review is left out: a grade there carries the time it was given, which a load already under way
-  // can miss until the next.
+  // uncovered, when set days that failed to load are asked for again too. Card review is left out: a grade there
+  // carries the time it was given, which a load already under way can miss until the next.
   useEffect(() => { onRefreshHistory?.(); }, [snapshot.now, onRefreshHistory]);
   useEffect(() => {
     if (!onRefreshHistory || interactionLocked || screen === 'classic') return;
     const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') onRefreshHistory();
+      if (document.visibilityState !== 'visible') return;
+      onRefreshHistory();
+      retrySetDays.current();
     }, HISTORY_REFRESH_EVERY_MS);
     return () => window.clearInterval(timer);
   }, [onRefreshHistory, interactionLocked, screen]);

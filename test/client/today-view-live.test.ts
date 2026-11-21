@@ -298,9 +298,42 @@ test('after a trip the streak waits for set days counted in the new zone, never 
   await today.resumePage(60_000);
   assert.equal(today.plan().streak, null);
 
-  // Back online: Chicago's days, where the unit fell on the evening before yesterday.
+  // Back online, with Today still on screen: the connection's return asks again, and Chicago's days come, where the
+  // unit fell on the evening before yesterday.
   online = true;
-  await today.resumePage(60_000);
+  await today.tap(() => { browser.dispatchEvent(new Event('online')); });
   await today.until(() => today.plan().streak !== null, 'Chicago\'s set days are in');
   assert.equal(today.plan().streak, 0);
+});
+
+test('a zone the device moves to with Today on screen takes the snapshot again, and the streak counts in that zone', async t => {
+  const savedZone = process.env.TZ;
+  process.env.TZ = 'America/New_York';
+  t.after(() => {
+    answerSetDays = NO_SET_DAYS;
+    if (savedZone === undefined) delete process.env.TZ;
+    else process.env.TZ = savedZone;
+  });
+  // 00:31 in New York (mountToday adds the minute), when it is 23:31 the evening before in Chicago. The clock only
+  // moves forward: to the next midnight.
+  clock = localDayStart(clock, 1) + 30 * 60_000;
+  // A unit Got it'd from 00:10 in New York two days before, which was 23:10 the day before that in Chicago.
+  const from = localDayStart(clock + 60_000, -2) + 10 * 60_000;
+  const unit: ReviewEvent[] = BIG_SENTENCES.slice(0, 12).map((item, index) => ({
+    id: `move-${index}`, itemId: item.data.id, itemType: 'sentence', reviewedAt: from + index * 60_000, previousStep: 0,
+    nextStep: 1, rating: 'good', taskType: 'quick', sessionId: 'set:move',
+  }));
+  answerSetDays = url => Response.json({ days: { [localDayKey(from)]: 12 }, timeZone: url.searchParams.get('tz') });
+  const today = await mountToday(t, { reviewHistory: { recent: unit, olderTimes: [], olderCount: 0 } });
+  await today.until(() => today.plan().streak !== null, 'the set days are in');
+  assert.equal(today.plan().streak, 0, 'in New York the unit was two days ago');
+
+  // The device's zone becomes Chicago with Today on screen, and nothing but a history refresh renders it again. New
+  // York's days, with the history bucketed by Chicago's offset, would put the unit on the two days before today in
+  // Chicago: a streak of two.
+  process.env.TZ = 'America/Chicago';
+  await today.render({ reviewHistory: { recent: [...unit], olderTimes: [], olderCount: 0 } });
+  assert.notEqual(today.plan().streak, 2);
+  await today.until(() => today.plan().streak !== null, 'Chicago\'s set days are in');
+  assert.equal(today.plan().streak, 0, 'in Chicago the unit was three days ago');
 });

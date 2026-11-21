@@ -34,17 +34,23 @@ interface StoredThemes {
   map: Record<string, string>;
 }
 
-/** Where the map is kept: the META store (idbThemeStore), or a fake in tests. */
+/**
+ * Where the map is kept: the META store (idbThemeStore), or a fake in tests. A write writes nothing once `isCurrent`
+ * stops holding, checked as it writes.
+ */
 export interface ThemeStore {
   read(userId: string): Promise<unknown>;
-  write(userId: string, value: StoredThemes): Promise<void>;
+  write(userId: string, value: StoredThemes, isCurrent?: () => boolean): Promise<void>;
 }
 
 const themesKey = (userId: string) => `themes_v1_${userId}`;
 
 export const idbThemeStore: ThemeStore = {
   read: userId => withDB(db => requestResult(db.transaction(META_STORE, 'readonly').objectStore(META_STORE).get(themesKey(userId)))),
-  write: (userId, value) => withDB(db => {
+  // withDB runs the write again on a reopened connection when the first one was lost, which can be after a newer
+  // refresh's write: checked on each run, a refresh no longer current by then writes nothing.
+  write: (userId, value, isCurrent = () => true) => withDB(db => {
+    if (!isCurrent()) return Promise.resolve();
     const tx = db.transaction(META_STORE, 'readwrite');
     tx.objectStore(META_STORE).put(value, themesKey(userId));
     return transactionDone(tx);
@@ -119,7 +125,7 @@ export async function refreshThemes(
   };
   if (!isCurrent()) return { state, sorting };
   try {
-    await store.write(userId, { taxonomyVersion: state.taxonomyVersion, latestSeq: state.latestSeq, map: Object.fromEntries(state.themes) });
+    await store.write(userId, { taxonomyVersion: state.taxonomyVersion, latestSeq: state.latestSeq, map: Object.fromEntries(state.themes) }, isCurrent);
   } catch {
     // Storage full or unavailable: the map lasts for this visit, and the next launch fetches every row again.
   }

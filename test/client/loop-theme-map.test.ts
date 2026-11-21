@@ -357,4 +357,8 @@ test('the map is kept in the library database\'s META store, per user', async ()
   assert.deepEqual(keys, ['themes_v1_theme-user']);
   const refreshed = await refreshThemes(userId, await loadCachedThemes(userId), server({ 4: response([['b', 'chores']], 5) }).fetch);
   assert.deepEqual(await loadCachedThemes(userId), refreshed.state);
+
+  // A write asks whether its refresh is still current as it writes, as a retry on a reopened connection does too.
+  await idbThemeStore.write(userId, { taxonomyVersion: 1, latestSeq: 3, map: {} }, () => false);
+  assert.deepEqual(await loadCachedThemes(userId), refreshed.state, 'a stale write writes nothing');
 });
