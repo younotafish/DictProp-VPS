@@ -166,15 +166,16 @@ test('starting a unit keeps it as the active unit, notes its theme\'s start, and
   keepUnit(['m1', 'm2'], NOW - 2 * HOUR);
   const { calls, onOpenSentence } = opener();
   const plan = planOf({ onOpenSentence });
+  // 'p' rests until tomorrow, as a sentence Got it'd on another device after the plan was taken does.
   plan.onStartUnit({ themeId: THEME.id, itemIds: ['c', 'gone', 'a', 'missing', 'p', 'b'] });
 
   const unit = readActiveUnit(USER);
   assert.ok(unit, 'the new unit is kept');
   assert.notEqual(unit.id, 'unit-7', 'in place of the one before');
-  assert.deepEqual({ ...unit, id: 'x' }, { version: 1, userId: USER, id: 'x', themeId: THEME.id, itemIds: ['c', 'a', 'p', 'b'], startedAt: NOW });
+  assert.deepEqual({ ...unit, id: 'x' }, { version: 1, userId: USER, id: 'x', themeId: THEME.id, itemIds: ['c', 'a', 'b'], startedAt: NOW });
   assert.deepEqual(readSetStarts(USER, NOW), { [THEME.id]: NOW }, 'its theme is held back for two days');
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].ids, ['c', 'a', 'p', 'b'], 'in the unit\'s order, without the deleted and the missing');
+  assert.deepEqual(calls[0].ids, ['c', 'a', 'b'], 'in the unit\'s order, without the deleted, the missing and the one resting');
   assert.equal(calls[0].items[0], SENTENCES[2], 'the library\'s own copies');
   assert.equal(calls[0].index, 0, 'at its first sentence');
   assert.deepEqual(calls[0].options, { reviewSessionId: `set:${unit.id}`, exitLabel: 'Today' });
@@ -184,6 +185,38 @@ test('starting a unit keeps it as the active unit, notes its theme\'s start, and
   planOf({ onOpenSentence }).onStartUnit({ themeId: null, itemIds: ['gone', 'missing'] });
   assert.equal(calls.length, 1);
   assert.equal(readActiveUnit(USER)?.id, unit.id);
+});
+
+test('a unit whose sentences were all Got it\'d since the plan was taken, elsewhere, opens nothing and notes no start', t => {
+  device(t);
+  const kept = keepUnit(['m1', 'm2'], NOW - 2 * HOUR);
+  const { calls, onOpenSentence } = opener();
+  planOf({ onOpenSentence }).onStartUnit({ themeId: THEME.id, itemIds: ['m1', 'm2', 'p'] });
+  assert.equal(calls.length, 0, 'no lesson over sentences that are all memorized');
+  assert.deepEqual(readActiveUnit(USER), kept, 'the unit before stays');
+  assert.deepEqual(readSetStarts(USER, NOW), {});
+});
+
+test('a unit another window started after the plan was taken is taken up: Start opens nothing, and that unit stays', t => {
+  device(t);
+  const { calls, onOpenSentence } = opener();
+  const plan = planOf({ onOpenSentence });
+  // The other window starts a unit over the sentences this plan offers.
+  keepUnit(['c', 'a', 'b'], NOW - 60_000);
+  plan.onStartUnit({ themeId: THEME.id, itemIds: ['c', 'a', 'b'] });
+  assert.equal(calls.length, 0, 'no second unit over the same sentences');
+  assert.equal(readActiveUnit(USER)?.id, 'unit-7');
+  assert.deepEqual(readSetStarts(USER, NOW), {});
+});
+
+test('a start from a plan that knew the unfinished unit kept replaces it, as an Up next row or a theme does', t => {
+  device(t);
+  keepUnit(['a', 'b'], NOW - 60_000);
+  const { calls, onOpenSentence } = opener();
+  planOf({ onOpenSentence }).onStartUnit({ themeId: THEME.id, itemIds: ['c'] });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].ids, ['c']);
+  assert.notEqual(readActiveUnit(USER)?.id, 'unit-7');
 });
 
 test('Continue opens the unit\'s live sentences in the lesson at the first still to review, as the same unit', t => {
@@ -233,6 +266,7 @@ test('the Study tab shows Today, which gets the whole library, classic Study\'s 
     items: '{library.savedItems}',
     studyItems: '{studyItems}',
     reviewHistory: '{reviewHistory}',
+    onRefreshHistory: '{refreshReviewHistory}',
     onReview: '{updateSRS}',
     onUndoReview: '{undoSRSReview}',
     onOpenExampleSentence: '{handleOpenStudyExample}',
@@ -241,6 +275,15 @@ test('the Study tab shows Today, which gets the whole library, classic Study\'s 
     interactionLocked: '{!!detailContext}',
     onScroll: '{handleScroll}',
   });
+});
+
+test('the lesson App opens records its Got its through updateSRS in the unit\'s session, with the unit\'s Back', () => {
+  // useDetailView keeps a unit's options on the detail context; App hands them to the lesson, whose Got it passes the
+  // session to onUpdateSRS (test/client/unit-lesson-session.test.ts follows them from there).
+  const { props: attributes } = attributesOf('DetailView');
+  assert.equal(attributes.reviewSessionId, '{detailContext.reviewSessionId}');
+  assert.equal(attributes.sentenceExitLabel, '{detailContext.exitLabel}');
+  assert.equal(attributes.onUpdateSRS, '{updateSRS}');
 });
 
 test('the tab bar badges only the Sentences tab, which keeps its violet count; Today counts nothing there', () => {

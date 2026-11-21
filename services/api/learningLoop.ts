@@ -12,8 +12,12 @@ export const loadThemes = async (after: number): Promise<ThemesResponse> =>
 
 /**
  * The distinct sentences Got it'd in Today's units per local day ('quick' reviews in 'set:' sessions, and a v3 set's
- * 'triage' ones), for the days before today. `tzOffsetMinutes` is minutes east of UTC (the negation of
- * Date#getTimezoneOffset), so the server's days are this device's.
+ * 'triage' ones), for the days before today. `timeZone` is this device's IANA zone: a server that knows it counts the
+ * zone's local calendar days and names it in its answer (SetDaysResponse.timeZone). Otherwise, as an older server does,
+ * it counts by `tzOffsetMinutes`, minutes east of UTC (the negation of Date#getTimezoneOffset), so its days are still
+ * this device's.
  */
-export const loadSetDays = async (tzOffsetMinutes: number): Promise<SetDaysResponse> =>
-  requestJson<SetDaysResponse>(`/api/reviews/set-days?tzOffset=${Math.round(tzOffsetMinutes)}`, undefined, 'Load set days');
+export const loadSetDays = async (tzOffsetMinutes: number, timeZone?: string): Promise<SetDaysResponse> => {
+  const zone = timeZone ? `&tz=${encodeURIComponent(timeZone)}` : '';
+  return requestJson<SetDaysResponse>(`/api/reviews/set-days?tzOffset=${Math.round(tzOffsetMinutes)}${zone}`, undefined, 'Load set days');
+};

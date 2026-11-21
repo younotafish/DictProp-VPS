@@ -89,7 +89,8 @@ export interface PlanInput {
 /**
  * How many sentences a unit takes from a theme with `size` to review: all of them up to 20; beyond that the theme is
  * split into m units of equal size, ceil(size / m) each, as near 15 as keeps every unit at the day's goal of 12 or more:
- * m = min(round(size / 15), floor(size / 12)). So 21 to 23 sentences stay one unit, and one unit always meets the goal.
+ * m = min(round(size / 15), floor(size / 12)). So 21 to 23 sentences stay one unit, and every unit of a theme with 12 or
+ * more to review meets the goal; a smaller theme's unit is all it has.
  */
 export function setSize(size: number): number {
   if (size <= MAX_SET_SIZE) return Math.max(0, size);
@@ -162,8 +163,9 @@ function wordKeys(candidates: readonly StoredItem[], profileOf: ProfileOf): (ite
  * the rest from the oldest, so the backlog shrinks too, one sentence per word (wordKeys), so a unit covers as many
  * expressions as it can and a word's other sentences come back on later days. Only when that can't fill the unit does
  * it take more, in rounds: each round adds at most one more sentence of each word, newest first, so no word gets a third
- * sentence before every word has had its second. A unit is always setSize's size, so one unit meets the day's goal:
- * half the learner's sentences share their word with another. spreadSiblings then orders it.
+ * sentence before every word has had its second. A unit is always setSize's size, so a theme with 12 or more to review
+ * gives a unit that meets the day's goal: half the learner's sentences share their word with another. spreadSiblings
+ * then orders it.
  */
 function composeSet(candidates: readonly StoredItem[], profileOf: ProfileOf): StoredItem[] {
   const size = setSize(candidates.length);

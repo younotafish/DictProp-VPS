@@ -5,17 +5,20 @@
  * count them, and its Back says Today.
  *
  * The plan is a snapshot (services/learningLoop/planner.ts) taken as Today shows, as the lesson closes, when the theme
- * map changes, when a unit starts and at local midnight, and never while you look at it otherwise, so it holds still.
- * The active unit's progress reads the library as it is now.
+ * map changes, when a unit starts, at local midnight and when the library first arrives on a device that held none,
+ * and never while you look at it otherwise, so it holds still. Each snapshot takes up a unit another window of the app
+ * has started since. The active unit's progress reads the library as it is now.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ItemGroup, ReviewHistory, ReviewRating, StoredItem } from '../../types';
+import type { SetDaysResponse } from '../../server/src/shared/review';
 import type { SentenceRunOptions } from '../../hooks/useDetailView';
 import { loadSetDays, loadThemes } from '../../services/api/learningLoop';
 import { planLoop, type PlannedSet } from '../../services/learningLoop/planner';
 import {
   forgetV3State,
+  newerActiveUnit,
   readActiveUnit,
   readSetStarts,
   readTodayPin,
@@ -29,6 +32,7 @@ import { isLoopEligible, localDayKey, localDayStart } from '../../services/learn
 import { loopStreak, setDaysLoader, todaySetCount, withRecentSetDays } from '../../services/learningLoop/stats';
 import { createThemeSync, sortingProgress, type ThemeSorting, type ThemeState } from '../../services/learningLoop/themeMap';
 import { warn } from '../../services/logger';
+import { needsReview } from '../../services/sentenceOrdering';
 import { countDueSpellings } from '../../services/studyStats';
 import type { SessionReview } from '../../services/studySession';
 import { decodeStudySession, restoreQueue } from '../../services/studySessionRecord';
@@ -61,6 +65,8 @@ export interface TodayViewProps {
   studyItems: StoredItem[];
   /** The review history, and whether a load of it has succeeded yet (useReviewHistory). */
   reviewHistory: ReviewHistory & { loaded?: boolean };
+  /** Loads the history again when it's over a minute old (App's refreshReviewHistory), for another device's units. */
+  onRefreshHistory?: () => void;
   /** Card review's grades: records a review (App's updateSRS) and takes one back on the server (undoSRSReview). */
   onReview: (itemId: string, rating: ReviewRating, context: SessionReview) => Promise<boolean>;
   onUndoReview: (eventId: string) => Promise<boolean>;
@@ -75,6 +81,9 @@ export interface TodayViewProps {
 }
 
 const NO_THEMES: ReadonlyMap<string, string> = new Map();
+
+/** How often the history is asked to load again while the plan or the themes browser stays on screen. */
+const HISTORY_REFRESH_EVERY_MS = 2 * 60_000;
 
 /** Card review keeps the memo App gave classic Study when it was the tab. */
 const CardReview = React.memo(StudyEnhanced);
@@ -99,6 +108,7 @@ export function TodayView({
   items,
   studyItems,
   reviewHistory,
+  onRefreshHistory,
   onReview,
   onUndoReview,
   onOpenExampleSentence,
@@ -116,10 +126,11 @@ export function TodayView({
   // runs this again each time Today shows, which then finds nothing to remove.
   useEffect(() => { forgetV3State(userId); }, [userId]);
 
-  // The unit last started on this device, which a start replaces.
+  // The unit last started on this device, which a start replaces, here or in another window (the snapshot below).
   const [activeUnit, setActiveUnit] = useState<ActiveUnit | null>(() => readActiveUnit(userId));
 
-  // The theme map, kept on the device and refreshed while Today shows (every minute while the server still sorts).
+  // The theme map, kept on the device and refreshed while Today shows: every minute while the server still sorts, and
+  // every five minutes otherwise, for the sentences saved since.
   const [themeState, setThemeState] = useState<ThemeState | null>(null);
   const [sorting, setSorting] = useState<ThemeSorting | null>(null);
   const [themesFailed, setThemesFailed] = useState(false);
@@ -145,7 +156,10 @@ export function TodayView({
 
   // The plan's snapshot: the library, the theme map and the active unit as of `now`, taken again on the triggers in the
   // header. Items changing underneath (a review elsewhere, a sync) wait for the next one, so the plan doesn't move under
-  // the reader. The lesson closing takes it again in the same render, so the plan never shows a frame from before.
+  // the reader; only an empty snapshot follows the library as it first arrives (a new device's first pull), since an
+  // empty plan has nothing to hold still. The lesson closing takes it again in the same render, so the plan never shows
+  // a frame from before. As `now` moves, the snapshot takes up a unit another window started since (newerActiveUnit),
+  // so this window offers it as Continue instead of starting another over the same sentences.
   const [planTick, setPlanTick] = useState(0);
   const replan = useCallback(() => setPlanTick(tick => tick + 1), []);
   const [covered, setCovered] = useState(interactionLocked);
@@ -155,8 +169,11 @@ export function TodayView({
   }
   const now = useNow(useMemo(() => [planTick, themeState], [planTick, themeState]));
   const [snapshot, setSnapshot] = useState(() => ({ now, items, studyItems, themes: themeState, unit: activeUnit }));
-  if (snapshot.now !== now || snapshot.themes !== themeState || snapshot.unit !== activeUnit) {
-    setSnapshot({ now, items, studyItems, themes: themeState, unit: activeUnit });
+  const libraryArrived = snapshot.items.length === 0 && items.length > 0;
+  if (libraryArrived || snapshot.now !== now || snapshot.themes !== themeState || snapshot.unit !== activeUnit) {
+    const unit = snapshot.now === now ? activeUnit : newerActiveUnit(activeUnit, readActiveUnit(userId));
+    if (unit !== activeUnit) setActiveUnit(unit);
+    setSnapshot({ now, items, studyItems, themes: themeState, unit });
   }
 
   // While the active unit is unfinished, no unit the plan composes takes its sentences.
@@ -173,13 +190,13 @@ export function TodayView({
   const classicDue = useMemo(() => countDueSpellings(snapshot.studyItems, snapshot.now), [snapshot]);
   const classicResumable = useMemo(() => classicResumes(userId, snapshot.studyItems, snapshot.now), [userId, snapshot]);
 
-  // The day's pin, kept as the plan made it. Before the theme map is in, the plan has no unit at all, which says nothing
-  // about today's pin, so it stays.
+  // The day's pin, kept as the plan made it. Before the theme map is in, or the library on a device that held none, the
+  // plan has no unit at all, which says nothing about today's pin, so it stays.
   useEffect(() => {
-    if (!snapshot.themes) return;
+    if (!snapshot.themes || snapshot.items.length === 0) return;
     const stored = readTodayPin(userId);
     if (stored?.day !== plan.pin?.day || stored?.themeId !== plan.pin?.themeId) writeTodayPin(userId, plan.pin);
-  }, [plan, snapshot.themes, userId]);
+  }, [plan, snapshot.themes, snapshot.items, userId]);
 
   // The plan is taken again at local midnight, for the new day's goal, pin and due sentences.
   useEffect(() => {
@@ -191,18 +208,31 @@ export function TodayView({
   const historyLoaded = reviewHistory.loaded !== false;
   const todayCount = useMemo(() => todaySetCount(reviewHistory, snapshot.now), [reviewHistory, snapshot.now]);
   const [getSetDays] = useState(() => setDaysLoader(loadSetDays));
-  const [setDays, setSetDays] = useState<{ day: string; days: Record<string, number> } | null>(null);
+  const [setDays, setSetDays] = useState<{ day: string; response: SetDaysResponse } | null>(null);
   const day = localDayKey(snapshot.now);
   useEffect(() => {
     let current = true;
     // Offline the streak reads '—' until a later snapshot's load succeeds.
-    getSetDays(snapshot.now).then(days => { if (current) setSetDays({ day, days }); }, () => {});
+    getSetDays(snapshot.now).then(response => { if (current) setSetDays({ day, response }); }, () => {});
     return () => { current = false; };
   }, [getSetDays, snapshot.now, day]);
   // The days before today count by the server and by this device's recent history, whichever saw more (withRecentSetDays).
-  const streak = historyLoaded && setDays?.day === day
-    ? loopStreak(withRecentSetDays(setDays.days, reviewHistory, snapshot.now), todayCount, snapshot.now)
-    : null;
+  const streak = useMemo(() => (historyLoaded && setDays?.day === day
+    ? loopStreak(withRecentSetDays(setDays.response, reviewHistory, snapshot.now), todayCount, snapshot.now)
+    : null), [historyLoaded, setDays, day, reviewHistory, todayCount, snapshot.now]);
+
+  // The goal and the streak follow the units other devices finish: the history loads again, once it's over a minute
+  // old, as each snapshot is taken, and every two minutes while the page shows the plan or the themes browser
+  // uncovered. Card review is left out: a grade there carries the time it was given, which a load already under way
+  // can miss until the next.
+  useEffect(() => { onRefreshHistory?.(); }, [snapshot.now, onRefreshHistory]);
+  useEffect(() => {
+    if (!onRefreshHistory || interactionLocked || screen === 'classic') return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') onRefreshHistory();
+    }, HISTORY_REFRESH_EVERY_MS);
+    return () => window.clearInterval(timer);
+  }, [onRefreshHistory, interactionLocked, screen]);
 
   // A cached map whose refresh failed may be from before the server sorted more, so with no unit in it the plan says
   // the themes load online rather than that nothing is left.
@@ -212,18 +242,28 @@ export function TodayView({
     unit, todayCount, historyLoaded, next: plan.today, themes: themesStatus, sortingPercent: sortingShare, now: snapshot.now,
   });
 
-  // A unit from a planned set: its sentences as the library holds them now (one gone since the plan was taken is left
-  // out), kept as the active unit and noted as a start from its theme, then opened in the lesson at the first. Back from
-  // the lesson is the plan, wherever the unit was started.
+  // A unit from a planned set: those of its sentences the library still holds that still need review (one gone, or Got
+  // it'd elsewhere, since the plan was taken is left out), kept as the active unit and noted as a start from its theme,
+  // then opened in the lesson at the first. With none left, or with a unit started in another window since the plan
+  // was taken, nothing opens and the plan is taken again, with that window's unit, offered as Continue while unfinished.
+  // Back from the lesson is the plan, wherever the unit was started.
   const startUnit = (set: PlannedSet) => {
+    const newer = newerActiveUnit(snapshot.unit, readActiveUnit(userId));
+    if (newer !== snapshot.unit) {
+      setActiveUnit(newer);
+      replan();
+      return;
+    }
+    const at = Date.now();
     const ids = new Set(set.itemIds);
-    const found = new Map(items.filter(item => ids.has(item.data.id) && isLoopEligible(item)).map(item => [item.data.id, item]));
+    const found = new Map(items
+      .filter(item => ids.has(item.data.id) && isLoopEligible(item) && needsReview(item.srs, at))
+      .map(item => [item.data.id, item]));
     const sentences = set.itemIds.flatMap(id => found.get(id) ?? []);
     if (sentences.length === 0) {
       replan();
       return;
     }
-    const at = Date.now();
     const started: ActiveUnit = {
       version: 1, userId, id: crypto.randomUUID(), themeId: set.themeId, itemIds: sentences.map(item => item.data.id), startedAt: at,
     };

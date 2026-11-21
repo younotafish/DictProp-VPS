@@ -103,7 +103,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
 
   const library = useLibrary(user.id);
   const { latestItemsRef } = library;
-  const { reviewHistory, flushPendingReviews, undoSRSReview, updateSRS } = useReviewOutbox(user.id, library);
+  const { reviewHistory, refreshReviewHistory, flushPendingReviews, undoSRSReview, updateSRS } = useReviewOutbox(user.id, library);
   const { comparisons, handleCompareReady, handleCompare } = useComparisons(user.id);
   const libraryViews = useLibraryViews(library.savedItems);
   const {
@@ -389,6 +389,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
             items={library.savedItems}
             studyItems={studyItems}
             reviewHistory={reviewHistory}
+            onRefreshHistory={refreshReviewHistory}
             onReview={updateSRS}
             onUndoReview={undoSRSReview}
             onOpenExampleSentence={handleOpenStudyExample}

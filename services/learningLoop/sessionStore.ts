@@ -69,6 +69,15 @@ export function readActiveUnit(userId: string, storage: StorageLike | null = def
   }
 }
 
+/**
+ * The active unit once what storage holds (`stored`, readActiveUnit) is taken in: the stored unit when it is another
+ * one, started no earlier than `current`, as when another window of the app started it; `current` otherwise. It never
+ * takes nothing or an older unit in place of `current`, so a unit whose write storage refused still runs for the visit.
+ */
+export function newerActiveUnit(current: ActiveUnit | null, stored: ActiveUnit | null): ActiveUnit | null {
+  return stored && stored.id !== current?.id && stored.startedAt >= (current?.startedAt ?? -Infinity) ? stored : current;
+}
+
 /** Keeps `unit` as its user's active unit, in place of the one before. */
 export function writeActiveUnit(unit: ActiveUnit, storage: StorageLike | null = defaultStorage()): void {
   try {

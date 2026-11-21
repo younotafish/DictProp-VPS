@@ -5,6 +5,7 @@ import {
   activeUnitKey,
   decodeActiveUnit,
   forgetV3State,
+  newerActiveUnit,
   readActiveUnit,
   readSetStarts,
   readTodayPin,
@@ -79,6 +80,17 @@ test('an active unit that is damaged, foreign or oversized reads as none', () =>
   const longest = decodeActiveUnit(raw({ id: 'x'.repeat(196) }), USER);
   assert.ok(longest);
   assert.equal(unitSessionId(longest).length, 200);
+});
+
+test('the active unit takes up a newer one that storage holds, as another window keeps it, and never none or an older one', () => {
+  const later: ActiveUnit = { ...UNIT, id: 'unit-2', startedAt: T0 + 60_000 };
+  const earlier: ActiveUnit = { ...UNIT, id: 'unit-0', startedAt: T0 - 60_000 };
+  assert.equal(newerActiveUnit(UNIT, later), later, 'a unit started since in another window');
+  assert.equal(newerActiveUnit(null, UNIT), UNIT, 'a window that had none');
+  assert.equal(newerActiveUnit(UNIT, null), UNIT, 'storage that holds none, as when it refused the write');
+  assert.equal(newerActiveUnit(UNIT, earlier), UNIT, 'an older unit, as storage holds when it refused the newer write');
+  assert.equal(newerActiveUnit(UNIT, { ...UNIT }), UNIT, 'the same unit read back');
+  assert.equal(newerActiveUnit(null, null), null);
 });
 
 test('reading and writing the active unit never throw when storage is missing or refuses', () => {
