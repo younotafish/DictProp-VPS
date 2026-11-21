@@ -96,6 +96,29 @@ test('in sentence review a doubled Delete or Shift+R acts once, the two sharing 
   assert.deepEqual(done, ['reset sentence-1', 'delete sentence-1']);
 });
 
+test('Got it in a Today unit records its review in the unit\'s session; elsewhere it carries no session, a catalog line its seed', () => {
+  const sentence: StoredItem = {
+    type: 'sentence',
+    data: { id: 'sentence-1', text: 'She finally came clean.', sourceWord: 'come clean' },
+    savedAt: 0,
+    srs: SRSAlgorithm.createNew('sentence-1', 'sentence', 0),
+  };
+  const calls: unknown[][] = [];
+  const remember = (options: { reviewSessionId?: string; catalog?: boolean }) => capture(() => useSentenceActions({
+    currentSentence: sentence, currentSentenceRef: { current: sentence }, isSentencePreview: !!options.catalog,
+    catalogSentencePreview: !!options.catalog, onSave: () => {}, onDelete: () => {},
+    onUpdateSRS: (...args) => { calls.push(args); }, tryRemember: () => true, showRemembered: () => {},
+    reviewSessionId: options.reviewSessionId,
+  })).handleRemember();
+
+  remember({ reviewSessionId: 'set:unit-1' });
+  remember({});
+  remember({ catalog: true, reviewSessionId: 'set:unit-2' });
+  assert.deepEqual(calls[0], ['sentence-1', 'good', { sessionId: 'set:unit-1' }]);
+  assert.deepEqual(calls[1], ['sentence-1', 'good', undefined]);
+  assert.deepEqual(calls[2], ['sentence-1', 'good', { seedItem: sentence, sessionId: 'set:unit-2' }]);
+});
+
 const header = (isSaved: boolean) => {
   const srs = SRSAlgorithm.createNew('apple-1', 'vocab', 0);
   const mastery = SRSAlgorithm.getMasteryLevel(srs);

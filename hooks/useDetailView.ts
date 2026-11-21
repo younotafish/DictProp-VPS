@@ -9,7 +9,18 @@ import type { Library } from './useLibrary';
 import type { LibraryViews } from './useLibraryViews';
 import type { UndoOffer } from './useUndoOffer';
 
-export interface DetailContext {
+/**
+ * How a run of sentences opened as one of Today's units records and labels itself (views/today); the other tabs pass
+ * none.
+ */
+export interface SentenceRunOptions {
+  /** Got it in the lesson records its review in this session ('set:<unit id>'), so the day's goal and the streak count it. */
+  reviewSessionId?: string;
+  /** What the lesson's Back says, in place of the one its sentences imply: 'Today' for a unit. */
+  exitLabel?: 'Today';
+}
+
+export interface DetailContext extends SentenceRunOptions {
   groups: ItemGroup[];
   groupIndex: number;
   itemIndex: number;
@@ -156,8 +167,9 @@ export function useDetailView(
   // (due-first) order from SentencesView, so swipe/arrow order matches the list exactly. Each sentence
   // maps to one group whose single item is its resolved source vocab card — matched by word + sense
   // across the whole notebook, then by a form a card lists (services/sentenceSource), falling back to a
-  // synthetic minimal card (showing the sentence as its sole example) when the source word no longer exists.
-  const handleViewSentence = useCallback((ordered: StoredItem[], index: number) => {
+  // synthetic minimal card (showing the sentence as its sole example) when the source word no longer exists. Today opens
+  // a unit with `options`: its Got its record in the unit's session, and Back says Today.
+  const handleViewSentence = useCallback((ordered: StoredItem[], index: number, options?: SentenceRunOptions) => {
     if (ordered.length === 0) return;
     const findSource = sentenceSourceResolver(latestItemsRef.current);
     const groups: ItemGroup[] = ordered.map(s => {
@@ -166,7 +178,11 @@ export function useDetailView(
       return { title: getItemTitle(resolved), items: [resolved] };
     });
     const safeIndex = Math.min(Math.max(0, index), groups.length - 1);
-    updateDetailContext({ groups, groupIndex: safeIndex, itemIndex: 0, sentenceItems: ordered, openId: nextDetailKey() });
+    updateDetailContext({
+      groups, groupIndex: safeIndex, itemIndex: 0, sentenceItems: ordered, openId: nextDetailKey(),
+      ...(options?.reviewSessionId ? { reviewSessionId: options.reviewSessionId } : {}),
+      ...(options?.exitLabel ? { exitLabel: options.exitLabel } : {}),
+    });
   }, [updateDetailContext, latestItemsRef]);
 
   // Resolve an example to a sentence card without changing the notebook: its saved copy when there is one (a

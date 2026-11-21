@@ -285,6 +285,8 @@ function SignedInApp({ user }: { user: AuthUser }) {
               initialItemIndex={detailContext.itemIndex}
               navigationKey={detailContext.navigationKey}
               sentenceItems={liveDetailSentenceItems}
+              reviewSessionId={detailContext.reviewSessionId}
+              sentenceExitLabel={detailContext.exitLabel}
               onClose={closeDetail}
               onSave={handleSave}
               onPatchItem={patchLiveItem}

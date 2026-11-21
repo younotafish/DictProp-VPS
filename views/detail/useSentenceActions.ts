@@ -17,11 +17,17 @@ interface SentenceActionsOptions {
   onSave: (item: StoredItem) => void;
   onDelete: (id: string) => void;
   onResetSRS?: DetailViewProps['onResetSRS'];
-  onUpdateSRS?: (itemId: string, rating?: ReviewRating, context?: { seedItem?: StoredItem }) => void | Promise<boolean>;
+  onUpdateSRS?: (
+    itemId: string,
+    rating?: ReviewRating,
+    context?: { seedItem?: StoredItem; sessionId?: string },
+  ) => void | Promise<boolean>;
   /** Whether a remember of the item `id` counts now (useRememberToast): once per item and gesture. */
   tryRemember: (id: string) => boolean;
   /** Confirms a review with the interval it scheduled, for the sentence `id`. */
   showRemembered: (next: SRSData, now: number, id: string) => void;
+  /** The session a Today unit's lesson records its Got its in ('set:<unit id>'); none elsewhere. */
+  reviewSessionId?: string;
 }
 
 /**
@@ -30,7 +36,7 @@ interface SentenceActionsOptions {
  */
 export function useSentenceActions({
   currentSentence, currentSentenceRef, isSentencePreview, catalogSentencePreview, onSave, onDelete, onResetSRS,
-  onUpdateSRS, tryRemember, showRemembered,
+  onUpdateSRS, tryRemember, showRemembered, reviewSessionId,
 }: SentenceActionsOptions) {
   // One delete or reset per press (acceptDestructive): a doubled Delete or D deletes the sentence on screen, not then
   // the one that slides into its place, and a doubled Shift+R can't make the undo restore a blank schedule.
@@ -65,13 +71,15 @@ export function useSentenceActions({
     // reflects the bumped step/next-review in place.
     const now = Date.now();
     const previewSRS = updateAfterRating(SRSAlgorithm.ensure(s.srs, s.data.id, 'sentence'), 'good', now);
-    onUpdateSRS?.(
-      s.data.id,
-      'good',
-      catalogSentencePreview ? { seedItem: s } : undefined,
-    );
+    // A catalog line travels with its first review as a seed; a Today unit's Got it carries the unit's session, which
+    // the day's goal and the streak count.
+    const context = {
+      ...(catalogSentencePreview ? { seedItem: s } : {}),
+      ...(reviewSessionId ? { sessionId: reviewSessionId } : {}),
+    };
+    onUpdateSRS?.(s.data.id, 'good', Object.keys(context).length > 0 ? context : undefined);
     showRemembered(previewSRS, now, s.data.id);
-  }, [catalogSentencePreview, onUpdateSRS, isSentencePreview, currentSentenceRef, tryRemember, showRemembered]);
+  }, [catalogSentencePreview, onUpdateSRS, isSentencePreview, currentSentenceRef, tryRemember, showRemembered, reviewSessionId]);
 
   return { handleDeleteItem, handleResetSRS, handleRemember };
 }

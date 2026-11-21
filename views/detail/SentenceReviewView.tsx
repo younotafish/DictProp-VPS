@@ -85,6 +85,8 @@ export function SentenceReviewView({
   interactionLocked = false,
   sentencePreviewOnly = false,
   onAttachImage,
+  reviewSessionId,
+  sentenceExitLabel: exitLabelOverride,
 }: SentenceReviewViewProps) {
   // The page behind goes inert while a card is open; closing it gives focus back to what opened it.
   useOverlay();
@@ -446,7 +448,7 @@ export function SentenceReviewView({
 
   const { handleDeleteItem, handleResetSRS, handleRemember } = useSentenceActions({
     currentSentence, currentSentenceRef, isSentencePreview, catalogSentencePreview, onSave, onDelete, onResetSRS,
-    onUpdateSRS, tryRemember, showRemembered,
+    onUpdateSRS, tryRemember, showRemembered, reviewSessionId,
   });
 
   // The practice pill, on the learner's own saved sentences: a preview has no library copy to practice, and the pill
@@ -525,7 +527,7 @@ export function SentenceReviewView({
             {/* Row 1: back + position */}
             <SentenceHeaderRow
               autoPlaying={isSentenceAutoPlaying}
-              exitLabel={sentenceExitLabel}
+              exitLabel={exitLabelOverride ?? sentenceExitLabel}
               onExit={requestSentenceExit}
               onOpenAnalysis={() => setSentencePage('analysis')}
               loadingLesson={analysisLoading}

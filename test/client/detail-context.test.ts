@@ -79,3 +79,16 @@ test('withoutSentence drops the sentence with its aligned group, back to the fir
   const wordCards = cards([group('a', card('a1'))]);
   assert.equal(withoutSentence(wordCards, 'a1'), wordCards);
 });
+
+test('withoutSentence keeps a Today unit\'s session and Back label on the run that remains', () => {
+  const unit: DetailContext = {
+    ...cards([group('w', card('w')), group('w', card('w'))]),
+    sentenceItems: [sentence('s1'), sentence('s2')],
+    reviewSessionId: 'set:unit-1',
+    exitLabel: 'Today',
+  };
+  const rest = withoutSentence(unit, 's1');
+  assert.equal(rest?.reviewSessionId, 'set:unit-1');
+  assert.equal(rest?.exitLabel, 'Today');
+  assert.deepEqual(rest?.sentenceItems?.map(item => item.data.id), ['s2']);
+});

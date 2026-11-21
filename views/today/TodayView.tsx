@@ -12,6 +12,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ItemGroup, ReviewHistory, ReviewRating, StoredItem } from '../../types';
+import type { SentenceRunOptions } from '../../hooks/useDetailView';
 import { loadSetDays, loadThemes } from '../../services/api/learningLoop';
 import { loopCard, sourceFormsLookup, type LoopMode } from '../../services/learningLoop/cues';
 import { planLoop, type PlannedSet } from '../../services/learningLoop/planner';
@@ -125,7 +126,7 @@ export interface TodayViewProps {
   /** Opens the card view on `groups` (App's handleViewStoredItem), for Card review's cards. */
   onViewCards: (groups: ItemGroup[], groupIndex: number, itemIndex: number) => void;
   /** Opens saved sentences in their lesson (App's handleViewSentence): ↗ on a session's card. */
-  onOpenSentence: (ordered: StoredItem[], index: number) => void;
+  onOpenSentence: (ordered: StoredItem[], index: number, options?: SentenceRunOptions) => void;
   onLazyLoadImage: (itemId: string, imageVersion?: string) => Promise<string | null>;
   /** The app's undo pill is up, so ⌘Z takes back what it offers rather than the session's last review. */
   undoOffered: boolean;
