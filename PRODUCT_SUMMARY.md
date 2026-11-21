@@ -2,7 +2,7 @@
 
 DictProp is a vocabulary app for advanced learners of English. You look up a word, phrase or sentence, and an AI writes a card for each meaning. Every meaning you save is scheduled for review with FSRS v6. Saved sentences and the example sentences on cards become listening lessons with a detailed analysis, and two reading tabs offer curated sentences: Real Life conversations and American essays. The app runs at https://dictprop.online as an installable web app for phones and laptops, and it admits one Google account, its owner's.
 
-This document describes what the code does as of 19 November 2026. Keys and gestures match the in-app Gestures & shortcuts sheet, which is built from `services/shortcutSheet.ts`, the canonical list. README.md covers running the code; CLAUDE.md covers operating it.
+This document describes what the code does as of 20 November 2026. Keys and gestures match the in-app Gestures & shortcuts sheet, which is built from `services/shortcutSheet.ts`, the canonical list. README.md covers running the code; CLAUDE.md covers operating it.
 
 ## 1. Terms
 
@@ -12,15 +12,13 @@ This document describes what the code does as of 19 November 2026. Keys and gest
 | Saved sentence | A sentence saved from the search box, from a card's examples or from an example's lesson. It has its own schedule and is reviewed as a sentence lesson. |
 | Real Life line, essay sentence | A sentence from a built-in collection. Its review record is created the first time you review it, and it is separate from any saved copy of the same text. |
 | Got it | The one-tap review outside a study session. It records a Good rating. |
-| Due | Reviewed before, and its next review time has come. Card review's dashboard and the card header's clock count only these. A saved sentence that Today practices, or one you can say, is never due: it rests (8.2). |
+| Due | Reviewed before, and its next review time has come. Card review's dashboard and the card header's clock count only these. |
 | To review | Never reviewed, or due. The Notebook header, the sentence lesson's pill, the card's position line and the Sentences tab count these. |
 | Memorized | Reviewed and not due yet: a filter on the sentence lists. |
 | Memory strength | A 0-100 display score computed from FSRS stability: 18 × ln(1 + stability in days), rounded, at most 100. A stability of one day reads 12, a week 37, 47 days 70, 180 days 94. Scheduling never uses it. |
 | New | A card or sentence never reviewed. A card's badge reads "New", with no percentage; the review chips on the Sentences tab and in a Real Life collection, and a Real Life row's pill, say "New" too. |
 | Theme | One of 129 everyday scenes in 17 domains (Cooking at home, Eating out, Job interviews…) that the server sorts each of your saved sentences into (8.2). |
-| Set | 12 to 23 of your saved sentences from one theme, not yet decided in Today, met in one go on the Today tab. |
-| Practice, Passive, Can say it | The three choices on meeting a sentence in a set: practice it until you can say it; keep it as understood, which the Sentences tab keeps reviewing; or mark it as one you can already say, which is done. |
-| Practice due | A sentence in practice whose review time has come and that wasn't reviewed today. |
+| Unit | Up to 23 of your saved sentences from one theme that are to review, studied in one sentence lesson from the Today tab (8.2). |
 | Struggling, Learning, Proficient, Mastered, Grandmaster | A reviewed card under 30% memory strength, then from 30%, 50%, 70% and 85%. A badge reads, for example, "Learning 45%". |
 | Archived | Kept in the library but left out of Today, Card review and the Notebook's main list. You archive a card yourself, or the offline usage audit archives a sense it rates British only, rare or dated, or specialized (section 14). |
 
@@ -29,8 +27,8 @@ This document describes what the code does as of 19 November 2026. Keys and gest
 - **Tabs.** Notebook, Sentences, Real Life, Essays and Today. On screens 768 px wide or more, a sixth button, "?", opens the Gestures & shortcuts sheet. Keys 1, 2 and 3 open Notebook, Sentences and Today; Real Life and Essays have no key.
 - **Kept between visits.** The app reopens on the tab it was on, and each tab keeps its scroll position, search, filters and any open collection, essay or study session while you use the others.
 - **The tab bar** hides while a list scrolls down past 100 px and returns on any scroll up. Tapping the tab you're on, or pressing its number, scrolls it to the top and brings the bar back; on Notebook and Sentences a second tap at the top puts the cursor in the tab's search box. A second tap within half a second is ignored.
-- **Two badges.** Sentences shows a violet count of saved sentences to review, and Today an orange count of the practice due today ("99+" above 99 on either). Screen readers hear "Sentences, N to review" and "Today, N to practice".
-- **The search button** floats at the bottom right, above the tab bar and above the buttons of Today's player and Card review; over a card it sits higher, clear of the card's bottom row.
+- **The badge.** Sentences shows a violet count of saved sentences to review ("99+" above 99), and screen readers hear "Sentences, N to review". The other tabs have none.
+- **The search button** floats at the bottom right, above the tab bar and above Card review's buttons; over a card it sits higher, clear of the card's bottom row.
 - **Notices** (undo, progress, sync trouble, offline, updates) stack in one column at the bottom centre, above the tab bar, and stop short of the search button's column (section 10).
 - **Overlays.** The card view (full screen, for words and sentence lessons), the review popup (a bottom sheet on phones, a centred dialog on wider screens), the search box and results sheet, and dialogs open over the tabs. While one is open, the page and the tab bar are inert, and focus returns where it was when it closes. Lists behind an open card or popup don't re-sort as you review; they catch up a second after the changes stop.
 
@@ -273,18 +271,18 @@ A sentence lesson is the card view for sentences: saved sentences, Real Life lin
 
 ### 6.1 Opening
 
-- **Where it opens:** a row on the Sentences tab, a line in a Real Life collection or a sentence in an essay (the lesson walks that list in its on-screen order, from the tapped sentence); a collection's or essay's Study button; the search box's saved-sentence suggestions; and "Open sentence review" on a word card (over the card) or under a study answer.
+- **Where it opens:** a row on the Sentences tab, a line in a Real Life collection or a sentence in an essay (the lesson walks that list in its on-screen order, from the tapped sentence); a collection's or essay's Study button; a unit on the Today tab (8.4); the search box's saved-sentence suggestions; and "Open sentence review" on a word card (over the card) or under a study answer.
 - Each sentence is paired with its source card, the word it came from; P and ⌘1-4 act on that card.
-- An unsaved example opened from a word card or under a study answer is a preview: it has no review pill, practice pill, Reset, Delete or picture button, and its right-hand button is "Save sentence". One opened under a study answer shows no pill after it is saved either, nor the memorized count beside its memory.
+- An unsaved example opened from a word card or under a study answer is a preview: it has no review pill, Reset, Delete or picture button, and its right-hand button is "Save sentence". One opened under a study answer shows no pill after it is saved either, nor the memorized count beside its memory.
 
 ### 6.2 The sentence page
 
-- **Header:** Back ("Sentences", "Real Life", "Essays" or "Word"); the analysis button, a spinner while the analysis loads; "i / N"; and a pill. Amber "K to review" counts the run's sentences never reviewed or due; it reads the same on every sentence, counts down as you mark them, and turns into a green "All reviewed" at zero.
+- **Header:** Back ("Sentences", "Real Life", "Essays", "Today" or "Word"); the analysis button, a spinner while the analysis loads; "i / N"; and a pill. Amber "K to review" counts the run's sentences never reviewed or due; it reads the same on every sentence, counts down as you mark them, and turns into a green "All reviewed" at zero.
 - **The sentence:** the studied expression in indigo on a light background; saved words and saved phrases of up to six words in indigo with a dotted underline; unsaved uncommon terms in green with a dotted underline; every other word plain.
 - **The connected-speech line.** Under the sentence, the analysis's natural American IPA in connected speech, shown even when it matches the dictionary form; screen readers call it "Natural American IPA (connected speech)". It isn't a word target, and a sentence without one shows no line.
-- **Under it:** a speaker; Copy ("Copy sentence (to paste into Meta AI)"); on a Mac a ⌘ chip that lights while ⌘ is held, when hovered words show a ring; and on a phone the practice pill (6.4) of the learner's own saved sentences, whose bottom row has no room for it.
+- **Under it:** a speaker; Copy ("Copy sentence (to paste into Meta AI)"); and on a Mac a ⌘ chip that lights while ⌘ is held, when hovered words show a ring.
 - **The picture**, when there is one, sits left of the sentence on wide screens and above it on phones. The front page has no translation; the analysis page does.
-- **Bottom row:** once the sentence has a review, its memory (badge, review count, streak, "N memorized in this list", next review; on a phone the review count and the streak are left out, so the row fits a 390 px screen) and Reset; Delete, for saved sentences only; from 640 px up, the practice pill (6.4) of the learner's own saved sentences with a translation; and at the right end Got it, always the same size so nothing moves (a preview shows "Save sentence"). Clear | Casual and the auto-play button float at the bottom right, and the attach-picture button sits above the search button.
+- **Bottom row:** once the sentence has a review, its memory (badge, review count, streak, "N memorized in this list", next review; on a phone the review count and the streak are left out, so the row fits a 390 px screen) and Reset; Delete, for saved sentences only; and at the right end Got it, always the same size so nothing moves (a preview shows "Save sentence"). Clear | Casual and the auto-play button float at the bottom right, and the attach-picture button sits above the search button.
 
 ### 6.3 Words in the sentence
 
@@ -303,9 +301,8 @@ The owner's design:
 ### 6.4 Blank space, Got it and moving
 
 - **A tap or click on blank space** (anything but a word or a control; the picture and the IPA line count as blank) plays or pauses the sentence, starts it again past 85%, and during auto-play pauses or resumes auto-play. It waits 320 ms to rule out a double tap.
-- **Got it:** a double tap on blank space or on the words, a double-click on blank space, R, or the button. It records Good and shows "Remembered!" with the next review; the sentence stays on screen. On a Real Life or essay line, the first Got it creates the line's record. The same sentence counts once in 1.5 seconds.
+- **Got it:** a double tap on blank space or on the words, a double-click on blank space, R, or the button. It records Good and shows "Remembered!" with the next review; the sentence stays on screen. On a Real Life or essay line, the first Got it creates the line's record. In a unit opened from Today, it also counts toward the day's goal (8.2). The same sentence counts once in 1.5 seconds.
 - **Reset** (Shift+R) works as on word cards. **Delete** (D, or the trash) applies to saved sentences only; it acts at once and offers Undo. Real Life and essay lines can't be deleted.
-- **Practice** (the pill, or B) adds the sentence to Today's practice (8.2) with a triage Again, so it comes back in tomorrow's practice. On a sentence in practice the pill reads "Practicing", filled orange, and a press takes it out as one you can say, with a triage Easy. Only your own saved sentences with a translation, which Today's cue shows, have the pill; Real Life and essay lines, previews, untranslated sentences and word cards have none. Each press offers Undo for 6 seconds ("Practicing “…”", "Can say “…”"), which takes that review back; when it can't (offline, still syncing, or the sentence has changed since), a rose notice says why for 4 seconds. The same sentence's second press within 0.7 seconds is ignored. Neither press counts toward Today's goal.
 - **Moving:** swipe up from the bottom of the page, or press ↓, for the next sentence; swipe down from the top, or press ↑, for the previous one. The new sentence opens at its top and is read aloud in its remembered voice; at the first or last sentence, the current one is read again. On a long sentence with a picture, the page scrolls to its end before a swipe moves on.
 - **Pages:** a swipe left, →, or a two-finger trackpad swipe opens the analysis page; a swipe right or ← returns to the sentence, and a swipe right on the sentence page closes the lesson.
 - **Esc** closes, in turn, the picture panel, the auto-play panel and the analysis page, then the lesson.
@@ -349,7 +346,6 @@ Saved sentences and Real Life or essay lines can take a picture: tap the picture
 | ⌘1-4 | Read example 1-4 of its word |
 | R | Got it (the sentence stays on screen) |
 | Shift+R | Reset memory strength |
-| B | Add a saved sentence to practice; press again to mark it as one you can say |
 | D | Delete a saved sentence |
 | Esc | Close a panel or the analysis page, then the sentence |
 
@@ -357,7 +353,7 @@ Saved sentences and Real Life or essay lines can take a picture: tap the picture
 
 ### 7.1 What the three tabs share
 
-- Every sentence is new (never reviewed), due, or memorized (reviewed and not due yet). Card review never takes sentences: you review them on these tabs and in their lessons, and Today's sets take your own saved sentences once they have a translation (8.2). A saved sentence Today practices, or one you can say, rests: it's never due here, so it isn't to review, orange or counted on the tab's badge.
+- Every sentence is new (never reviewed), due, or memorized (reviewed and not due yet). Card review never takes sentences: you review them on these tabs and in their lessons, and Today's units take your own saved sentences that are to review (8.2). A unit reads the same schedule as the Sentences tab: a sentence Got it'd in a unit is memorized here too, and one Got it'd here leaves Today's units until it is due again.
 - Saved sentences, Real Life lines and essay sentences keep separate records: reviewing a Real Life line never changes a saved copy of the same text.
 - **A sentence keeps its place in a list until it is memorized**, by the owner's design. On the Sentences tab the order follows memory strength, which only a review (Got it or Reviewed) changes, so listening never moves a sentence. Real Life and essays keep their catalog order. Lists also don't shift as time passes or as syncs land: their clock is re-read only when you open a collection, an essay or a sentence, change the filter or search on the Sentences tab or the theme, review chip or search in a Real Life collection, or come back to the tab or the app. An open lesson keeps the order it opened with.
 - Reviewed buttons record Good. A double click records one review, and a second Reviewed press within half a second in the same list is ignored.
@@ -406,7 +402,7 @@ Five public-domain classics ship with the app:
 
 ## 8. Today and Card review
 
-The Today tab is a daily loop over your own saved sentences: each day a themed set of sentences to meet, and the sentences you chose to practice, until you can say them. It teaches sentences, never single words. Card review, inside Today, is the classic review of your words and phrases.
+The Today tab studies your own saved sentences in units: each unit gathers the sentences of one theme that are to review, and you study it in the sentence lesson (section 6) exactly as on the Sentences tab. It teaches sentences, never single words. Card review, inside Today, is the classic review of your words and phrases.
 
 ### 8.1 Scheduling
 
@@ -414,68 +410,50 @@ The Today tab is a daily loop over your own saved sentences: each day a themed s
 - **Grades:** Again, Hard, Good, Easy. Got it outside a session records Good.
 - The device shows the new schedule at once. The server applies the same review to its stored schedule in one transaction, and its result is what every device keeps (11.3).
 - Cards from the old fixed schedule become FSRS cards at their next review. Memory strength (section 1) shows on badges and picks the prompt type; it doesn't schedule anything.
-- **Practice membership** rides on the schedule: a sentence is in practice, one you can say, or kept passive only through Today's reviews (11.3), and undoing such a review undoes its membership too.
+- **One schedule per sentence:** a Got it in a unit records the same Good as the Sentences tab, so a sentence memorized in one place is memorized in the other (8.4).
 
-### 8.2 Today's loop
+### 8.2 Today's units
 
-- **What it takes:** your own saved sentences (the Sentences tab's) once they have a Chinese translation, which every cue shows. Words, phrases, archived items, Real Life lines and essay sentences stay out: words and phrases are reviewed in Card review (8.7).
-- **Where a sentence stands:** New (not yet decided in Today, even if you reviewed it with Got it or Reviewed before: those say you understood it, not that you can say it); Practicing (chosen for practice); Can say it (done: Today never offers it again, and the Sentences tab never asks to review it); or Passive (kept as understood: the Sentences tab keeps reviewing it as before, and no set offers it again).
+- **What it takes:** your own saved sentences (the Sentences tab's) that are to review: never reviewed, or due. Words, phrases, archived items, Real Life lines and essay sentences stay out: words and phrases are reviewed in Card review (8.7). A sentence needs no translation: its lesson shows the analysis, or loads it, as on the Sentences tab.
 - **Themes.** The server sorts your sentences into 129 everyday scenes in 17 domains, such as Food and drink: Cooking at home, Grocery shopping, Eating out. It runs by itself: a minute after the server starts, half a minute after a save, and whenever Today finds sentences waiting; sorting about 3,200 sentences takes about half an hour. It pauses for 15 minutes on a spent balance, a refused key or three failed batches, and Today says why while sentences wait. A sentence the model can't place three times stays Unsorted until its text changes.
-- **A set** is 12 to 23 new sentences of one theme: all of a theme's new sentences up to 20, and a bigger theme in equal sets near 15. Two-thirds come from the newest saved, the rest from the oldest. A set prefers sentences of different words (a word's sentences reach its card through its spelling, sense or a listed form), so a word's other sentences come back on later days; only when that can't fill the set does it take more, every word's second sentence before any word's third, and it never asks for one word twice in a row where the set allows it. So a set always has its full size, and one set meets the day's goal.
-- **Which theme:** the one with the most new sentences saved in the last two weeks, then the most new sentences. A theme a set was started from on this device in the last two days is held back, and one with fewer than 12 new sentences ranks lower. Today's theme stays the same all day on a device, until it runs out; Unsorted sentences are never picked, but the themes browser offers them.
-- **Practice** follows FSRS: a Practice choice brings the sentence back tomorrow, then about 2, 6, 18 and 45 days apart while you get it. A sentence is due for practice when its review time has come and it wasn't reviewed today.
-- **Can say it, earned:** in Speak mode, a Got it on a practice sentence whose memory has lasted 21 days or more (FSRS stability), at least 14 days after its last review, makes it one you can say. Quiet mode never does; it keeps the schedule moving when you can't speak aloud.
-- **The goal and the streak:** the goal is 12 sentences decided in sets in a day, so one set meets it. The streak counts the days in a row that met it, back from yesterday, and today joins once it's met. Going back on a choice takes it off today's count.
+- **A unit** holds a theme's sentences to review: all of them up to 20, and a bigger theme in equal units of 12 or more, near 15. Two-thirds come from the newest saved, the rest from the oldest. A unit prefers sentences of different words (a word's sentences reach its card through its spelling, sense or a listed form), so a word's other sentences come back in later units; only when that can't fill the unit does it take more, every word's second sentence before any word's third, and it never puts two sentences of one word in a row where the unit allows it. A unit of 12 or more meets the day's goal on its own.
+- **Which theme:** the one with the most sentences to review saved in the last two weeks, then the most sentences to review. A theme a unit was started from on this device in the last two days is held back, and one with fewer than 12 to review ranks lower. Today's theme stays the same all day on a device, until it runs out; Unsorted sentences are never picked, but All themes offers them (8.5).
+- **The goal and the streak:** the goal is 12 sentences Got it'd in units in a day, each counted once, so one unit of 12 or more meets it. The streak counts the days in a row that met it, back from yesterday, and today joins once it's met. Days that met the goal in sets, before units, still count.
 
 ### 8.3 The plan
 
 - **Header:** "Today", the date, the streak (a flame, grey at 0) and the goal ring ("9/12"). Both read "—" until the review history has loaded.
-- **The plan card** has two lines and one button:
-  - the practice line: "Practice · 8 due", "✓ Practiced" or "Nothing to practice yet";
-  - the set line: "🍳 Set · Cooking at home · 15", "✓ 12 today", "Practice first · 46 due" (40 or more due), "Sorting your sentences into themes… 34%", "Loading themes…", "Themes load when you’re online." or "No new sentences left in your themes";
-  - the button: "Practice 8" while practice is due (a session takes at most 30), then "Start set" until the goal is met, then "Done for today ✓" once the goal is met and nothing is due, with "Another set: 🍳 Cooking at home" under it to go on to tomorrow's.
-- **Speak | Quiet**, kept per device: Speak asks you to say each answer aloud, Quiet to think it.
-- **Up next:** the three sets after today's, each starting at a tap, and "All themes ›": every domain's themes with "N new · N practicing · N can say" and a bar of what you can say, Unsorted last. A theme with new items starts its next set.
-- **Progress:** Can say (+N this week), Practicing, and Tomorrow (to practice); under it "This week: saved N · sorted N".
+- **The unit card** shows the first of these that applies:
+  - an unfinished unit, from whatever day: its theme ("🍳 Cooking at home"), "15 sentences · 6 memorized", a thin progress bar and **Continue**, which opens the lesson at its first sentence still to review;
+  - while the goal isn't met, the next unit: its theme, "15 sentences" and **Start unit**, which opens the lesson at its first sentence;
+  - once the goal is met: "Done for today ✓", then "✓ 🍳 Cooking at home · 15 memorized" when today's unit is finished, and "Another unit: 🛒 Grocery shopping", which starts the next unit, when there is one;
+  - otherwise why there is none: "Loading themes…", "Themes load when you’re online.", "Sorting your sentences into themes… 34%" or "Nothing to review in your themes".
+
+  The goal reads as met only once the review history has loaded.
+- **The sorting line,** "Sorting your sentences into themes… 34%", stays under the card while the server still sorts.
+- **Up next:** up to three units after the card's (with an unfinished unit on the card, the plan's next unit comes first), each with its theme, its size and ›, and each starting at a tap; then "All themes ›" (8.5).
 - **Card review · N due ›** opens Card review (8.8), or reads "Resume" when one of its sessions is kept.
-- The plan is a snapshot: it's taken again when Today opens or comes back into view, after a session, when themes arrive, and when practice falls due or the day changes, never while you read it.
-- **The tab's badge** is an orange count of the practice due today ("99+" above 99); screen readers hear "Today, N to practice".
+- Today always opens on the plan. The plan is a snapshot: it's taken again when Today opens or comes back into view, when a lesson closes, when themes arrive and at midnight, never while you read it. The unit card's count and bar follow your reviews live.
 
-### 8.4 A set
+### 8.4 A unit
 
-- **The header:** × to end, the theme, "i / n" ("Round i / n" in the round), a thin progress bar and the Speak or Quiet chip, which switches the mode.
-- **Meeting each sentence:** its cue shows first: the Chinese translation, large, with the word or expression the sentence was saved for to use ("Use unplug") and a line on what counts (the whole sentence, the expression exact; small slips are fine). You say the whole sentence in English (or think it, in Quiet). Hint (H) shows the first letter of every word ("H__ w__ y___ w______?"); Reveal (Space, Enter) shows the sentence with the expression marked, its connected-speech IPA and translation, and says it in its own voice. ↗ opens its lesson.
-- **The three choices**, each recorded at once: **Practice** (1, ←), **Passive** (2, ↓) and **Can say it** (3, →), which a taken hint closes. After Practice the card asks you to say it twice, aloud (or in your head in Quiet), with Replay and Next.
-- **The round:** after the last sentence, the ones chosen for practice come back once each, in the order met: **Not yet** (1) or **Got it** (3, Enter), each with where it leads. Got it on the first try is Good; with the hint, or on the second try, Hard. A first Not yet records nothing and brings the sentence back three cards later; a second records Again, and it comes back once more just to look at. Practicing, a sentence's cue drops the expression once its memory has lasted 6 days (FSRS stability), and shows its picture instead when it has one.
-- **The receipt line** names the last choice or answer ("↶ Did you get a chance to unplug? · Practice"), adds "saved on this device" while it waits for the server, and offers **Back** in the meeting (the last choice) or **Undo** in the round (the last answer), also by U or ⌘Z. A tap within 350 ms of a reveal or an answer is ignored, and a sentence decided elsewhere meanwhile (with the practice pill) is passed.
-- **The summary:** Can say, Passive and Practicing counts and "Round: 3 of 5 on the first try"; "n of 12 new sentences today" and "Tomorrow: N to practice"; Undo last answer; and "Next set: <theme>" first while the goal is open, else Done first.
+- **Starting** one (Start unit, Another unit, an Up next row or a theme in All themes) keeps it on this device, per account, in place of the one before, and counts as a start of its theme (8.2).
+- **Studying it** is the sentence lesson over the unit's sentences, in the unit's order, with nothing added: the sentence page, the analysis page, the words and their cards (6.3), audio and auto-play, the picture, Got it, Reset and Delete. Back reads "Today", and the header's pill counts the unit's sentences still to review.
+- **Got it** is the Sentences tab's Good, on the same FSRS schedule: a new sentence comes back in 2 days, then after 11, 46 and 163 days while you keep getting it. In a unit it also counts toward the day's goal. A sentence Got it'd elsewhere meanwhile is done in the unit too, but doesn't count.
+- **Done:** a unit is done when none of its sentences (those not deleted or archived) is to review. Until then the plan offers it as Continue, whatever day it started and after a reload too; once done, it shows on the plan only on the day it started. The units the plan offers leave an unfinished unit's sentences out.
 
-### 8.5 Practice
+### 8.5 All themes
 
-- A practice session takes the sentences due for practice today, up to 30, and runs them like a set's round, in the mode chosen: Speak records a spoken review, which can earn Can say it; Quiet records a silent one. Each card's dots fill as its memory grows toward Can say it, and Got it reads "can say it" when it would earn it.
-- **The summary:** First try, With a hint and Not yet counts, "Recall: 67% on the first try", the sentences you can say now, then "Practice N more" while practice is still due, else "Start a set", and Done.
-- **Ending and keeping:** × or Esc ends a set or practice session early, to its summary, whose first button is Resume (Enter or R), then Done, which ends the session for good; it offers no new session there, which would replace this one. Before anything was done, × goes straight back to the plan. A session is kept on the device for 12 hours and comes back at its card after a reload; when a Card review session is kept too, the newer one opens and the plan offers the other ("Resume set: 🍳 Cooking at home · 4 of 15").
+Every domain's themes that hold sentences Today takes, in the taxonomy's order, with Unsorted last. Each shows its emoji and title, "N to review · M memorized" and a thin bar of the memorized share. A tap on a theme with sentences to review starts a unit from it (8.4); a theme with none is a plain row. Esc goes back to the plan.
 
 ### 8.6 Today's keys
 
 | Key | Action |
 |---|---|
-| Enter | On the plan: Practice, or Start set |
-| Space, Enter | Show the answer; after saying a sentence twice, or a last look, the next card |
-| H | Take the hint, before the answer shows |
-| 1, ← | Meeting a sentence: Practice |
-| 2, ↓ | Meeting a sentence: Passive |
-| 3, → | Meeting a sentence: Can say it (closed once the hint has shown) |
-| 1 | Practicing: Not yet |
-| 3, Enter | Practicing: Got it |
-| P | Say the answer again |
-| U | Undo the last answer; meeting sentences, go back to the last choice |
-| ⌘Z | The same as U, unless the Undo pill shows: then it undoes what the pill offers |
-| Esc | End the session early, to its summary; on a summary or in All themes, back to the plan |
-| Enter | On a summary: its first button, Resume for a session ended early |
-| R | On the summary of a session ended early: take it up again |
+| Enter | On the plan: Start unit, or Continue |
+| Esc | In All themes: back to the plan |
 
-Keys 1-3 stay with the session while it shows, so they never switch tabs.
+Inside a unit, the sentence lesson's keys apply (6.8).
 
 ### 8.7 Card review: what it takes
 
@@ -518,7 +496,7 @@ Saved words and phrases that aren't archived, each meaning on its own schedule; 
 
 - × or Esc after at least one grade shows "Ended early · 23 of 50 reviewed" with Resume (R); before any grade it returns straight to the dashboard.
 - **The summary:** "Session complete · 50 cards"; the count of each grade and "Recalled X of Y prompts."; "To look at again (N)", the words rated Again or Hard, each of which opens its card, with "Open these cards" to go through them in the card view; "Undo last rating"; and "Done" (Enter), back to the dashboard.
-- A running session survives a reload, an update or iOS closing the app: for six hours after its last grade or move, it comes back at the card you were on, unrevealed, skipping cards reviewed elsewhere meanwhile. A session that ended early also comes back at its card.
+- A running session survives a reload, an update or iOS closing the app: for six hours after its last grade or move, the plan's Card review row reads "Resume" (Today itself opens on its plan), and opening it brings the session back at the card you were on, unrevealed, skipping cards reviewed elsewhere meanwhile. A session that ended early also comes back at its card.
 
 | Key | Action |
 |---|---|
@@ -589,7 +567,7 @@ Notices are pills in one column at the bottom centre: above the tab bar on the t
 | Update | "Update ready" with Reload, or "Reload needed" | A new version waits until no card or popup is open; "Reload needed" (part of the app failed to load) shows at once |
 
 - A background job shows one result pill at a time, each with ×; a new result replaces the one showing. Reload reads "Saving…" while it sends pending changes (for up to 10 seconds), then reloads.
-- **What can be undone:** deleting, archiving and unarchiving a card; resetting a reviewed card (resetting a card never reviewed does nothing and offers nothing); Refresh with AI; removing a word from a phrase; adding a card or saved sentence to practice, or taking it out as one you can say (whose review the undo takes back on the server, so that change goes out at once); and Clear all in the search results. Merging duplicates can't be undone.
+- **What can be undone:** deleting, archiving and unarchiving a card; resetting a reviewed card (resetting a card never reviewed does nothing and offers nothing); Refresh with AI; removing a word from a phrase; and Clear all in the search results. Merging duplicates can't be undone.
 - **How undo works:** one offer shows at a time, and a new one closes the old, whose change then goes through. Undo, or ⌘Z (Ctrl+Z elsewhere) while the pill shows, takes the change back; ⌘Z doesn't act in a text field, whose own undo wins, or while a decision dialog is open. An offered change is saved on the device at once but kept from the server until the pill closes, then pushed at once. Signing out or reloading closes the offer first.
 
 ## 11. Sync and offline
@@ -614,7 +592,8 @@ Notices are pills in one column at the bottom centre: above the tab bar on the t
 - Undoing a review works only while it is still the card's latest change.
 - A reset made while a review of the same card still waits in the outbox survives that review landing, or its undo: the reset stays on the device and goes with the next push.
 - A review dated before the card's last one, from a device whose clock runs behind, is scheduled from the last review's time, on the device and on the server alike.
-- Today's reviews take only their buttons' grades: a set's Practice, Passive and Can say it record Again, Good and Easy; practice records Again, Hard and Good. The server refuses any other pairing. Practice membership (in practice, or one you can say) changes only inside these reviews, so undoing one restores it too.
+- A Got it in one of Today's units goes out as an ordinary Got it, marked with the unit's session, which is how the day's goal and the streak find it.
+- Reviews from the sets and practice Today had before units can still arrive from an outbox an older version filled. The server takes them with only the grades their buttons gave, refuses any other pairing, and keeps the practice membership they set on the schedule, which the app ignores.
 
 ### 11.4 Offline
 

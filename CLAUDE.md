@@ -52,7 +52,7 @@ git add <files> && git commit -m "description" && git push vps main
 - After a healthy release the deploy removes the images no release runs. It never prunes the BuildKit cache while the app is live.
 - `check.yml` runs the same `npm run check` for pull requests only, since the deploy's verify job covers every push to main.
 - `dependency-audit.yml` runs `npm audit --omit=dev --audit-level=high` in `server/` every Monday at 06:17 UTC (or by hand). It fails, emailing the owner, while a high or critical advisory is open. It is not part of the deploy gate.
-- `recover-production.yml` restarts the app container and waits for its health check. `diagnose-production.yml` prints the disk, the database's storage counters, duplicate saved sentences, Today's theme coverage (how much of the library the sweep has sorted, and how recently), Docker storage and the containers, all read-only. Its log is public, so it prints counts and ids only.
+- `recover-production.yml` restarts the app container and waits for its health check. `diagnose-production.yml` prints the disk, the database's storage counters, duplicate saved sentences, Today's theme coverage (how much of the library the sweep has sorted, and how recently) and what its units have to review, Docker storage and the containers, all read-only. Its log is public, so it prints counts and ids only.
 
 To check deploy status:
 ```bash
@@ -143,8 +143,8 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   ├── refusedReviews.ts      # Reviews the server refused, kept for the refused-reviews notice
 │   ├── audio/                 # Speech playback: the player, clip store, warmers, auto-play, media session, voices
 │   ├── notebook/              # The Notebook's list view, search ranking, search box and JSON import
-│   ├── learningLoop/          # Today's loop as pure modules: eligibility, cues, the planner, set and practice sessions,
-│   │                          #   their store, stats and streak, and the theme map's sync
+│   ├── learningLoop/          # Today's units as pure modules: eligibility, the planner, the active unit, day pin and unit
+│   │                          #   starts on the device, stats and streak, and the theme map's sync
 │   ├── appUpdate.ts           # New-version detection and the flush-then-reload flow
 │   ├── libraryImages.ts       # Image marker helpers for lazy and offline images
 │   ├── mergeDuplicates.ts     # Duplicate-card merging
@@ -169,7 +169,7 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   │       ├── item-images.ts # GET/PUT /api/items/:id/image, GET /api/items/images/manifest
 │   │       ├── import.ts      # POST /api/import
 │   │       ├── reviews.ts     # POST /api/reviews/apply, POST /api/reviews/:id/undo, GET /api/reviews/history and
-│   │       │                  #   GET /api/reviews/set-days (the days with a Today set, for the streak)
+│   │       │                  #   GET /api/reviews/set-days (per day, the sentences Got it'd in Today's units, for the streak)
 │   │       ├── themes.ts      # GET /api/themes: theme rows after a seq, and the sweep's progress
 │   │       ├── sentence-enrichments.ts  # POST /api/sentence-enrichments/lookup and its images
 │   │       ├── comparisons.ts # GET/PUT /api/comparisons
@@ -178,7 +178,8 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   │       └── ai.ts          # /api/analyze, /api/compare, /api/extract-vocabulary, /api/transcribe
 │   └── package.json
 ├── views/                     # Notebook, StudyEnhanced (Card review), SentencesView, RealLifeView, EssaysView, DetailView
-│   ├── today/                 # The Today tab (own sentences): the plan, the themes browser, the set and practice player, keys, audio
+│   ├── today/                 # The Today tab (own sentences): the plan, the themes browser, keys and Card review's host; a
+│   │                          #   unit opens in the sentence lesson (views/detail)
 │   ├── detail/                # The card view: SentenceReviewView, WordDetailView and their hooks
 │   ├── notebook/              # The Notebook's parts
 │   └── reading/               # The Real Life and Essays screens
@@ -269,12 +270,12 @@ Enrichment runs on this Mac (`scripts/offline/`, LaunchAgent `com.dictprop.incre
 ### Stale Closure Prevention
 `hooks/useLibrary.ts` owns `latestItemsRef`. Every library change goes through `updateItems()`/`replaceItem()`, which set the ref before returning, so the next handler, IndexedDB write or push sees the change. Always read `latestItemsRef.current` in event handlers and async work, not a closure-captured `savedItems`.
 
-### Today's loop
-- Today learns sentences, never single words: it takes only the learner's own saved sentences with a translation (`isLoopEligible`, `services/learningLoop/standing.ts`). Words and phrases are reviewed in Card review, which is classic Study as it was before Today, and Real Life and the Essays keep their own progress.
-- Practice membership (`srs.practiceSince`, `sayableAt`, `practiceChangedAt`) rides on the schedule and changes only inside a review: Today's task types `triage`, `speak` and `recall` with their allowed grades (`server/src/shared/review.ts`), through `applyPracticeMembership` (`server/src/shared/practice.ts`). The server applies it in `applyReviewEvent`, the device optimistically in `updateAfterRating`, and undo restores it with the snapshot. Never set those fields anywhere else.
-- A sentence's standing comes from those fields alone (`loopStanding`): practicing, can say it, kept passive (`practiceChangedAt` alone), or new to the loop. Classic reviews (Got it, Reviewed, Card review) never touch membership, so a sentence Got it'd in the Sentences tab is still offered in a set until a triage decides it: again joins practice, easy marks it one you can say, good keeps it passive.
-- A set's choices count toward the day's goal and the streak only as `triage` reviews in a `set:<id>` session; every other review (the sentence lesson's practice pill included) passes no `set:` session id.
-- The Sentences tab treats a sentence Today practices or you can say as resting, never as one to review (`sentenceReviewState`); words keep their own schedule there and in Card review whatever membership they carry.
+### Today's units
+- Today is the Sentences tab's study grouped into units, with nothing added. A unit is a batch of one theme's own sentences that need review, never reviewed or due again (`needsReview`, `services/sentenceOrdering.ts`, as the Sentences tab counts them). Today takes own, live sentences with text (`isLoopEligible`, `services/learningLoop/standing.ts`), translated or not. Words and phrases are reviewed in Card review, which is classic Study as it was before Today, and Real Life and the Essays keep their own progress.
+- Starting or continuing a unit opens the sentence lesson over its sentences through App's `handleViewSentence`, with `SentenceRunOptions { reviewSessionId: 'set:<unit id>', exitLabel: 'Today' }`. Its Got it records the classic Good (`'quick'`) on the one schedule the Sentences tab reads, in the unit's `set:` session, so a sentence Got it'd in either place is memorized in both.
+- The planner (`services/learningLoop/planner.ts`) picks the theme (its score, the day pin, recent unit starts) and composes each unit (`setSize`; one sentence per word first, then round-robin top-ups; `spreadSiblings`), leaving an unfinished active unit's sentences out (`PlanInput.exclude`). The active unit is kept on the device (`today_unit_v1:<userId>`, `services/learningLoop/sessionStore.ts`) and offered as Continue while any of its live sentences needs review.
+- The day's goal (`DAILY_SET_GOAL`: 12 distinct sentences) and the streak count only `'quick'` and `'triage'` sentence reviews in `set:` sessions: `services/learningLoop/stats.ts` for today, `GET /api/reviews/set-days` for the days before. A `'triage'` there is a choice made in the sets Today had before units (v3), so the days those met keep counting. Every other review passes no `set:` session id.
+- Practice membership (`srs.practiceSince`, `sayableAt`, `practiceChangedAt`) is what v3's loop kept, and the client ignores it everywhere: a sentence's review state comes from its dates alone (`sentenceReviewState`). The server still accepts v3's task types `triage`, `speak` and `recall` with their allowed grades (`server/src/shared/review.ts`), since an older build's outbox may still send them, and `applyReviewEvent` applies their membership through `applyPracticeMembership` (`server/src/shared/practice.ts`), as the device's optimistic `updateAfterRating` does; undo restores it with the snapshot. Never set those fields anywhere else.
 - The theme sweep (`server/src/themes/sweep.ts`) runs inside the server process with DeepSeek through the AI client:
   - it starts a minute after the server starts, half a minute after a save or import, and when `GET /api/themes` finds work waiting;
   - it sorts thirty of the learner's own sentences a request, the ones new to it first, one request at a time;
