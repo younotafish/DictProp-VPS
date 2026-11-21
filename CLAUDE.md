@@ -169,7 +169,8 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   │       ├── item-images.ts # GET/PUT /api/items/:id/image, GET /api/items/images/manifest
 │   │       ├── import.ts      # POST /api/import
 │   │       ├── reviews.ts     # POST /api/reviews/apply, POST /api/reviews/:id/undo, GET /api/reviews/history and
-│   │       │                  #   GET /api/reviews/set-days (per day, the sentences Got it'd in Today's units, for the streak)
+│   │       │                  #   GET /api/reviews/set-days (per local day in the device's zone, the sentences Got it'd in
+│   │       │                  #   Today's units, for the streak)
 │   │       ├── themes.ts      # GET /api/themes: theme rows after a seq, and the sweep's progress
 │   │       ├── sentence-enrichments.ts  # POST /api/sentence-enrichments/lookup and its images
 │   │       ├── comparisons.ts # GET/PUT /api/comparisons
@@ -275,9 +276,11 @@ Enrichment runs on this Mac (`scripts/offline/`, LaunchAgent `com.dictprop.incre
 - Starting or continuing a unit opens the sentence lesson over its sentences through App's `handleViewSentence`, with `SentenceRunOptions { reviewSessionId: 'set:<unit id>', exitLabel: 'Today' }`. Its Got it records the classic Good (`'quick'`) on the one schedule the Sentences tab reads, in the unit's `set:` session, so a sentence Got it'd in either place is memorized in both.
 - The planner (`services/learningLoop/planner.ts`) picks the theme (its score, the day pin, recent unit starts) and composes each unit (`setSize`; one sentence per word first, then round-robin top-ups; `spreadSiblings`), leaving an unfinished active unit's sentences out (`PlanInput.exclude`). The active unit is kept on the device (`today_unit_v1:<userId>`, `services/learningLoop/sessionStore.ts`) and offered as Continue while any of its live sentences needs review.
 - The day's goal (`DAILY_SET_GOAL`: 12 distinct sentences) and the streak count only `'quick'` and `'triage'` sentence reviews in `set:` sessions: `services/learningLoop/stats.ts` for today, `GET /api/reviews/set-days` for the days before. A `'triage'` there is a choice made in the sets Today had before units (v3), so the days those met keep counting. Every other review passes no `set:` session id.
+  - The set days are local calendar days in the device's IANA zone when the client sends `tz` (the reply names it as `timeZone`, spelled as sent); with `tzOffset` alone, from an older client, they are dates under that fixed offset. The client merges its recent history into them (`withRecentSetDays`, the larger count each day), bucketed the way the reply says the server bucketed. Any rollback build must keep the set days' `task_type IN ('quick', 'triage')`.
+  - The review history behind today's count reloads as Today shows (once it is a minute old) and every two minutes while Today is on screen, so a unit finished on another device counts; a review the server refused leaves it.
 - Practice membership (`srs.practiceSince`, `sayableAt`, `practiceChangedAt`) is what v3's loop kept, and the client ignores it everywhere: a sentence's review state comes from its dates alone (`sentenceReviewState`). The server still accepts v3's task types `triage`, `speak` and `recall` with their allowed grades (`server/src/shared/review.ts`), since an older build's outbox may still send them, and `applyReviewEvent` applies their membership through `applyPracticeMembership` (`server/src/shared/practice.ts`), as the device's optimistic `updateAfterRating` does; undo restores it with the snapshot. Never set those fields anywhere else.
 - The theme sweep (`server/src/themes/sweep.ts`) runs inside the server process with DeepSeek through the AI client:
-  - it starts a minute after the server starts, half a minute after a save or import, and when `GET /api/themes` finds work waiting;
+  - it starts a minute after the server starts, half a minute after a save, an import, or a review whose seed brings a sentence the server never held, and when `GET /api/themes` finds work waiting; Today asks for themes every minute while sentences wait and every five minutes otherwise;
   - it sorts thirty of the learner's own sentences a request, the ones new to it first, one request at a time;
   - as it counts, it deletes theme rows of items that aren't sentences (the first build of Today sorted words too);
   - it pauses for 15 minutes on a spent balance, a refused key or three failed batches;
