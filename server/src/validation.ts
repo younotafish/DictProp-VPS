@@ -167,6 +167,9 @@ export function validateStoredItem(value: unknown): string | null {
       value.data.preferredSpeechStyle !== 'clear' && value.data.preferredSpeechStyle !== 'casual') {
     return 'sentence preferredSpeechStyle is invalid';
   }
+  if (value.type === 'sentence' && value.data.learnLater !== undefined && !isFiniteNonNegative(value.data.learnLater)) {
+    return 'sentence learnLater is invalid';
+  }
   if (value.data.usageAudit !== undefined && !isUsageAudit(value.data.usageAudit)) {
     return 'item usageAudit is invalid';
   }

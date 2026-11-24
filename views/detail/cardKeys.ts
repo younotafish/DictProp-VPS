@@ -27,13 +27,15 @@ export interface SentenceKeyHandlers {
   handleDeleteItem: () => void;
   /** Space: auto-play's pause while it runs, else the play rule, else start auto-play (useSentencePlayback's handleSpace). */
   onSpace: () => void;
+  /** L: star the sentence Learn later, or take its star away; absent where the sentence can't be starred. */
+  handleToggleLearnLater?: () => void;
 }
 
-/** Sentence review's keys: P, E, R and Shift+R, D, Space, and Cmd/Ctrl+1–4. */
+/** Sentence review's keys: P, E, R and Shift+R, D, L, Space, and Cmd/Ctrl+1–4. */
 export function handleSentenceKey(e: CardKeyEvent, handlers: SentenceKeyHandlers): void {
   const {
     title, speakSentenceAt, readCurrentSentence, isSentencePreview, catalogSentencePreview, handleRemember,
-    handleResetSRS, handleDeleteItem, onSpace,
+    handleResetSRS, handleDeleteItem, onSpace, handleToggleLearnLater,
   } = handlers;
   if (!acceptKeyRepeat(e)) return;
 
@@ -69,6 +71,12 @@ export function handleSentenceKey(e: CardKeyEvent, handlers: SentenceKeyHandlers
       e.preventDefault();
       handleRemember();
     }
+  }
+
+  // L: Learn later, on or off (own saved sentences only)
+  if ((e.key === 'l' || e.key === 'L') && !e.shiftKey && handleToggleLearnLater) {
+    e.preventDefault();
+    handleToggleLearnLater();
   }
 
   // D: Delete the sentence directly (a preview has nothing to delete, and a catalog lesson's lines aren't the

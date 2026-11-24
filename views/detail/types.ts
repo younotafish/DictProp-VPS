@@ -46,6 +46,8 @@ export interface DetailViewProps {
   reviewSessionId?: string;
   /** What Back says in sentence review, in place of the one its sentences imply: 'Today' for a unit. */
   sentenceExitLabel?: 'Today';
+  /** The signed-in user, whose queue sentence review's study signals go to (useStudySignals); none, none are kept. */
+  studyUserId?: string;
   onCompare?: (words: string[]) => void;
   comparisons?: StoredComparison[];          // saved comparisons (surfaced when they involve this word)
   onOpenComparison?: (words: string[]) => void;

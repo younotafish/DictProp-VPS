@@ -28,6 +28,8 @@ interface SentenceActionsOptions {
   showRemembered: (next: SRSData, now: number, id: string) => void;
   /** The session a Today unit's lesson records its Got its in ('set:<unit id>'); none elsewhere. */
   reviewSessionId?: string;
+  /** Hears of each Got it recorded, for the sentence `id` (the study signals). */
+  onGotIt?: (id: string) => void;
 }
 
 /**
@@ -36,7 +38,7 @@ interface SentenceActionsOptions {
  */
 export function useSentenceActions({
   currentSentence, currentSentenceRef, isSentencePreview, catalogSentencePreview, onSave, onDelete, onResetSRS,
-  onUpdateSRS, tryRemember, showRemembered, reviewSessionId,
+  onUpdateSRS, tryRemember, showRemembered, reviewSessionId, onGotIt,
 }: SentenceActionsOptions) {
   // One delete or reset per press (acceptDestructive): a doubled Delete or D deletes the sentence on screen, not then
   // the one that slides into its place, and a doubled Shift+R can't make the undo restore a blank schedule.
@@ -78,8 +80,9 @@ export function useSentenceActions({
       ...(reviewSessionId ? { sessionId: reviewSessionId } : {}),
     };
     onUpdateSRS?.(s.data.id, 'good', Object.keys(context).length > 0 ? context : undefined);
+    onGotIt?.(s.data.id);
     showRemembered(previewSRS, now, s.data.id);
-  }, [catalogSentencePreview, onUpdateSRS, isSentencePreview, currentSentenceRef, tryRemember, showRemembered, reviewSessionId]);
+  }, [catalogSentencePreview, onUpdateSRS, isSentencePreview, currentSentenceRef, tryRemember, showRemembered, reviewSessionId, onGotIt]);
 
   return { handleDeleteItem, handleResetSRS, handleRemember };
 }

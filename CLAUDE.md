@@ -52,7 +52,7 @@ git add <files> && git commit -m "description" && git push vps main
 - After a healthy release the deploy removes the images no release runs. It never prunes the BuildKit cache while the app is live.
 - `check.yml` runs the same `npm run check` for pull requests only, since the deploy's verify job covers every push to main.
 - `dependency-audit.yml` runs `npm audit --omit=dev --audit-level=high` in `server/` every Monday at 06:17 UTC (or by hand). It fails, emailing the owner, while a high or critical advisory is open. It is not part of the deploy gate.
-- `recover-production.yml` restarts the app container and waits for its health check. `diagnose-production.yml` prints the disk, the database's storage counters, duplicate saved sentences, Today's theme coverage (how much of the library the sweep has sorted, and how recently) and what its units have to review, Docker storage and the containers, all read-only. Its log is public, so it prints counts and ids only.
+- `recover-production.yml` restarts the app container and waits for its health check. `diagnose-production.yml` prints the disk, the database's storage counters, duplicate saved sentences, Today's theme coverage (how much of the library the sweep has sorted, and how recently) and what its units have to review, the study signals collected, Docker storage and the containers, all read-only. Its log is public, so it prints counts and ids only.
 
 To check deploy status:
 ```bash
@@ -172,6 +172,7 @@ git push vps main        # Triggers GitHub Actions → auto-deploy to VPS
 │   │       │                  #   GET /api/reviews/set-days (per local day in the device's zone, the sentences Got it'd in
 │   │       │                  #   Today's units, for the streak)
 │   │       ├── themes.ts      # GET /api/themes: theme rows after a seq, and the sweep's progress
+│   │       ├── study-events.ts # POST /api/study-events: the sentence lesson's study signals, a batch at a time
 │   │       ├── sentence-enrichments.ts  # POST /api/sentence-enrichments/lookup and its images
 │   │       ├── comparisons.ts # GET/PUT /api/comparisons
 │   │       ├── essays.ts      # GET /api/essays/catalog
@@ -224,6 +225,8 @@ Images are stored as binary blobs in the server `image_blobs`/`item_images` tabl
 - `GET /api/items/:id` — single item with images
 - `GET /api/items/:id/image` — binary image endpoint used by lazy loading
 - `POST /api/import` — bulk import endpoint (used for Firebase migration)
+
+Study signals (`server/src/shared/study-events.ts`) live in `study_events`: one row per exposure of one of the learner's own sentences in the sentence lesson (time on screen, analysis time, plays, listens, lookups, word cards opened, Got its, how it was left, the schedule as it began, the Learn later star). They are the training data for a future model that ranks sentences by how well each is known; nothing in the app reads them yet. `views/detail/useStudySignals.ts` counts them without changing the screen, `services/studyEvents.ts` queues them (one localStorage key per exposure) and sends them as the lesson opens and closes, 20 seconds after an exposure ends, and with keepalive as the page hides. A copy queued as the page hides is replaced by the finished copy, never the other way round. The star is `SentenceData.learnLater` (a timestamp; L or the ★ in the lesson's bottom row), synced with the item, kept by the corpus import and left out of its hash. `diagnose-production.yml` prints their counts.
 
 Today's theme for each of the learner's own saved sentences lives in the `item_themes` table, outside item data. Its seq comes from `sync_meta.theme_seq` and moves only when a theme changes, so a device fetches `GET /api/themes?after=<its cursor>` and gets only the changes.
 

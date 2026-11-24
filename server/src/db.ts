@@ -72,3 +72,4 @@ export {
   type ThemeResult,
   type ThemeRowChanges,
 } from './db/item-themes.js';
+export { getStudyEventCount, recordStudyEvents } from './db/study-events.js';

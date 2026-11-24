@@ -128,6 +128,24 @@ export function applySchema(db: Database.Database): void {
       PRIMARY KEY (key, user_id)
     );
 
+    -- Study signals (shared/study-events.ts): one row per exposure of one of the learner's own sentences in the
+    -- sentence lesson, the latest copy the client sent. The columns a ranking model filters by stand alone; the rest
+    -- of the event is data, as JSON. Nothing in the app reads them yet.
+    CREATE TABLE IF NOT EXISTS study_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      session_id TEXT,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER NOT NULL,
+      visible_ms INTEGER NOT NULL,
+      got_its INTEGER NOT NULL,
+      exit TEXT NOT NULL,
+      final INTEGER NOT NULL,
+      data TEXT NOT NULL,
+      received_at INTEGER NOT NULL
+    );
+
     -- Today's theme for each of the user's own sentences, as the server's classifier chose it (server/src/themes). It
     -- stays out of item data, so labelling takes no item revisions and no corpus import can drop it. seq orders what
     -- GET /api/themes sends: it takes the next value of sync_meta's theme_seq only when the row's theme changes.
@@ -169,6 +187,7 @@ export function applySchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
     CREATE INDEX IF NOT EXISTS idx_review_events_user_time ON review_events(user_id, reviewed_at);
+    CREATE INDEX IF NOT EXISTS idx_study_events_user_item ON study_events(user_id, item_id, started_at);
     -- Covers stripped-item image markers without reading legacy rows, whose data column can still hold a
     -- large base64 payload, so the first sync after a restart doesn't block Node.
     CREATE INDEX IF NOT EXISTS idx_item_images_user_versions ON item_images(user_id, id, content_hash, updated_at);

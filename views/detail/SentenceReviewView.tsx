@@ -22,7 +22,7 @@ import { endLesson, noteLessonSentence } from '../../services/lessonTrail';
 import { preloadCards } from './cardReading';
 import { useAutoplayPreloadPlan } from './useAutoplayPreloadPlan';
 import { resolveSentenceUnderReview } from './sentenceUnderReview';
-import { withSpeechStyle } from './speechStyle';
+import { withLearnLater, withSpeechStyle } from './speechStyle';
 import { automaticWrite, liveIdsAmong, ownSentenceIds, useLeaveGoneItems } from './goneItems';
 import { lessonReviewPill, memorizedCount, sentenceRowState } from './sentenceRowState';
 import { PLATFORM } from '../../services/platform';
@@ -50,6 +50,8 @@ import { useSentenceActions } from './useSentenceActions';
 import { useSentenceGestures } from './useSentenceGestures';
 import { useSelectionLookup } from './useSelectionLookup';
 import { useSentenceShortcuts } from './useSentenceShortcuts';
+import { useStudySignals } from './useStudySignals';
+import { isOwnSentence } from '../../services/learningLoop/standing';
 import type { SentenceReviewViewProps } from './types';
 
 /**
@@ -83,6 +85,7 @@ export function SentenceReviewView({
   onAttachImage,
   reviewSessionId,
   sentenceExitLabel: exitLabelOverride,
+  studyUserId,
 }: SentenceReviewViewProps) {
   // The page behind goes inert while a card is open; closing it gives focus back to what opened it.
   useOverlay();
@@ -93,6 +96,9 @@ export function SentenceReviewView({
 
   // The sentence page's scroller: a long sentence with a picture scrolls in it, and each new sentence starts at its top.
   const heroScrollRef = useRef<HTMLDivElement>(null);
+  // The study signals' notes (useStudySignals, set up below once the sentence on screen is known), for the handlers
+  // declared before it.
+  const studySignalsRef = useRef<ReturnType<typeof useStudySignals> | null>(null);
 
   // State for navigation between sentences (a group each). Sentences of one word share its source card, so the view
   // follows the sentence on screen by its id, or by the caller's followIds, when the run changes.
@@ -165,9 +171,17 @@ export function SentenceReviewView({
   // A term looked up from the sentence, or from its analysis, carries the sentence, so the search shows it above the
   // term's meanings.
   const searchWithContext = useCallback(
-    (term: string) => onSearch(term, { context: currentSentenceText }),
+    (term: string) => {
+      studySignalsRef.current?.noteLookup(term);
+      onSearch(term, { context: currentSentenceText });
+    },
     [onSearch, currentSentenceText],
   );
+  // A saved word card opened from the sentence counts as a lookup of it in the study signals.
+  const openCardFromSentence = useCallback((item: StoredItem) => {
+    studySignalsRef.current?.noteCardOpen();
+    onOpenCard?.(item);
+  }, [onOpenCard]);
   // The enrichment is fetched for the list's copy of the sentence, so its loading and failure go by that id.
   const analysisLoading = !!currentSentenceSnapshot && preparingSentenceId === currentSentenceSnapshot.data.id;
   const analysisState = analysisPlaceholderState({
@@ -220,6 +234,7 @@ export function SentenceReviewView({
   const rememberCurrentSentenceSpeechStyle = useCallback((nextStyle: TtsStyle) => {
     const sentence = currentSentenceRef.current;
     if (!sentence || isSentencePreview) return;
+    studySignalsRef.current?.noteStyleSwitch();
     const now = Date.now();
     writeSentence(sentence, item => withSpeechStyle(item, nextStyle, now));
   }, [isSentencePreview, writeSentence]);
@@ -228,6 +243,7 @@ export function SentenceReviewView({
   // listen no longer saves and pushes the sentence each time. An unsaved word-card preview is never saved by a
   // listen; a catalog line, with its stable progress identity, is: its first listen creates its record.
   const handleListened = useCallback((sentence: StoredItem) => {
+    studySignalsRef.current?.noteListen(sentence.data.id);
     const style = getTtsStyle();
     const now = Date.now();
     writeSentence(sentence, item => withSpeechStyle(item, style, now));
@@ -442,13 +458,39 @@ export function SentenceReviewView({
     enabled: !interactionLocked,
   });
 
+  // Study signals and Learn later are for the learner's own saved sentences: not an unsaved example, nor a Real Life or
+  // essay line.
+  const ownSentence = currentSentence && !isSentencePreview && isOwnSentence(currentSentence) ? currentSentence : null;
+  const studySignals = useStudySignals({
+    userId: studyUserId,
+    sentence: ownSentence,
+    sessionId: reviewSessionId,
+    from: exitLabelOverride ?? sentenceExitLabel,
+    position: sentenceIndex + 1,
+    runLength: sentenceItems.length,
+    analysisOpen: sentencePage === 'analysis',
+    autoPlaying: isSentenceAutoPlaying,
+    autoPlayingRef: isSentenceAutoPlayingRef,
+  });
+  useLayoutEffect(() => { studySignalsRef.current = studySignals; });
+
+  const learnLater = !!(ownSentence?.data as SentenceData | undefined)?.learnLater;
+  const handleToggleLearnLater = useCallback(() => {
+    const sentence = currentSentenceRef.current;
+    if (!sentence || !isOwnSentence(sentence)) return;
+    const on = !sentence.data.learnLater;
+    const now = Date.now();
+    writeSentence(sentence, item => withLearnLater(item, on, now));
+    studySignalsRef.current?.noteLearnLater(sentence.data.id, on);
+  }, [writeSentence]);
+
   const { handleDeleteItem, handleResetSRS, handleRemember } = useSentenceActions({
     currentSentence, currentSentenceRef, isSentencePreview, catalogSentencePreview, onSave, onDelete, onResetSRS,
-    onUpdateSRS, tryRemember, showRemembered, reviewSessionId,
+    onUpdateSRS, tryRemember, showRemembered, reviewSessionId, onGotIt: studySignals.noteGotIt,
   });
 
   // On a laptop, a phrase selected in the sentence and Cmd/Ctrl-clicked inside the selection looks itself up whole.
-  const selectionLookup = useSelectionLookup({ findSaved, onOpenCard, onSearch: searchWithContext });
+  const selectionLookup = useSelectionLookup({ findSaved, onOpenCard: onOpenCard && openCardFromSentence, onSearch: searchWithContext });
 
   const {
     onContentTouchStart, onContentTouchEnd, handleMobileWordTouchStart, handleSentenceWordClickCapture,
@@ -471,6 +513,7 @@ export function SentenceReviewView({
     handleResetSRS,
     handleDeleteItem,
     onSpace: handleSpace,
+    handleToggleLearnLater: ownSentence ? handleToggleLearnLater : undefined,
   });
 
   // The hero's props, shared by its two layouts (beside an attached picture, or on its own).
@@ -479,7 +522,7 @@ export function SentenceReviewView({
     sourceWord: (currentSentence.data as SentenceData).sourceWord,
     connectedIpa: connectedSpeechIpa((currentSentence.data as SentenceData).analysis),
     findSaved,
-    onOpenCard,
+    onOpenCard: onOpenCard && openCardFromSentence,
     onSearchWord: searchWithContext,
     commandHeld: isCommandHeld,
     onWordTouchStartCapture: isMobile ? handleMobileWordTouchStart : undefined,
@@ -570,6 +613,8 @@ export function SentenceReviewView({
               } : undefined}
               onReset={sentenceRow.showReset ? handleResetSRS : undefined}
               onDelete={handleDeleteItem}
+              learnLater={learnLater}
+              onToggleLearnLater={ownSentence ? handleToggleLearnLater : undefined}
             />
           </div>
         </div>

@@ -177,6 +177,34 @@ jobs:
               db.close();
             })();
             NODE
+            echo '=== STUDY SIGNALS ==='
+            # The sentence lesson's study signals (server/src/shared/study-events.ts), the data a ranking model will
+            # learn from: how many exposures are stored, how many in the last day and week, how many ended without a
+            # Got it, how many were in Today's units, the last one's time, and how many sentences are starred Learn later.
+            # Counts only.
+            docker compose exec -T app node - <<'NODE' || true
+            const Database = require('/app/server/node_modules/better-sqlite3');
+            const db = new Database('/app/data/dictprop.db', { readonly: true });
+            const scalar = (sql, ...args) => Object.values(db.prepare(sql).get(...args))[0];
+            if (scalar(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'study_events'`) !== 1) {
+              console.log(JSON.stringify({ studyEvents: 'no table yet' }));
+            } else {
+              const now = Date.now();
+              console.log(JSON.stringify({
+                exposures: scalar('SELECT COUNT(*) FROM study_events'),
+                lastDay: scalar('SELECT COUNT(*) FROM study_events WHERE started_at >= ?', now - 24 * 3600 * 1000),
+                lastWeek: scalar('SELECT COUNT(*) FROM study_events WHERE started_at >= ?', now - 7 * 24 * 3600 * 1000),
+                withoutGotIt: scalar('SELECT COUNT(*) FROM study_events WHERE got_its = 0'),
+                inUnits: scalar(`SELECT COUNT(*) FROM study_events WHERE session_id LIKE 'set:%'`),
+                unfinished: scalar('SELECT COUNT(*) FROM study_events WHERE final = 0'),
+                distinctSentences: scalar('SELECT COUNT(DISTINCT item_id) FROM study_events'),
+                lastStartedAt: new Date(scalar('SELECT COALESCE(MAX(started_at), 0) FROM study_events')).toISOString(),
+                learnLater: scalar(`SELECT COUNT(*) FROM items WHERE type = 'sentence' AND is_deleted IS NOT 1
+                  AND json_type(data, '$.learnLater') IS NOT NULL`),
+              }));
+            }
+            db.close();
+            NODE
             echo '=== CONTAINERS ==='
             docker compose ps
             docker stats --no-stream || true

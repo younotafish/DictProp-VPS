@@ -287,6 +287,7 @@ function SignedInApp({ user }: { user: AuthUser }) {
               sentenceItems={liveDetailSentenceItems}
               reviewSessionId={detailContext.reviewSessionId}
               sentenceExitLabel={detailContext.exitLabel}
+              studyUserId={user.id}
               onClose={closeDetail}
               onSave={handleSave}
               onPatchItem={patchLiveItem}

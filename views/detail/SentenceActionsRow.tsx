@@ -1,4 +1,4 @@
-import { Bookmark, CheckCircle2, RotateCcw, Trash2 } from 'lucide-react';
+import { Bookmark, CheckCircle2, RotateCcw, Star, Trash2 } from 'lucide-react';
 import type { SRSData } from '../../types';
 import type { MasteryClasses } from '../../components/mastery';
 import { SrsStats } from '../../components/review/SrsStats';
@@ -25,6 +25,10 @@ interface SentenceActionsRowProps {
   /** Offered once the sentence has been reviewed (sentenceRowState); without it the row has no Reset. */
   onReset?: () => void;
   onDelete: () => void;
+  /** Whether the sentence is starred Learn later. */
+  learnLater?: boolean;
+  /** Stars the sentence Learn later or takes its star away (L); without it the row has no star. */
+  onToggleLearnLater?: () => void;
 }
 
 // The button at the right end keeps one size in every state: its negative margins hold the row at 28 px, so neither
@@ -33,10 +37,12 @@ const PRIMARY_BUTTON = '-my-1 flex min-h-9 items-center gap-1 rounded-lg px-4 te
 
 /**
  * Sentence review's bottom row: once the sentence has been reviewed, its memory on the left; on the right Reset (once
- * reviewed) and, outside the catalog lessons, Delete, then Got it at the right end, or Save for an unsaved example.
+ * reviewed), Learn later on the learner's own sentences and, outside the catalog lessons, Delete, then Got it at the
+ * right end, or Save for an unsaved example.
  */
 export function SentenceActionsRow({
   srs, mastery, masteryColors, memorizedCount, preview, catalog, catalogKind, onRemember, onSaveSentence, onReset, onDelete,
+  learnLater = false, onToggleLearnLater,
 }: SentenceActionsRowProps) {
   const { showDelete, primary } = sentenceRowState({ catalog, preview, totalReviews: srs?.totalReviews ?? 0 });
   const memorizedLabel = memorizedCount === null ? null : `${memorizedCount} memorized in this list`;
@@ -55,6 +61,18 @@ export function SentenceActionsRow({
         {onReset && (
           <button onClick={onReset} className="-my-1 flex h-9 w-9 items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" title="Reset memory (Shift+R)" aria-label="Reset memory">
             <RotateCcw size={15} />
+          </button>
+        )}
+        {onToggleLearnLater && (
+          <button
+            type="button"
+            onClick={(event) => { event.stopPropagation(); onToggleLearnLater(); }}
+            className={`-my-1 flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${learnLater ? 'text-amber-500 hover:bg-amber-50' : 'text-slate-400 hover:text-amber-500 hover:bg-amber-50'}`}
+            title={learnLater ? 'Starred to learn later (L to unstar)' : 'Learn later (L)'}
+            aria-label={learnLater ? 'Remove Learn later star' : 'Star to learn later'}
+            aria-pressed={learnLater}
+          >
+            <Star size={15} fill={learnLater ? 'currentColor' : 'none'} />
           </button>
         )}
         {showDelete && (

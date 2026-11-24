@@ -71,13 +71,17 @@ for (const entry of bundle.entries) {
       (current.data.preferredSpeechStyle === 'clear' || current.data.preferredSpeechStyle === 'casual')
       ? { preferredSpeechStyle: current.data.preferredSpeechStyle }
       : {};
+    // The Learn later star is the learner's: an entry built from an export taken before it was set doesn't drop it.
+    const preservedLearnLater = entry.type === 'sentence' && finiteNonNegative(current.data.learnLater, -1) >= 0
+      ? { learnLater: current.data.learnLater }
+      : {};
     // current is the entry's own item (looked up by its id, its type checked above), so its identity is the entry's.
     const candidate = {
       ...current,
       // A row untouched since revisions were added reads back without one. Writing with no revision would compare
       // clocks, and a device whose clock runs behind could have its edit, made while this import runs, overwritten.
       serverRevision: current.serverRevision ?? 0,
-      data: { ...entry.data, ...preservedSentenceAnalysis, ...preservedSentenceSpeechStyle },
+      data: { ...entry.data, ...preservedSentenceAnalysis, ...preservedSentenceSpeechStyle, ...preservedLearnLater },
       srs: normalizedSrs(current, currentSrs),
       savedAt: finiteNonNegative(current.savedAt, Date.now()),
       isArchived: nextArchived,
