@@ -48,6 +48,10 @@ export interface DetailViewProps {
   sentenceExitLabel?: 'Today';
   /** The signed-in user, whose queue sentence review's study signals go to (useStudySignals); none, none are kept. */
   studyUserId?: string;
+  /** The signed-in user, whose Learn later stars the lesson shows and sets (services/learnLater.ts). */
+  learnLaterUserId?: string;
+  /** Where the run was opened (SentenceRunOptions.studySource), recorded as each study signal's `from`. */
+  studySource?: 'sentences' | 'today';
   onCompare?: (words: string[]) => void;
   comparisons?: StoredComparison[];          // saved comparisons (surfaced when they involve this word)
   onOpenComparison?: (words: string[]) => void;

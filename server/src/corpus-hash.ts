@@ -20,13 +20,12 @@ export function withoutImageFields(value: unknown): unknown {
 
 /**
  * The SHA-256 of an item's data without its images, and without what the server writes into a saved sentence on its
- * own (its analysis, the analysis's timestamp and its speech style), and its Learn later star, which an import keeps,
- * so none of them counts as an edit.
+ * own (its analysis, the analysis's timestamp and its speech style), so neither counts as an edit.
  */
 export function corpusSourceHash(data: unknown): string {
   const stableData = isRecord(data)
     ? Object.fromEntries(Object.entries(data).filter(([key]) =>
-        key !== 'analysis' && key !== 'analysisGeneratedAt' && key !== 'preferredSpeechStyle' && key !== 'learnLater'))
+        key !== 'analysis' && key !== 'analysisGeneratedAt' && key !== 'preferredSpeechStyle'))
     : data;
   return createHash('sha256').update(JSON.stringify(withoutImageFields(stableData))).digest('hex');
 }

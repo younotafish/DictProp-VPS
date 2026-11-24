@@ -34,17 +34,43 @@ export interface StudyEvent {
   endedAt: number;
   /** False on a copy taken while the exposure still ran (the page was hidden); the finished copy replaces it. */
   final: boolean;
-  /** Time on screen with the page visible. */
+  /**
+   * Time on screen with the page visible and, from version 2, its window focused: a sentence left open while the
+   * learner is in another app or window doesn't count. Still counts a learner who walked away with the screen on;
+   * engagedMs doesn't.
+   */
   visibleMs: number;
-  /** Of visibleMs, time on the analysis page. */
+  /**
+   * From version 2: of visibleMs, the engaged time. Each gap between two of the learner's actions (a tap, a key, a
+   * scroll, a swipe) counts for at most STUDY_IDLE_CAP_MS, and time while the sentence's audio plays counts in full.
+   * The time a model should read; absent on version 1 events.
+   */
+  engagedMs?: number;
+  /** How the event was measured: absent (1) before focus and engaged time were counted, 2 since. */
+  version?: number;
+  /** From version 2: whether the device had read the server's Learn later stars when the exposure began, so
+   *  learnLaterAtStart false means not starred rather than not known yet (a fresh installation). */
+  learnLaterKnown?: boolean;
+  /** From version 2: the kind of device (services/platform.ts deviceKind), so each device's signals can be checked. */
+  device?: StudyDevice;
+  /** From version 2: whether the app ran installed (opened from the home screen or Dock) rather than in a tab. */
+  standalone?: boolean;
+  /** Time on the analysis page: of visibleMs (version 1), of engagedMs, under its idle cap (version 2). */
   analysisMs: number;
   analysisOpens: number;
   /** Reads of the sentence started by the learner (speaker, Space, E, a tapped word). */
   plays: number;
   /** Reads auto-play started. */
   autoPlays: number;
-  /** Reads heard to their end, either kind. */
+  /**
+   * Reads heard to their end, either kind; from version 2, only those heard with the lesson attended. The lesson
+   * reports a manual read's end once per read and auto-play's once per round of repeats (a round stopped partway
+   * reports none), and a round counts as attended or away by where its last repeat ended: a coarse feature.
+   */
   listens: number;
+  /** From version 2: reads heard to their end while the lesson wasn't attended (auto-play behind another app or a
+   *  locked screen). */
+  listensAway?: number;
   /** Clear/Casual chosen. */
   styleSwitches: number;
   /** Terms looked up from the sentence or its analysis. */
@@ -55,10 +81,12 @@ export interface StudyEvent {
   cardOpens: number;
   /** Got its recorded during the exposure. */
   gotIts: number;
-  /** Visible time before the first Got it, absent without one. */
+  /** Engaged time before the first Got it (version 1: visible time), absent without one. */
   firstGotItMs?: number;
   /** Learn later as the exposure ended (true: starred). */
   learnLater: boolean;
+  /** From version 2: how many times the learner starred or unstarred it during the exposure (absent: none). */
+  learnLaterToggles?: number;
   /** Learn later as it began. */
   learnLaterAtStart: boolean;
   /** Whether auto-play ran at any moment of it. */
@@ -71,6 +99,14 @@ export interface StudyEvent {
   tzOffset: number;
   srs: StudySrsSnapshot;
 }
+
+export const STUDY_DEVICES = ['mac', 'iphone', 'ipad', 'android', 'windows', 'other'] as const;
+export type StudyDevice = typeof STUDY_DEVICES[number];
+
+/** The current measurement version (StudyEvent.version). */
+export const STUDY_EVENT_VERSION = 2;
+/** The longest gap between two actions engaged time counts in full: past it the learner is taken to be away. */
+export const STUDY_IDLE_CAP_MS = 60_000;
 
 /** At most this many events a request. */
 export const MAX_STUDY_EVENTS_PER_REQUEST = 200;
@@ -123,10 +159,23 @@ export function parseStudyEvent(value: unknown): StudyEvent | null {
     if (!isCount(v[key])) return null;
   }
   if (v.firstGotItMs !== undefined && !isDuration(v.firstGotItMs)) return null;
+  if (v.listensAway !== undefined && !isCount(v.listensAway)) return null;
+  if (v.learnLaterToggles !== undefined && !isCount(v.learnLaterToggles)) return null;
+  if (v.device !== undefined && (typeof v.device !== 'string' || !(STUDY_DEVICES as readonly string[]).includes(v.device))) return null;
+  if (v.standalone !== undefined && typeof v.standalone !== 'boolean') return null;
+  if (v.learnLaterKnown !== undefined && typeof v.learnLaterKnown !== 'boolean') return null;
+  // A version 2 event measures engaged time, and its first Got it falls within it.
+  // (The types are checked above or here before any comparison, so a malformed value is refused, never thrown on.)
+  if (typeof v.version === 'number' && v.version >= 2 && (typeof v.engagedMs !== 'number' ||
+      (typeof v.firstGotItMs === 'number' && v.firstGotItMs > v.engagedMs))) return null;
+  if (v.engagedMs !== undefined && (!isDuration(v.engagedMs) || v.engagedMs > v.visibleMs || v.analysisMs > v.engagedMs)) return null;
+  if (v.version !== undefined && (!Number.isInteger(v.version) || (v.version as number) < 1 || (v.version as number) > 1000)) return null;
   if (!Array.isArray(v.lookupTerms) || v.lookupTerms.length > MAX_LOOKUP_TERMS ||
       !v.lookupTerms.every(term => typeof term === 'string' && term.length <= MAX_LOOKUP_TERM_LENGTH)) return null;
   if (typeof v.exit !== 'string' || !(STUDY_EXITS as readonly string[]).includes(v.exit)) return null;
-  if (!Number.isInteger(v.position) || (v.position as number) < 1 || !isCount(v.runLength)) return null;
+  // A run is the Sentences tab's whole list at most: no interaction cap applies to it.
+  if (!Number.isSafeInteger(v.position) || (v.position as number) < 1 || !Number.isSafeInteger(v.runLength) ||
+      (v.runLength as number) < 0) return null;
   if (!Number.isInteger(v.tzOffset) || Math.abs(v.tzOffset as number) > 14 * 60) return null;
   const srs = parseSrs(v.srs);
   if (!srs) return null;
@@ -135,12 +184,21 @@ export function parseStudyEvent(value: unknown): StudyEvent | null {
     ...(v.sessionId !== undefined ? { sessionId: v.sessionId } : {}),
     ...(v.from !== undefined ? { from: v.from as string } : {}),
     startedAt: v.startedAt, endedAt: v.endedAt as number, final: v.final,
-    visibleMs: v.visibleMs, analysisMs: v.analysisMs as number, analysisOpens: v.analysisOpens as number,
+    visibleMs: v.visibleMs,
+    ...(v.engagedMs !== undefined ? { engagedMs: v.engagedMs as number } : {}),
+    ...(v.version !== undefined ? { version: v.version as number } : {}),
+    ...(v.device !== undefined ? { device: v.device as StudyDevice } : {}),
+    ...(v.standalone !== undefined ? { standalone: v.standalone } : {}),
+    ...(v.learnLaterKnown !== undefined ? { learnLaterKnown: v.learnLaterKnown } : {}),
+    analysisMs: v.analysisMs as number, analysisOpens: v.analysisOpens as number,
     plays: v.plays as number, autoPlays: v.autoPlays as number, listens: v.listens as number,
+    ...(v.listensAway !== undefined ? { listensAway: v.listensAway as number } : {}),
     styleSwitches: v.styleSwitches as number, lookups: v.lookups as number, lookupTerms: v.lookupTerms as string[],
     cardOpens: v.cardOpens as number, gotIts: v.gotIts as number,
     ...(v.firstGotItMs !== undefined ? { firstGotItMs: v.firstGotItMs as number } : {}),
-    learnLater: v.learnLater, learnLaterAtStart: v.learnLaterAtStart, autoplay: v.autoplay,
+    learnLater: v.learnLater,
+    ...(v.learnLaterToggles !== undefined ? { learnLaterToggles: v.learnLaterToggles as number } : {}),
+    learnLaterAtStart: v.learnLaterAtStart, autoplay: v.autoplay,
     exit: v.exit as StudyExit, position: v.position as number, runLength: v.runLength as number,
     tzOffset: v.tzOffset as number, srs,
   };

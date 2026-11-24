@@ -89,7 +89,9 @@ const HISTORY_REFRESH_EVERY_MS = 2 * 60_000;
 const CardReview = React.memo(StudyEnhanced);
 
 /** How the lesson opens a unit's sentences: its Got its count toward the goal, and its Back says Today. */
-const unitRun = (unit: ActiveUnit): SentenceRunOptions => ({ reviewSessionId: unitSessionId(unit), exitLabel: 'Today' });
+const unitRun = (unit: ActiveUnit): SentenceRunOptions => ({
+  reviewSessionId: unitSessionId(unit), exitLabel: 'Today', studySource: 'today',
+});
 
 /**
  * Whether Card review would take up classic Study's kept session (StudyEnhanced's restoreSession): the user's, recent,

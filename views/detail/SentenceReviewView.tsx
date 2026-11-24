@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps } from 'react';
 import { getItemImageUrl, type SearchResult, type SentenceData, type StoredItem, type VocabCard } from '../../types';
 import { OfflineImage } from '../../components/OfflineImage';
 import { SentenceAnalysisView } from '../../components/SentenceAnalysisView';
@@ -22,7 +22,10 @@ import { endLesson, noteLessonSentence } from '../../services/lessonTrail';
 import { preloadCards } from './cardReading';
 import { useAutoplayPreloadPlan } from './useAutoplayPreloadPlan';
 import { resolveSentenceUnderReview } from './sentenceUnderReview';
-import { withLearnLater, withSpeechStyle } from './speechStyle';
+import { withSpeechStyle } from './speechStyle';
+import {
+  flushLearnLater, learnLaterKnown, learnLaterState, learnLaterVersion, setLearnLater, subscribeLearnLater, syncLearnLater,
+} from '../../services/learnLater';
 import { automaticWrite, liveIdsAmong, ownSentenceIds, useLeaveGoneItems } from './goneItems';
 import { lessonReviewPill, memorizedCount, sentenceRowState } from './sentenceRowState';
 import { PLATFORM } from '../../services/platform';
@@ -86,6 +89,8 @@ export function SentenceReviewView({
   reviewSessionId,
   sentenceExitLabel: exitLabelOverride,
   studyUserId,
+  studySource,
+  learnLaterUserId,
 }: SentenceReviewViewProps) {
   // The page behind goes inert while a card is open; closing it gives focus back to what opened it.
   useOverlay();
@@ -404,8 +409,18 @@ export function SentenceReviewView({
   // shared speech session untouched.
   const navLeft = useCallback(() => setSentencePage('sentence'), []);
   const navRight = useCallback(() => setSentencePage('analysis'), []);
-  const navUp = useCallback(() => goToSentence(currentGroupIndexRef.current - 1), [goToSentence, currentGroupIndexRef]);
-  const navDown = useCallback(() => goToSentence(currentGroupIndexRef.current + 1), [goToSentence, currentGroupIndexRef]);
+  // A move the learner makes (an arrow key, a swipe), told to the study signals so the exposure it ends is labelled by
+  // its direction even while auto-play is on or paused.
+  const goToSentenceByLearner = useCallback((nextIndex: number) => {
+    const from = currentGroupIndexRef.current;
+    const last = (sentenceItemsRef.current?.length ?? 0) - 1;
+    const to = Math.max(0, Math.min(nextIndex, last));
+    // Only a move that changes the sentence: Up on the first one leaves no mark for auto-play's next move to wear.
+    if (to !== from) studySignalsRef.current?.noteManualMove(to > from ? 'next' : 'prev');
+    goToSentence(nextIndex);
+  }, [goToSentence, currentGroupIndexRef, sentenceItemsRef]);
+  const navUp = useCallback(() => goToSentenceByLearner(currentGroupIndexRef.current - 1), [goToSentenceByLearner, currentGroupIndexRef]);
+  const navDown = useCallback(() => goToSentenceByLearner(currentGroupIndexRef.current + 1), [goToSentenceByLearner, currentGroupIndexRef]);
 
   // Sentence review's auto-play is locked on, so leaving it opens the panel with its Stop button.
   const requestSentenceExit = useCallback(() => {
@@ -461,28 +476,54 @@ export function SentenceReviewView({
   // Study signals and Learn later are for the learner's own saved sentences: not an unsaved example, nor a Real Life or
   // essay line.
   const ownSentence = currentSentence && !isSentencePreview && isOwnSentence(currentSentence) ? currentSentence : null;
+  // Learn later: this device's stars (services/learnLater.ts), outside item data, read from the server as the lesson
+  // opens and as the connection comes back, with what's waiting here sent then.
+  useSyncExternalStore(subscribeLearnLater, learnLaterVersion, learnLaterVersion);
+  const learnLater = !!ownSentence && !!learnLaterUserId && learnLaterState(learnLaterUserId, ownSentence.data.id).starred;
+  useEffect(() => {
+    if (!learnLaterUserId) return;
+    void syncLearnLater(learnLaterUserId);
+    // Reconnecting, or coming back to the app, reads the other devices' stars again and sends what waits here.
+    const onOnline = () => { void syncLearnLater(learnLaterUserId); };
+    const onVisible = () => { if (document.visibilityState === 'visible') onOnline(); };
+    window.addEventListener('online', onOnline);
+    window.addEventListener('focus', onOnline);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('focus', onOnline);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [learnLaterUserId]);
+  // The star acts on what it shows, the sentence and its state together: a tap on an empty star stars the sentence on
+  // screen, even if another tab starred it a moment ago and this one hasn't heard yet, or auto-play is mid-move.
+  const shownLearnLaterRef = useLatest({ id: ownSentence?.data.id, starred: learnLater });
+  const handleToggleLearnLater = useCallback(() => {
+    const shown = shownLearnLaterRef.current;
+    if (!shown.id || !learnLaterUserId) return;
+    const on = !shown.starred;
+    if (!setLearnLater(learnLaterUserId, shown.id, on)) return;
+    studySignalsRef.current?.noteLearnLater(shown.id, on);
+    void flushLearnLater(learnLaterUserId);
+  }, [learnLaterUserId, shownLearnLaterRef]);
+
   const studySignals = useStudySignals({
     userId: studyUserId,
     sentence: ownSentence,
     sessionId: reviewSessionId,
-    from: exitLabelOverride ?? sentenceExitLabel,
+    from: studySource,
     position: sentenceIndex + 1,
     runLength: sentenceItems.length,
     analysisOpen: sentencePage === 'analysis',
+    learnLater,
+    learnLaterKnown: learnLaterKnown(learnLaterUserId),
     autoPlaying: isSentenceAutoPlaying,
     autoPlayingRef: isSentenceAutoPlayingRef,
+    rootRef,
+    isCovered: () => interactionLocked || isDialogAboveCardView(rootRef.current),
   });
   useLayoutEffect(() => { studySignalsRef.current = studySignals; });
 
-  const learnLater = !!(ownSentence?.data as SentenceData | undefined)?.learnLater;
-  const handleToggleLearnLater = useCallback(() => {
-    const sentence = currentSentenceRef.current;
-    if (!sentence || !isOwnSentence(sentence)) return;
-    const on = !sentence.data.learnLater;
-    const now = Date.now();
-    writeSentence(sentence, item => withLearnLater(item, on, now));
-    studySignalsRef.current?.noteLearnLater(sentence.data.id, on);
-  }, [writeSentence]);
 
   const { handleDeleteItem, handleResetSRS, handleRemember } = useSentenceActions({
     currentSentence, currentSentenceRef, isSentencePreview, catalogSentencePreview, onSave, onDelete, onResetSRS,
@@ -497,7 +538,7 @@ export function SentenceReviewView({
     handleDoubleClick, handleSentenceSurfaceClick,
   } = useSentenceGestures({
     rootRef, heroScrollRef, isMobile, sentencePage, setSentencePage, isSentenceAutoPlayingRef, setShowSentenceAutoPlayPanel,
-    onClose, currentGroupIndexRef, goToSentence, handleRemember, toggleSentencePlayback, playFromWordOffset,
+    onClose, currentGroupIndexRef, goToSentence: goToSentenceByLearner, handleRemember, toggleSentencePlayback, playFromWordOffset,
     lookUpSelection: selectionLookup.lookUpSelection,
   });
 
@@ -513,7 +554,7 @@ export function SentenceReviewView({
     handleResetSRS,
     handleDeleteItem,
     onSpace: handleSpace,
-    handleToggleLearnLater: ownSentence ? handleToggleLearnLater : undefined,
+    handleToggleLearnLater: ownSentence && learnLaterUserId ? handleToggleLearnLater : undefined,
   });
 
   // The hero's props, shared by its two layouts (beside an attached picture, or on its own).
@@ -614,7 +655,7 @@ export function SentenceReviewView({
               onReset={sentenceRow.showReset ? handleResetSRS : undefined}
               onDelete={handleDeleteItem}
               learnLater={learnLater}
-              onToggleLearnLater={ownSentence ? handleToggleLearnLater : undefined}
+              onToggleLearnLater={ownSentence && learnLaterUserId ? handleToggleLearnLater : undefined}
             />
           </div>
         </div>

@@ -180,7 +180,8 @@ jobs:
             echo '=== STUDY SIGNALS ==='
             # The sentence lesson's study signals (server/src/shared/study-events.ts), the data a ranking model will
             # learn from: how many exposures are stored, how many in the last day and week, how many ended without a
-            # Got it, how many were in Today's units, the last one's time, and how many sentences are starred Learn later.
+            # Got it, how many were in Today's units, the last one's time, each device's exposures (Mac, iPhone, iPad,
+            # installed or in a tab) and its last one, and how many sentences are starred Learn later.
             # Counts only.
             docker compose exec -T app node - <<'NODE' || true
             const Database = require('/app/server/node_modules/better-sqlite3');
@@ -194,13 +195,21 @@ jobs:
                 exposures: scalar('SELECT COUNT(*) FROM study_events'),
                 lastDay: scalar('SELECT COUNT(*) FROM study_events WHERE started_at >= ?', now - 24 * 3600 * 1000),
                 lastWeek: scalar('SELECT COUNT(*) FROM study_events WHERE started_at >= ?', now - 7 * 24 * 3600 * 1000),
-                withoutGotIt: scalar('SELECT COUNT(*) FROM study_events WHERE got_its = 0'),
+                // Finished exposures without a Got it; a running copy (unfinished) isn't one yet.
+                withoutGotIt: scalar('SELECT COUNT(*) FROM study_events WHERE final = 1 AND got_its = 0'),
                 inUnits: scalar(`SELECT COUNT(*) FROM study_events WHERE session_id LIKE 'set:%'`),
                 unfinished: scalar('SELECT COUNT(*) FROM study_events WHERE final = 0'),
                 distinctSentences: scalar('SELECT COUNT(DISTINCT item_id) FROM study_events'),
                 lastStartedAt: new Date(scalar('SELECT COALESCE(MAX(started_at), 0) FROM study_events')).toISOString(),
-                learnLater: scalar(`SELECT COUNT(*) FROM items WHERE type = 'sentence' AND is_deleted IS NOT 1
-                  AND json_type(data, '$.learnLater') IS NOT NULL`),
+                // Each device's exposures and its last one, so a device whose signals stopped arriving shows.
+                byDevice: db.prepare(`SELECT COALESCE(json_extract(data, '$.device'), 'unknown (v1)') AS device,
+                    json_extract(data, '$.standalone') AS standalone, COUNT(*) AS exposures,
+                    SUM(CASE WHEN started_at >= ? THEN 1 ELSE 0 END) AS lastDay,
+                    datetime(MAX(started_at) / 1000, 'unixepoch') AS lastStartedUtc
+                  FROM study_events GROUP BY 1, 2 ORDER BY 3 DESC`).all(now - 24 * 3600 * 1000),
+                learnLater: scalar(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'learn_later'`) === 1
+                  ? scalar('SELECT COUNT(*) FROM learn_later WHERE starred = 1')
+                  : 'no table yet',
               }));
             }
             db.close();

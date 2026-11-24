@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useDeferredValue } from 'react';
 import { isSentenceItem, type ReviewRating, type SentenceData, type SRSData, type StoredItem } from '../types';
 import { SRSAlgorithm } from '../services/srsAlgorithm';
+import type { SentenceRunOptions } from '../hooks/useDetailView';
 import { MessageSquareQuote, Check, Trash2, Search, X } from 'lucide-react';
 import { HighlightedSentence } from '../components/HighlightedSentence';
 import { activateOnEnterOrSpace } from '../components/activateOnKey';
@@ -159,7 +160,7 @@ interface SentencesViewProps {
   onSearch: (term: string) => void;
   onScroll: (e: React.UIEvent<HTMLElement>) => void;
   /** Open a sentence's source card in DetailView. Receives the on-screen sorted order + clicked index. */
-  onOpenSentence: (ordered: StoredItem[], index: number) => void;
+  onOpenSentence: (ordered: StoredItem[], index: number, options?: SentenceRunOptions) => void;
   /** Saved words in a sentence: look up the saved item for a term, and open its card popup. */
   findSaved?: (term: string) => StoredItem | null;
   onOpenCard?: (item: StoredItem) => void;
@@ -226,7 +227,7 @@ export const SentencesView: React.FC<SentencesViewProps> = ({
   const latest = useLatest({ sorted, onOpenSentence });
   const openSentence = useCallback((item: StoredItem) => {
     const { sorted, onOpenSentence } = latest.current;
-    onOpenSentence(sorted, sorted.indexOf(item));
+    onOpenSentence(sorted, sorted.indexOf(item), { studySource: 'sentences' });
     noteOpened();
   }, [latest, noteOpened]);
 

@@ -233,6 +233,12 @@ export const markPlaying = (): void => {
   setPlaybackState({ status: 'playing' });
 };
 
+/**
+ * The current request's number: each read (speakNatural, a word, a stop) takes a new one, and a pause and its resume
+ * keep it, so the study signals count a read once however its state moves.
+ */
+export const getPlaybackToken = (): number => player.token;
+
 /** Read the current playback state (text + status) synchronously. */
 export const getPlaybackState = (): PlaybackState => player.state;
 

@@ -146,6 +146,17 @@ export function applySchema(db: Database.Database): void {
       received_at INTEGER NOT NULL
     );
 
+    -- Learn later (shared/learn-later.ts): each item's latest star or unstar, kept outside item data so item sync's
+    -- conflict rules never touch it. The later changed_at wins.
+    CREATE TABLE IF NOT EXISTS learn_later (
+      user_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      starred INTEGER NOT NULL,
+      changed_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (user_id, item_id)
+    );
+
     -- Today's theme for each of the user's own sentences, as the server's classifier chose it (server/src/themes). It
     -- stays out of item data, so labelling takes no item revisions and no corpus import can drop it. seq orders what
     -- GET /api/themes sends: it takes the next value of sync_meta's theme_seq only when the row's theme changes.

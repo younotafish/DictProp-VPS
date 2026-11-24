@@ -51,6 +51,7 @@ import {
 import { STYLE_VOICES } from './audio/voices';
 export {
   getPlaybackState,
+  getPlaybackToken,
   subscribePlayback,
   getPlaybackProgress,
   pauseCurrent,

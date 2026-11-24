@@ -281,24 +281,6 @@ test('the corpus audit import applies explicit archive states and accepts unaudi
   assert.deepEqual(stored('sa-audited').data.usageAudit, usageAudit);
 });
 
-test('the corpus audit import keeps a Learn later star set after the export, and its entry still applies', () => {
-  save('ca-starred', 'sentence', { text: 'Be frank with me.', sourceWord: 'frank' });
-  const exported = stored('ca-starred').data;
-  const entry = {
-    id: 'ca-starred', type: 'sentence', sourceHash: corpusSourceHash(exported),
-    data: { ...exported, sourceWord: 'frank (adj.)' }, wasArchived: false, archiveForUsage: false,
-  };
-  // Starred in the lesson while the audit ran: a star isn't an edit of the sentence, so the entry isn't stale.
-  save('ca-starred', 'sentence', { ...exported, learnLater: 1_500 }, 2_000);
-
-  const run = runServerScript('import-corpus-audit', [auditBundle([entry])]);
-  assert.equal(run.status, 0, run.stderr);
-  assert.equal(run.output.updated, 1);
-  assert.equal(run.output.stale, 0);
-  assert.equal(stored('ca-starred').data.sourceWord, 'frank (adj.)');
-  assert.equal(stored('ca-starred').data.learnLater, 1_500);
-});
-
 test('the corpus audit import writes a failed batch again one item at a time, so a bad item fails alone', () => {
   const usageAudit = { status: 'current_general', reason: 'Normal in current American English.', confidence: 'high', auditedAt: 300 };
   const ids = ['cb-written', 'cb-refused'];

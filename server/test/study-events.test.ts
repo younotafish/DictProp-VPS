@@ -32,6 +32,7 @@ const row = (id: string) => db.prepare('SELECT * FROM study_events WHERE id = ?'
 test('a well-formed event parses to itself, and anything off is refused', () => {
   assert.deepEqual(parseStudyEvent(event()), event());
   assert.deepEqual(parseStudyEvent({ ...event(), extra: 'dropped' }), event());
+  assert.deepEqual(parseStudyEvent(event({ engagedMs: 7_500, version: 2 })), event({ engagedMs: 7_500, version: 2 }));
   for (const broken of [
     { ...event(), endedAt: 500 },
     { ...event(), analysisMs: 9_000 },
@@ -42,6 +43,13 @@ test('a well-formed event parses to itself, and anything off is refused', () => 
     { ...event(), srs: { totalReviews: 1 } },
     { ...event(), position: 0 },
     { ...event(), id: '' },
+    { ...event(), engagedMs: 9_000 },
+    { ...event(), engagedMs: 1_000 },
+    { ...event(), listensAway: -1 },
+    { ...event(), version: 2 }, // a version 2 event without engaged time
+    { ...event(), version: 2, engagedMs: { valueOf() { throw new Error('boom'); } } }, // refused, never thrown on
+    { ...event(), version: 2, engagedMs: 6_000 }, // its first Got it (7.5 s) past its engaged time
+    { ...event(), version: 0 },
   ]) {
     assert.equal(parseStudyEvent(broken), null, JSON.stringify(broken));
   }
@@ -83,6 +91,17 @@ test('a running copy is replaced by a later one and by the finished one, never t
   assert.equal(row('up-1')?.final, 1);
   assert.equal(row('up-1')?.got_its, 1);
   assert.equal(getStudyEventCount(user), 1);
+});
+
+test('a finished copy replaces a running one even when the device clock went back between them', () => {
+  recordStudyEvents('study-clock', [event({ id: 'clock-1', final: false, endedAt: 9_000, gotIts: 0 })], 1);
+  recordStudyEvents('study-clock', [event({ id: 'clock-1', final: true, endedAt: 8_000, visibleMs: 7_000, analysisMs: 0 })], 2);
+  assert.equal(row('clock-1')?.final, 1);
+  assert.equal(row('clock-1')?.ended_at, 8_000);
+});
+
+test("a run as long as the Sentences tab's whole list is accepted", () => {
+  assert.notEqual(parseStudyEvent(event({ position: 15_000, runLength: 20_000 })), null);
 });
 
 test("another user's copy of an exposure id never overwrites it", () => {

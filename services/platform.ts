@@ -57,3 +57,21 @@ export const isMacPlatform = (): boolean => {
 
 /** The modifier key a shortcut hint names: ⌘ on a Mac, Ctrl elsewhere. */
 export const modifierKeyLabel = (): string => (isMacPlatform() ? '⌘' : 'Ctrl');
+
+/** The kind of device, as the study signals record it, so each device's signals can be told apart. */
+export type DeviceKind = 'mac' | 'iphone' | 'ipad' | 'android' | 'windows' | 'other';
+
+/**
+ * Which kind of device `nav` is. An iPad in Safari's desktop-class mode reports a Mac ('MacIntel'), so a "Mac" with
+ * touch points is an iPad; an iPod counts as an iPhone.
+ */
+export function deviceKind(nav: NavigatorFacts | undefined): DeviceKind {
+  if (!nav) return 'other';
+  const ua = nav.userAgent || '';
+  if (/iPhone|iPod/i.test(ua)) return 'iphone';
+  if (/iPad/i.test(ua) || (/Mac/i.test(`${nav.platform} ${ua}`) && (nav.maxTouchPoints ?? 0) > 1)) return 'ipad';
+  if (/Android/i.test(ua)) return 'android';
+  if (/Mac/i.test(`${nav.platform} ${ua}`)) return 'mac';
+  if (/Win/i.test(`${nav.platform} ${ua}`)) return 'windows';
+  return 'other';
+}

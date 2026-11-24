@@ -83,11 +83,6 @@ export interface SentenceData {
   sourceSense?: string; // The sense label of the source word
   /** Last Clear/Casual choice made while reviewing this sentence. */
   preferredSpeechStyle?: 'clear' | 'casual';
-  /**
-   * When the learner starred the sentence Learn later in the lesson (L), absent when it isn't starred. A signal the
-   * study model will learn from (server/src/shared/study-events.ts); a corpus import keeps it.
-   */
-  learnLater?: number;
   /** Identifies which read-only learning catalog owns an isolated review record. */
   catalogKind?: 'real-life' | 'essay';
   /** Stable provenance id for a sentence originating in a read-only catalog. */

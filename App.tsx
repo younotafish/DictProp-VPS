@@ -60,6 +60,15 @@ const LibraryReadFailedScreen = lazyScreen('library-read-failed', () => import('
 // code loads after the first screen with the rest.
 const JobPills = lazyScreen('job-pills', () => import('./components/JobPills').then(module => ({ default: module.JobPills })));
 const StuckSyncPill = lazyScreen('stuck-sync', () => import('./components/JobPills').then(module => ({ default: module.StuckSyncPill })));
+// Study signals and Learn later changes a lesson left waiting go as the connection or the app comes back; its code loads
+// after the first screen.
+// Plain React.lazy, not lazyScreen: a chunk that fails to load here is tried again every half minute (rendering nothing
+// meanwhile), rather than reloading the app or giving up for the page's life.
+const loadWaitingSignalsFlush = (): Promise<{ default: React.ComponentType<{ userId: string }> }> =>
+  import('./components/WaitingSignalsFlush')
+    .then(module => ({ default: module.WaitingSignalsFlush }))
+    .catch(() => new Promise(resolve => { setTimeout(resolve, 30_000); }).then(loadWaitingSignalsFlush));
+const WaitingSignalsFlush = React.lazy(loadWaitingSignalsFlush);
 const RefusedChangesNotice = lazyScreen('refused-changes', () => import('./components/RefusedChanges').then(module => ({ default: module.RefusedChangesNotice })));
 const TAB_SCREENS = {
   notebook: NotebookView,
@@ -224,6 +233,12 @@ function SignedInApp({ user }: { user: AuthUser }) {
         </Suspense>
       )}
 
+      <Suspense fallback={null}>
+        <ErrorBoundary variant="quiet">
+          <WaitingSignalsFlush userId={user.id} />
+        </ErrorBoundary>
+      </Suspense>
+
       <AppStatusPills
         userId={user.id}
         onViewRefusedReviews={openRefusedReviews}
@@ -287,7 +302,9 @@ function SignedInApp({ user }: { user: AuthUser }) {
               sentenceItems={liveDetailSentenceItems}
               reviewSessionId={detailContext.reviewSessionId}
               sentenceExitLabel={detailContext.exitLabel}
-              studyUserId={user.id}
+              studyUserId={detailContext.studySource ? user.id : undefined}
+              studySource={detailContext.studySource}
+              learnLaterUserId={user.id}
               onClose={closeDetail}
               onSave={handleSave}
               onPatchItem={patchLiveItem}

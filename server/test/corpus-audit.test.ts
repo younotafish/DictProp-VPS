@@ -48,11 +48,6 @@ test('corpus hashes ignore a sentence speech-style preference', () => {
   );
 });
 
-test('corpus hashes ignore a sentence Learn later star', () => {
-  const sentence = { id: 'sentence-1', text: 'He came clean.', sourceWord: 'come clean', usageAudit: audit };
-  assert.equal(corpusSourceHash({ ...sentence, learnLater: 5 }), corpusSourceHash(sentence));
-});
-
 test('corpus audit bundle requires complete and consistent decisions', () => {
   assert.equal(validateCorpusAuditBundle(bundle), null);
   assert.match(validateCorpusAuditBundle({ ...bundle, entries: [{ ...bundle.entries[0], archiveForUsage: true }] }) || '', /disagrees/);

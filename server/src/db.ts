@@ -73,3 +73,4 @@ export {
   type ThemeRowChanges,
 } from './db/item-themes.js';
 export { getStudyEventCount, recordStudyEvents } from './db/study-events.js';
+export { getLearnLater, getLearnLaterCount, getLearnLaterFor, recordLearnLaterChanges } from './db/learn-later.js';

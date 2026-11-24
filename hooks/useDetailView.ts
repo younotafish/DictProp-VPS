@@ -18,6 +18,11 @@ export interface SentenceRunOptions {
   reviewSessionId?: string;
   /** What the lesson's Back says, in place of the one its sentences imply: 'Today' for a unit. */
   exitLabel?: 'Today';
+  /**
+   * Where the run was opened, for the study signals (useStudySignals): only the Sentences tab's runs and Today's units
+   * record them, so an example opened from Card review or a search never enters the training data.
+   */
+  studySource?: 'sentences' | 'today';
 }
 
 export interface DetailContext extends SentenceRunOptions {
@@ -182,6 +187,7 @@ export function useDetailView(
       groups, groupIndex: safeIndex, itemIndex: 0, sentenceItems: ordered, openId: nextDetailKey(),
       ...(options?.reviewSessionId ? { reviewSessionId: options.reviewSessionId } : {}),
       ...(options?.exitLabel ? { exitLabel: options.exitLabel } : {}),
+      ...(options?.studySource ? { studySource: options.studySource } : {}),
     });
   }, [updateDetailContext, latestItemsRef]);
 

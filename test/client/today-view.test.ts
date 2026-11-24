@@ -178,7 +178,7 @@ test('starting a unit keeps it as the active unit, notes its theme\'s start, and
   assert.deepEqual(calls[0].ids, ['c', 'a', 'b'], 'in the unit\'s order, without the deleted, the missing and the one resting');
   assert.equal(calls[0].items[0], SENTENCES[2], 'the library\'s own copies');
   assert.equal(calls[0].index, 0, 'at its first sentence');
-  assert.deepEqual(calls[0].options, { reviewSessionId: `set:${unit.id}`, exitLabel: 'Today' });
+  assert.deepEqual(calls[0].options, { reviewSessionId: `set:${unit.id}`, exitLabel: 'Today', studySource: 'today' });
   assert.ok(storage.getItem(activeUnitKey(USER)));
 
   // A unit whose sentences have all gone since the plan was taken opens nothing.
@@ -227,7 +227,7 @@ test('Continue opens the unit\'s live sentences in the lesson at the first still
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].ids, ['m1', 'm2', 'b', 'a'], 'every live sentence of the unit, the memorized among them');
   assert.equal(calls[0].index, 2, 'at b, the first still to review');
-  assert.deepEqual(calls[0].options, { reviewSessionId: 'set:unit-7', exitLabel: 'Today' });
+  assert.deepEqual(calls[0].options, { reviewSessionId: 'set:unit-7', exitLabel: 'Today', studySource: 'today' });
   assert.equal(readActiveUnit(USER)?.startedAt, NOW - HOUR, 'the unit stays as it was');
 });
 

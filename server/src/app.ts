@@ -25,6 +25,7 @@ import { itemsRoutes } from './routes/items.js';
 import { createReviewRoutes } from './routes/reviews.js';
 import { sentenceEnrichmentRoutes } from './routes/sentence-enrichments.js';
 import { studyEventsRoutes } from './routes/study-events.js';
+import { learnLaterRoutes } from './routes/learn-later.js';
 import { createThemeRoutes } from './routes/themes.js';
 import { ttsRoutes } from './routes/tts.js';
 import { themeSweep as serverThemeSweep, type ThemeSweep } from './themes/sweep.js';
@@ -151,7 +152,7 @@ export function createApp(options: AppOptions = {}) {
   const smallJsonLimit = limitBody(512 * 1024, 'Request body too large');
   for (const path of [
     '/api/analyze', '/api/compare', '/api/extract-vocabulary', '/api/comparisons',
-    '/api/sentence-enrichments/*', '/api/tts/*', '/api/reviews/*', '/api/study-events',
+    '/api/sentence-enrichments/*', '/api/tts/*', '/api/reviews/*', '/api/study-events', '/api/learn-later',
   ]) {
     app.use(path, smallJsonLimit);
   }
@@ -161,6 +162,7 @@ export function createApp(options: AppOptions = {}) {
   app.use('/api/items/:id/image', limitBody(11 * 1024 * 1024, 'Item request is too large'));
   app.use('/api/import', createRateLimit(5, 60 * 60 * 1000));
   app.use('/api/study-events', createRateLimit(120, 60_000));
+  app.use('/api/learn-later', createRateLimit(120, 60_000));
   app.use('/api/import', createConcurrencyLimit(1, 'Another data import is already running. Try again shortly.'));
   // A save or an import can bring items the theme sweep hasn't labelled: its count goes stale, and it runs once the
   // writes stop. So can a review whose seed brings its sentence with it, which tells the sweep from its own route
@@ -178,6 +180,7 @@ export function createApp(options: AppOptions = {}) {
   app.route('/api', importRoutes);
   app.route('/api', createReviewRoutes(themeSweep));
   app.route('/api', studyEventsRoutes);
+  app.route('/api', learnLaterRoutes);
   app.route('/api', essaysRoutes);
   app.route('/api', options.aiRouter ?? aiRoutes);
   app.route('/api', ttsRoutes);

@@ -2,8 +2,9 @@ import type { StudyEvent } from '../shared/study-events.js';
 import { db, writeTransaction } from './connection.js';
 
 // Study signals (shared/study-events.ts): the latest copy of each exposure a user's client sent. A copy sent again
-// replaces the stored one only when it is the same user's and reaches at least as far (its endedAt), so a stale copy
-// sent late by another tab never takes back what a later one recorded.
+// replaces the stored one only when it is the same user's and the stored one isn't final: a finished copy replaces a
+// running one whatever its endedAt (a device clock set back between them can't strand it), and a running copy
+// replaces another only when it reaches at least as far, so a stale one sent late never takes back a later one.
 
 const stmts = {
   upsert: db.prepare(`INSERT INTO study_events
@@ -15,7 +16,7 @@ const stmts = {
       got_its = excluded.got_its, exit = excluded.exit, final = excluded.final, data = excluded.data,
       received_at = excluded.received_at
     WHERE study_events.user_id = excluded.user_id AND study_events.final = 0
-      AND excluded.ended_at >= study_events.ended_at`),
+      AND (excluded.final = 1 OR excluded.ended_at >= study_events.ended_at)`),
   count: db.prepare(`SELECT COUNT(*) FROM study_events WHERE user_id = ?`).pluck(),
 };
 
